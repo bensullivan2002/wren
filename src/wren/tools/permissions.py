@@ -10,7 +10,9 @@ How it fits together:
 
   * A tool that changes things describes what it's about to do, as a
     `PermissionRequest` (see `Tool.permission`). Read-only tools return None
-    and are never asked about.
+    and are never asked about. So does the shell for a command that will
+    run in the sandbox (sandbox.py): the operating system enforces what a
+    question would only ask about (D117).
   * The registry hands the request to `Permissions.allows()` before running
     the tool.
   * `Permissions` either already knows the answer (you said "always" earlier
@@ -23,10 +25,10 @@ REPL decides how a question looks, exactly as it decides how events look.
 Auto mode (`/auto`) is for when asking has stopped working: prompts that
 come every few seconds get approved without being read, and then they
 protect nothing. In auto mode, a request the tool marks as `contained` goes
-ahead without a question: an edit to an ordinary file in the project, or a
-command that runs in the sandbox (sandbox.py). Containment is a fact about
-the request that Wren itself establishes, never the model's claim, so the
-model can't argue its way into it. Everything else is still asked about.
+ahead without a question: an edit to an ordinary file in the project.
+Containment is a fact about the request that Wren itself establishes, never
+the model's claim, so the model can't argue its way into it. Everything else
+is still asked about.
 
 "Always" answers and auto mode live in memory and are forgotten when Wren
 exits.
@@ -77,9 +79,10 @@ class PermissionRequest:
     change: FileChange | None = None  # for file edits: the same change, structured
 
     # True when this can only change the project, and nothing in it that
-    # would run by itself later: an edit to an ordinary file, or a command
-    # in the sandbox. Auto mode allows these without asking. False, the
-    # default, means it's asked about in every mode.
+    # would run by itself later: an edit to an ordinary file. Auto mode
+    # allows these without asking. False, the default, means it's asked
+    # about in every mode. (A command in the sandbox makes no request at
+    # all: the sandbox is its containment.)
     contained: bool = False
 
 

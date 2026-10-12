@@ -25,7 +25,7 @@ Steps 1 to 9 are done (see the roadmap in README.md). Steps 8 and 9 were unplann
 
 **CI is in place (issue #11, D108–D115):** ruff lint and format, pre-commit, `pip-audit`, Dependabot, and the tests on Linux and macOS. Merge branches with a merge commit, never squash: `.git-blame-ignore-revs` names the reformat commit by its hash. `main` requires all six CI jobs to pass, by name (D114): renaming a job in `ci.yml` or changing its matrix means updating the branch protection too, or pull requests wait for ever on a check that never reports. Type checking is still to come: Ben wants **basedpyright** (D115), as its own piece of work: issue #15.
 
-**Auto mode (step 9) is untried with a real model.** Ask Ben how a real model copes with `outside_sandbox` (journal 09, "Things to try" 7). He confirmed the sandbox stays on in normal mode too (D101). A `--auto` flag is wanted, as its own piece of work: issue #9.
+**Auto mode (step 9) is untried with a real model.** Ask Ben how a real model copes with `outside_sandbox` (journal 09, "Things to try" 7). He confirmed the sandbox stays on in normal mode too (D101). A `--auto` flag is wanted, as its own piece of work: issue #9. Since then (Ben's call), commands in the sandbox never ask, in either mode, so auto mode only adds ordinary file edits (D117); and the sandbox protects `.git`, `.claude` and the rest in every folder, worktrees included (D116).
 
 **First thing next session: ask Ben how the OpenAI provider behaved with a real key.** It is tested only against a stand-in client built from the SDK's types (journal 08). Likely trouble spots, in order: replaying reasoning items between tool calls (`store: False`), an `/effort` level the model rejects, and the model-list filter. Fix what he finds first.
 

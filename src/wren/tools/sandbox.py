@@ -5,6 +5,7 @@ machine (D29). That works only if every prompt is read, and prompts that
 come every few seconds stop being read. A sandbox protects you whether you
 read or not. It is a rule the operating system enforces, so neither a model
 that has misunderstood nor text planted in a file can talk its way past it.
+That's why a command in the sandbox runs without a question (D117).
 
 What a sandboxed command can do:
 
@@ -38,7 +39,7 @@ project's path is a parameter too, escaped, and joined to the pattern by
 the profile itself with `string-append`.
 
 On other systems there's no sandbox (yet): `available()` is False, commands
-run as before, and auto mode still asks before every command.
+run as before, and Wren asks before every one, auto mode or not.
 """
 
 from __future__ import annotations

@@ -47,7 +47,7 @@ COMMANDS = """\
 /effort        choose how hard the model works on each reply (/effort LEVEL)
 /resume        go back to an earlier conversation in this folder (/resume ID)
 /permissions   show what you've said Wren may always do this session
-/auto          switch auto mode on or off: no questions for edits, or for commands in the sandbox
+/auto          switch auto mode on or off: no questions for edits to the project's files
 /memory        show which memory files (WREN.md, AGENTS.md) are loaded
 /remember X    add the note X to the project's memory file
 /clear         start a fresh conversation (the old one stays saved)
@@ -551,8 +551,14 @@ def _auto(agent: Agent) -> str:
     permissions = agent.tools.permissions
     permissions.auto = not permissions.auto
     if not permissions.auto:
-        return "Auto mode is off: Wren asks before edits and commands again."
+        return "Auto mode is off: Wren asks before every edit again."
     return f"Auto mode is on. {_auto_rules()} /auto again turns it off."
+
+
+# Shared by /auto and /permissions. Sandboxed commands never ask (D117).
+_SANDBOX_IN_WORDS = (
+    "commands in the sandbox (no network, writes only inside the project)"
+)
 
 
 def _auto_rules() -> str:
@@ -566,20 +572,26 @@ def _auto_rules() -> str:
             f"so Wren still asks before every command, and before edits in {protected}."
         )
     return (
-        "Edits to files in this project, and commands in the sandbox (no network, writes only inside "
-        "the project), go ahead without asking. Wren still asks before a command outside the sandbox "
-        f"(installing packages, git commit or push), and before edits in {protected}."
+        f"Edits to files in this project go ahead without asking, as {_SANDBOX_IN_WORDS} always do. "
+        "Wren still asks before a command outside the sandbox (installing packages, git commit or push), "
+        f"and before edits in {protected}."
     )
 
 
 def _permissions(agent: Agent) -> str:
     permissions = agent.tools.permissions
-    auto = f"Auto mode is on. {_auto_rules()}\n\n" if permissions.auto else ""
+    if permissions.auto:
+        rules, asks = f"Auto mode is on. {_auto_rules()}", "everything else"
+    elif sandbox_available():
+        rules = f"{_SANDBOX_IN_WORDS.capitalize()} run without asking."
+        asks = "every edit, and every command outside the sandbox"
+    else:
+        rules, asks = "", "every edit and command"
+    intro = f"{rules}\n\n" if rules else ""
     if not permissions.always:
-        asks = "everything else" if permissions.auto else "every edit and command"
-        return f"{auto}Nothing is always allowed: Wren asks before {asks}."
+        return f"{intro}Nothing is always allowed: Wren asks before {asks}."
     labels = "\n".join(f"  {label}" for label in permissions.always.values())
-    return f"{auto}Allowed without asking, until you quit:\n{labels}"
+    return f"{intro}Allowed without asking, until you quit:\n{labels}"
 
 
 def _history(agent: Agent) -> str:

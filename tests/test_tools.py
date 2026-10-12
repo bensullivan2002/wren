@@ -391,12 +391,14 @@ def test_a_declined_action_does_not_happen_and_the_model_is_told(tools, user, pr
 
 def test_with_nobody_to_ask_the_answer_is_no(project):
     tools = ToolRegistry(default_tools(), root=project)  # no Permissions given
-    err(tools.run("shell", {"description": WHY, "command": "echo hi"}))
+    outside = {"description": WHY, "command": "echo hi", "outside_sandbox": True}
+    err(tools.run("shell", outside))  # asked about everywhere, sandbox or not
     err(tools.run("write_file", {"path": "new.txt", "content": "hi"}))
     assert not (project / "new.txt").exists()
 
 
-def test_always_stops_the_asking_for_that_scope_only(tools, user):
+def test_always_stops_the_asking_for_that_scope_only(tools, user, monkeypatch):
+    monkeypatch.setattr(sandbox, "available", lambda: False)  # so commands ask
     user.decision = Decision.ALWAYS
     ok(tools.run("write_file", {"path": "a.txt", "content": "1"}))
     ok(tools.run("write_file", {"path": "b.txt", "content": "2"}))
@@ -414,7 +416,10 @@ def test_always_stops_the_asking_for_that_scope_only(tools, user):
     }
 
 
-def test_always_for_a_command_does_not_cover_a_chained_command(tools, user, project):
+def test_always_for_a_command_does_not_cover_a_chained_command(
+    tools, user, project, monkeypatch
+):
+    monkeypatch.setattr(sandbox, "available", lambda: False)  # so commands ask
     user.decision = Decision.ALWAYS
     ok(tools.run("shell", {"description": WHY, "command": "echo hi"}))
     user.decision = Decision.DENY
@@ -649,14 +654,10 @@ posix_only = pytest.mark.skipif(os.name != "posix", reason="uses POSIX shell com
 
 
 @posix_only
-def test_shell_runs_in_the_working_directory_and_returns_output(tools, user):
+def test_shell_runs_in_the_working_directory_and_returns_output(tools):
     result = ok(tools.run("shell", {"description": WHY, "command": "ls src"}))
     assert result.content == "app\nnotes.txt"
     assert result.summary == "2 lines"
-    assert (
-        user.seen[0].title.startswith("Run a shell command")
-        and user.seen[0].detail == "ls src"
-    )
 
 
 @posix_only
@@ -730,7 +731,12 @@ def test_shell_must_be_told_what_the_command_is_for(tools, user):
 
     ok(
         tools.run(
-            "shell", {"description": "Do nothing, successfully.", "command": "true"}
+            "shell",
+            {
+                "description": "Do nothing, successfully.",
+                "command": "true",
+                "outside_sandbox": True,  # asked about, sandbox or not
+            },
         )
     )
     assert (
@@ -835,21 +841,43 @@ def test_auto_mode_allows_contained_actions_and_asks_about_the_rest(
 
 
 @posix_only
-def test_auto_mode_asks_about_every_command_where_there_is_no_sandbox(
+def test_every_command_is_asked_about_where_there_is_no_sandbox(
     tools, user, monkeypatch
 ):
     monkeypatch.setattr(sandbox, "available", lambda: False)
-    tools.permissions.auto = True
-    ok(tools.run("shell", {"description": WHY, "command": "true"}))
-    assert user.seen[0].title == "Run a shell command" and not user.seen[0].contained
+    for auto in (False, True):
+        tools.permissions.auto = auto
+        ok(tools.run("shell", {"description": WHY, "command": "true"}))
+    assert [r.title for r in user.seen] == ["Run a shell command"] * 2
+    assert not any(r.contained for r in user.seen)
 
 
-def test_the_auto_command_switches_the_mode_and_permissions_describes_it(tools):
-    agent = Agent(FakeProvider(), "sys", 100, tools)
-    assert (
-        "Wren asks before every edit and command"
-        in run_command(agent, "/permissions").text
+def test_only_a_command_that_leaves_the_sandbox_is_asked_about(tools, monkeypatch):
+    # The decision on its own, so it's checked on every system: nothing runs.
+    monkeypatch.setattr(sandbox, "available", lambda: True)
+    shell = tools.get("shell")
+    inside = shell.parse({"description": WHY, "command": "uv sync"})
+    outside = shell.parse(
+        {"description": WHY, "command": "uv sync", "outside_sandbox": True}
     )
+    assert shell.permission(inside, tools.context) is None
+    request = shell.permission(outside, tools.context)
+    assert request.title == "Run a shell command outside the sandbox"
+    assert (request.scope, request.contained) == ("shell-outside:uv", False)
+
+
+@pytest.mark.parametrize("has_sandbox", [True, False])
+def test_the_auto_command_switches_the_mode_and_permissions_describes_it(
+    tools, monkeypatch, has_sandbox
+):
+    monkeypatch.setattr("wren.commands.sandbox_available", lambda: has_sandbox)
+    agent = Agent(FakeProvider(), "sys", 100, tools)
+    shown = run_command(agent, "/permissions").text
+    if has_sandbox:
+        assert shown.startswith("Commands in the sandbox (no network")
+        assert "asks before every edit, and every command outside the sandbox" in shown
+    else:
+        assert "Wren asks before every edit and command" in shown
     assert (
         run_command(agent, "/auto").text.startswith("Auto mode is on.")
         and tools.permissions.auto
@@ -866,14 +894,17 @@ def test_the_auto_command_switches_the_mode_and_permissions_describes_it(tools):
 
 
 @sandbox_only
-def test_auto_mode_runs_a_sandboxed_command_without_asking(tools, user, project):
-    tools.permissions.auto = True
-    result = ok(
-        tools.run(
-            "shell", {"description": WHY, "command": "echo hi > out.txt && cat out.txt"}
+def test_a_sandboxed_command_runs_without_asking_in_either_mode(tools, user):
+    for auto in (False, True):
+        tools.permissions.auto = auto
+        result = ok(
+            tools.run(
+                "shell",
+                {"description": WHY, "command": "echo hi > out.txt && cat out.txt"},
+            )
         )
-    )
-    assert result.content == "hi" and user.seen == []
+        assert result.content == "hi"
+    assert user.seen == []
 
 
 @sandbox_only
@@ -1008,13 +1039,12 @@ def test_outside_the_sandbox_is_asked_about_even_in_auto_mode(
 
 
 @sandbox_only
-def test_always_in_the_sandbox_does_not_cover_outside_it(tools, user):
-    user.decision = Decision.ALWAYS
-    ok(tools.run("shell", {"description": WHY, "command": "true"}))
+def test_a_command_that_ran_in_the_sandbox_is_still_asked_about_outside_it(tools, user):
+    ok(tools.run("shell", {"description": WHY, "command": "true"}))  # no question
     user.decision = Decision.DENY
     err(
         tools.run(
             "shell", {"description": WHY, "command": "true", "outside_sandbox": True}
         )
     )
-    assert [r.scope for r in user.seen] == ["shell:true", "shell-outside:true"]
+    assert [r.scope for r in user.seen] == ["shell-outside:true"]

@@ -195,6 +195,8 @@ Run a shell command outside the sandbox
 
 "Always" keeps the two apart. Approving `uv` in the sandbox gives the scope `shell:uv`; outside it, `shell-outside:uv`. So "always allow `uv`" for `uv run pytest` doesn't quietly cover `uv pip install` with the network on. A side effect improves D28's worst case: "always allow `git`" in the sandbox can no longer push or commit.
 
+*(Later, D117: a command in the sandbox isn't asked about at all now, in either mode, so the first of those questions is gone. Only `shell-outside:` scopes remain on macOS. "Things to try" 1 below no longer shows a question: the command just fails in the sandbox.)*
+
 ---
 
 ## Python worth knowing from this step
