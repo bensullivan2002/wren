@@ -2,11 +2,11 @@
 
 A small, readable coding-agent harness for the terminal, built step by step so every part can be understood.
 
-> **Status: step 7 of the roadmap.** Wren is a full-screen terminal app that chats with Claude, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first. It saves every conversation so you can resume it, switches models mid-conversation, reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable. The shell is not sandboxed, so read what you approve.
+> **Status: step 8 of the roadmap.** Wren is a full-screen terminal app that chats with Claude or OpenAI's models, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first. It saves every conversation so you can resume it, switches models mid-conversation, reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable. The shell is not sandboxed, so read what you approve.
 
 ## Quickstart
 
-You need Python 3.10 or newer and an Anthropic API key.
+You need Python 3.10 or newer and an API key from Anthropic or OpenAI.
 
 ```bash
 git clone https://github.com/bensullivan2002/wren.git
@@ -90,11 +90,21 @@ Resuming brings back the conversation and the model it was using. It does not br
 
 The files are plain text, readable only by your user account, and kept until you delete them. They contain whatever Wren read, so treat them as you would the project itself.
 
+### Providers
+
+| Provider | Start with | Key | Starts on |
+| --- | --- | --- | --- |
+| Claude (the default) | `wren` | `ANTHROPIC_API_KEY` | `claude-sonnet-5-5` |
+| OpenAI | `wren --provider openai` | `OPENAI_API_KEY` | `gpt-5.6-terra` |
+| A pretend model, offline | `wren --provider fake` | none | `demo` |
+
+`export WREN_PROVIDER=openai` makes OpenAI the default. Everything else works the same on either. The OpenAI provider is tested against the SDK's types but has not yet been run against the live API. A conversation resumed under a different provider carries on, without the earlier model's private reasoning.
+
 ### Models
 
-`/model` lists the models your provider offers and switches to the one you pick; `/model NAME` switches directly. The conversation carries over. The first reply from a new model costs full price for the whole conversation, because the cache is kept per model. `/usage` shows the model the API reports as having written the last reply, so you can confirm a switch took effect. `--model` or `WREN_MODEL` sets the model Wren starts with.
+`/model` lists the models your provider offers and switches to the one you pick (it lists one provider's models: to change provider, restart with `--provider`); `/model NAME` switches directly. The conversation carries over. The first reply from a new model costs full price for the whole conversation, because the cache is kept per model. `/usage` shows the model the API reports as having written the last reply, so you can confirm a switch took effect. `--model` or `WREN_MODEL` sets the model Wren starts with.
 
-`/effort` chooses how hard the model works on each reply (how much it thinks, how thorough it is): higher is slower and costs more. The levels offered are the ones the current model accepts; `/effort LEVEL` sets one directly, `/effort default` hands the choice back to the model, and `--effort` or `WREN_EFFORT` sets it at launch. Changing model puts effort back to that model's default. Some providers offer effort as part of the model choice and not as a separate setting; there, `/effort` tells you to look in `/model`.
+`/effort` chooses how hard the model works on each reply (how much it thinks, how thorough it is): higher is slower and costs more. The levels offered are the ones the current model accepts (for OpenAI, every level the API knows, since it can't be asked per model); `/effort LEVEL` sets one directly, `/effort default` hands the choice back to the model, and `--effort` or `WREN_EFFORT` sets it at launch. Changing model puts effort back to that model's default. Some providers offer effort as part of the model choice and not as a separate setting; there, `/effort` tells you to look in `/model`.
 
 `/usage` shows what the default effort is for the current model (from Anthropic's documentation: the API doesn't report it), the effort Wren sent with the last request, and how many thinking tokens the API reported for the last reply. The API never states which effort it used, so thinking tokens are the only measurable sign that a change took effect.
 
@@ -140,8 +150,8 @@ Each setting can come from a flag, an environment variable, or the default, in t
 
 | Flag           | Environment variable | Default             |
 | -------------- | -------------------- | ------------------- |
-| `--provider`   | `WREN_PROVIDER`      | `anthropic`         |
-| `--model`      | `WREN_MODEL`         | `claude-sonnet-5-5` |
+| `--provider`   | `WREN_PROVIDER`      | `anthropic` (or `openai`, `fake`) |
+| `--model`      | `WREN_MODEL`         | the provider's default |
 | `--max-tokens` | `WREN_MAX_TOKENS`    | `32000`             |
 | `--max-steps`  | `WREN_MAX_STEPS`     | `25`                |
 | `--context-budget` | `WREN_CONTEXT_BUDGET` | `150000`       |
@@ -165,6 +175,7 @@ The docs are written to teach, not just to reference:
   5. [Context: what a long conversation costs](docs/journal/05-context.md)
   6. [Memory: instructions that outlast a conversation](docs/journal/06-memory.md)
   7. [Sessions, and switching models](docs/journal/07-sessions.md)
+  8. [A second provider: OpenAI](docs/journal/08-openai.md)
 
 ## Roadmap
 
@@ -175,7 +186,8 @@ The docs are written to teach, not just to reference:
 - [x] **5. Context management**: prompt caching, a context meter, and compaction at a token budget
 - [x] **6. Project memory**: standing instructions from `WREN.md` or `AGENTS.md`, per project and personal, with `/remember`
 - [x] **7. Sessions**: conversations saved as they happen, a picker to resume them, and model switching
-- [ ] **8. Extensions**: subagents, MCP servers, hooks
+- [x] **8. A second provider**: OpenAI, through the same interface as Claude
+- [ ] **9. Extensions**: subagents, MCP servers, hooks
 
 ## Development
 
@@ -200,6 +212,7 @@ src/wren/
   providers/
     base.py         the Provider interface
     anthropic.py    Claude, via the Anthropic Messages API
+    openai.py       OpenAI's models, via the Responses API
     fake.py         a pretend model for tests and the offline demo
   tools/
     base.py         the Tool interface; Pydantic inputs -> schema and checked arguments

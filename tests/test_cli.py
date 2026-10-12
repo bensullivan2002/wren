@@ -169,12 +169,21 @@ def test_missing_api_key_gives_a_helpful_message():
     assert "--provider fake" in result.stderr
 
 
+def test_each_provider_names_its_own_missing_key():
+    result = wren("--provider", "openai")
+    assert result.returncode == 1
+    assert "OPENAI_API_KEY is not set" in result.stderr and "--provider fake" in result.stderr
+
+
 def test_config_precedence_flag_then_env_then_default():
     env = {"WREN_MODEL": "from-env", "WREN_MAX_STEPS": "7"}
     assert Config.load(model="from-flag", env=env).model == "from-flag"
     assert Config.load(env=env).model == "from-env"
     assert Config.load(env=env).max_steps == 7
     assert Config.load(env={}).model == DEFAULT_MODEL
+    # The default model follows the provider: a Claude name means nothing to OpenAI.
+    assert Config.load(provider="openai", env={}).model == "gpt-5.6-terra"
+    assert Config.load(env={"WREN_PROVIDER": "openai", "WREN_MODEL": "gpt-6-astra"}).model == "gpt-6-astra"
     # 0 is a real value for the budget ("never compact"), from a flag or the environment.
     assert Config.load(context_budget=0, env={"WREN_CONTEXT_BUDGET": "5"}).context_budget == 0
     assert Config.load(env={"WREN_CONTEXT_BUDGET": "0"}).context_budget == 0

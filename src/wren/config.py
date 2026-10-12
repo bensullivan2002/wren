@@ -18,7 +18,20 @@ from dataclasses import dataclass
 from typing import Mapping
 
 DEFAULT_PROVIDER = "anthropic"
-DEFAULT_MODEL = "claude-sonnet-5-5"  # strong at coding, cheaper and faster than Opus
+# The model each provider starts with. For each, the mid-priced one: strong
+# at coding, cheaper and faster than the top of the range. /model changes it.
+DEFAULT_MODELS = {
+    "anthropic": "claude-sonnet-5-5",
+    "openai": "gpt-5.6-terra",
+    "fake": "demo",
+}
+DEFAULT_MODEL = DEFAULT_MODELS[DEFAULT_PROVIDER]
+
+# Where each provider's SDK looks for its key, and where to get one.
+API_KEYS = {
+    "anthropic": ("ANTHROPIC_API_KEY", "the Claude Console"),
+    "openai": ("OPENAI_API_KEY", "the OpenAI platform dashboard"),
+}
 # The most the model may write in one reply, *including* its private
 # thinking, which current models do before answering and which can't be
 # switched off. It's a ceiling, not a cost: you pay for what's written.
@@ -52,9 +65,12 @@ class Config:
         env: Mapping[str, str] = os.environ,
     ) -> Config:
         """Build a Config. Arguments are command-line flags (None = not given)."""
+        provider = provider or env.get("WREN_PROVIDER") or DEFAULT_PROVIDER
         return cls(
-            provider=provider or env.get("WREN_PROVIDER") or DEFAULT_PROVIDER,
-            model=model or env.get("WREN_MODEL") or DEFAULT_MODEL,
+            provider=provider,
+            # The default depends on the provider: a Claude model name means
+            # nothing to OpenAI.
+            model=model or env.get("WREN_MODEL") or DEFAULT_MODELS.get(provider, DEFAULT_MODEL),
             max_tokens=max_tokens or int(env.get("WREN_MAX_TOKENS") or DEFAULT_MAX_TOKENS),
             max_steps=max_steps or int(env.get("WREN_MAX_STEPS") or DEFAULT_MAX_STEPS),
             # `is not None`, not `or`: 0 is a real choice here (never compact).

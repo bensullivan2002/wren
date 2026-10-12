@@ -434,3 +434,57 @@ You asked for an effort setting, and for it to cope with providers that bundle e
 You asked what a model's default effort is, and for evidence of the effort used, as there is for the model. The API reports neither. So `/usage` shows: the default for the model from a table of documented values, with its date and "the API doesn't report it" (unknown models are shown as unknown); the effort the last request was sent with, labelled as Wren's own record; and the thinking tokens the provider reported for the last reply, the one measurable effect of effort.
 *Not chosen:* showing "effort: high" as if confirmed. Leaving the default unexplained (what you reported). Guessing a default for models not in the table.
 *Cost:* a hard-coded table, against the grain of D62 and D66. It exists only because the API has no way to ask.
+
+---
+
+### D69. A second provider, OpenAI, before extensions
+*Step 8 · you*
+
+You asked for an OpenAI provider ahead of MCP, subagents and hooks, which move to step 9. It tests D4 and D5 (Claude first, swappable later; Wren's own message types) with a real second model.
+
+### D70. The OpenAI provider uses the Responses API
+*Step 8 · you*
+
+OpenAI's current API and its recommendation for reasoning models: reasoning carries across tool calls, and usage reports reasoning and cached tokens.
+*Not chosen:* Chat Completions (the older API, and the one most "OpenAI-compatible" services copy; reasoning isn't carried between tool calls). Both, as two providers (most reach; twice the translation to maintain, and better as its own step).
+
+### D71. It uses the official `openai` SDK
+*Step 8 · you*
+
+Consistent with the Claude provider (D3). The package is imported only when the provider is chosen.
+*Not chosen:* hand-written HTTP (no dependency, every byte visible; but we would own retries, streaming and error handling).
+
+### D72. Effort is a separate `/effort` for OpenAI, as for Claude
+*Step 8 · you*
+
+In OpenAI's API, effort is a request setting (`reasoning.effort`), not part of the model's name; the bundling is how ChatGPT and Codex present their pickers. So `/model` and `/effort` work the same way on both providers.
+*Not chosen:* model-and-effort pairs in the model list. Both at once (two ways to do one thing).
+*Note:* the interface still allows a provider to fold effort into its models (D65); only the fake provider does today.
+
+### D73. Wren keeps the history for OpenAI too: `store: False`
+*Step 8 · design*
+
+Every request carries the whole conversation, with the model's reasoning as encrypted items that are replayed unchanged.
+*Not chosen:* OpenAI's server-side conversation state (less to send, but compaction, sessions, `/history` and switching provider all assume the history is `agent.messages`).
+
+### D74. Tools are declared `strict: False`
+*Step 8 · design*
+
+Left unset, the API tries to convert a schema to strict mode, where optional arguments become required-but-nullable. Wren's tools have optional arguments with defaults and reject null (D25), so a converted schema would make the model send arguments Wren refuses.
+*Cost:* OpenAI doesn't guarantee arguments match the schema. Wren validates them itself, as it does for every provider.
+
+### D75. For OpenAI, `/effort` offers every level, and defaults come from documentation
+*Step 8 · design*
+
+OpenAI's API can't be asked which levels a model accepts, so the provider offers all of them and an unsupported one is refused on the next request. Default effort comes from a dated table copied from OpenAI's guide; uncovered models show as unknown (as D68).
+*Not chosen:* a table of supported levels per model (it would be wrong within months, and wrong silently).
+
+### D76. Each provider has its own default model; OpenAI's is `gpt-5.6-terra`
+*Step 8 · design*
+
+The mid-priced option, by the reasoning of D11 for Sonnet. `/model` or `--model` changes it.
+
+### D77. OpenAI's model list is filtered by name
+*Step 8 · design*
+
+The API lists every model on the account, including image, speech and embedding models. The picker keeps ids starting `gpt-` or `o` and drops those containing words such as `embedding` or `audio`. It is a heuristic; `/model NAME` accepts any name.

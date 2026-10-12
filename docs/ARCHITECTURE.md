@@ -1,6 +1,6 @@
 # Architecture
 
-*Describes Wren as of **step 7**. This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
+*Describes Wren as of **step 8**. This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
 
 ## The big picture
 
@@ -16,6 +16,7 @@ flowchart LR
     agent -->|"stream(system, messages, tools)"| provider{{"<b>Provider</b><br/>providers/"}}
     provider -.->|stream events| agent
     provider --- anthropic["AnthropicProvider"] --> api[("Claude API")]
+    provider --- openai["OpenAIProvider"] --> oai[("OpenAI API")]
     provider --- fake["FakeProvider<br/>(tests, offline demo)"]
     agent -->|"run(name, args)"| registry["<b>ToolRegistry</b><br/>tools/registry.py"]
     registry -.->|ToolResult| agent
@@ -48,7 +49,7 @@ Solid arrows are calls; dotted arrows are what comes back, or a callback. One fr
 | **Sessions** | `sessions.py` | Write the conversation to a JSON Lines file as it happens; list and load saved sessions | The message types |
 | **Commands** | `commands.py` | Slash commands, returning text for either front end to show; resuming a session, switching model | The `Agent`, `Memory`, `SessionStore` |
 
-The rule behind this table: **each part knows as little as possible about the others.** The agent never prints and never touches files. Tools don't know there's a model, and never call `input()`. Nothing outside `providers/anthropic.py` knows what Anthropic's JSON looks like. Nothing outside `tui.py` knows about Textual. That's what lets us swap the model, have two interfaces, add tools, or test any part alone.
+The rule behind this table: **each part knows as little as possible about the others.** The agent never prints and never touches files. Tools don't know there's a model, and never call `input()`. Nothing outside `providers/anthropic.py` knows what Anthropic's JSON looks like, and nothing outside `providers/openai.py` knows OpenAI's. Nothing outside `tui.py` knows about Textual. That's what lets us swap the model, have two interfaces, add tools, or test any part alone.
 
 ## Anatomy of a tool
 
@@ -99,6 +100,23 @@ Empty files are skipped; each is capped at 20,000 characters. `Memory.render` wr
 `cli.py` gives the agent a *function* that builds the system prompt. The agent calls it when it's created and on `reset()` (`/clear`), and at no other time, so the prompt is fixed for the length of a conversation. Both front ends announce the loaded files at startup. `/remember` appends to the project file nearest the working directory (creating `WREN.md` if there is none); the change is seen from the next conversation.
 
 Memory lives in the system prompt, which compaction doesn't touch, so it survives compaction unchanged.
+
+## Providers
+
+A provider turns Wren's neutral history into one vendor's request, and that vendor's reply back into neutral types. The `Provider` protocol is: `name`, `model`, `effort`, `stream(...)`, `models()`, `efforts()`, `default_effort()`.
+
+| | `anthropic` | `openai` | `fake` |
+| --- | --- | --- | --- |
+| API | Messages | Responses, with `store: False` | none |
+| History sent as | messages of content blocks | a flat list of items | n/a |
+| Reasoning kept as | `thinking` blocks | `reasoning` items with encrypted content | none |
+| Caching | requested with `cache_control` | automatic | none |
+| Tool arguments | a JSON object | a JSON string, parsed on arrival | a dict |
+| Effort levels | asked of the API, per model | every level offered; the API can't be asked | fixed |
+| Default model | `claude-sonnet-5-5` | `gpt-5.6-terra` | `demo` |
+| Key | `ANTHROPIC_API_KEY` | `OPENAI_API_KEY` | none |
+
+Each provider stores its own reasoning as a `ReasoningBlock` tagged with its name, and leaves out any block tagged with another's. `Usage` means the same thing from every provider: `input_tokens` is the uncached part, and `sent_tokens` is everything sent.
 
 ## Sessions
 
@@ -204,7 +222,7 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 6. **Nobody is asked about a call that can't run.** Arguments are validated, and edits worked out, before the question.
 7. **File tools stay inside the working directory.** Every path is resolved (following `..` and symlinks) *before* it's checked. Writing tools also refuse anything inside `.git`. *(The shell is the exception: it is not fenced. See the journal.)*
 8. **No tool result exceeds 50,000 characters.**
-9. **Vendor formats never leak.** Only a provider module sees its vendor's request and response shapes.
+9. **Vendor formats never leak.** Only a provider module sees its vendor's request and response shapes. Adding a provider changes no file outside `providers/`, `config.py` and `cli.py`.
 10. **The agent and the tools never do I/O with the user.** The agent yields events; permission questions go through a callback. Front ends decide what to show.
 11. **Front ends are interchangeable.** The agent, tools and providers contain nothing specific to the app or to the REPL.
 12. **In the app, only the app's thread touches widgets.** The worker thread reaches the screen through `call_from_thread`.
@@ -225,8 +243,8 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 
 | Coming in | Plugs in at |
 | --- | --- |
-| Step 8: MCP | More tools in the `ToolRegistry`, provided by other programs; each needs a `permission()` story |
-| Step 8: subagents | A second `Agent` with its own history, run as a tool of the first |
-| Step 8: hooks | Around `ToolRegistry.run` and at turn boundaries in `Agent` |
+| Step 9: MCP | More tools in the `ToolRegistry`, provided by other programs; each needs a `permission()` story |
+| Step 9: subagents | A second `Agent` with its own history, run as a tool of the first |
+| Step 9: hooks | Around `ToolRegistry.run` and at turn boundaries in `Agent` |
 | Later: saved permission rules | Loaded into `Permissions.always` at startup |
 | Later: sandboxing | Around `tools/shell.py`'s `_run` |

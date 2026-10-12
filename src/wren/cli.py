@@ -24,7 +24,7 @@ from pathlib import Path
 
 from wren import __version__
 from wren.agent import Agent
-from wren.config import Config
+from wren.config import API_KEYS, Config
 from wren.commands import resume_session
 from wren.memory import Memory
 from wren.prompts import build_system_prompt
@@ -78,10 +78,12 @@ def main(argv: list[str] | None = None) -> int:
         effort=args.effort,
     )
 
-    if config.provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
+    key = API_KEYS.get(config.provider)
+    if key is not None and not os.environ.get(key[0]):
+        variable, where = key
         print(
-            "wren: ANTHROPIC_API_KEY is not set.\n"
-            "  Create an API key in the Claude Console, then: export ANTHROPIC_API_KEY=...\n"
+            f"wren: {variable} is not set.\n"
+            f"  Create an API key in {where}, then: export {variable}=...\n"
             "  Or try Wren offline with a pretend model:    wren --provider fake",
             file=sys.stderr,
         )

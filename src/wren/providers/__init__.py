@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from wren.providers.base import Provider
 
-PROVIDERS = ("anthropic", "fake")
+PROVIDERS = ("anthropic", "openai", "fake")
 
 
 def make_provider(name: str, model: str, effort: str | None = None) -> Provider:
@@ -14,6 +14,10 @@ def make_provider(name: str, model: str, effort: str | None = None) -> Provider:
         from wren.providers.anthropic import AnthropicProvider
 
         return AnthropicProvider(model, effort=effort)
+    if name == "openai":
+        from wren.providers.openai import OpenAIProvider
+
+        return OpenAIProvider(model, effort=effort)
     if name == "fake":
         from wren.providers.fake import FakeProvider
 

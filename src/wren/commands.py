@@ -281,7 +281,7 @@ def _usage(agent: Agent) -> str:
     u = agent.usage
     lines = [
         f"This conversation: {u.sent_tokens:,} tokens in · {u.output_tokens:,} out",
-        f"  of the input, {u.cache_read_tokens:,} were read from the cache (about a tenth of the price)",
+        f"  of the input, {u.cache_read_tokens:,} were read from the cache (billed at a fraction of the price)",
         f"Conversation now: {context_meter(agent)}",
         "",
         f"Model asked for: {agent.provider.model}",
