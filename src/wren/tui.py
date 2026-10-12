@@ -35,6 +35,7 @@ from __future__ import annotations
 import concurrent.futures
 import threading
 from contextlib import closing
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,7 @@ from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
+from textual.geometry import Size
 from textual.message import Message as TextualMessage
 from textual.widget import Widget
 from textual.widgets import Markdown, OptionList, Static, TextArea
@@ -71,6 +73,9 @@ from wren.prompts import COMPACTED_NOTE
 from wren.sessions import SessionError, SessionStore
 from wren.tools import Decision, PermissionRequest, ToolResult
 from wren.tools.files import diff
+
+# Package data, not a path into docs: the installed app can run in any folder.
+TERMINAL_LOGO = files("wren").joinpath("wren-terminal.txt").read_text(encoding="utf-8").rstrip("\n")
 
 MAX_DIFF_LINES = 40  # of a diff or new file, in a permission question or a result
 OUTPUT_TAIL_LINES = 10  # of a command's output, under its tool call
@@ -250,6 +255,7 @@ class WrenApp(App):
     CSS = """
     #header { height: 1; padding: 0 1; background: $panel; color: $text-muted; text-wrap: nowrap; text-overflow: ellipsis; }
     #transcript { height: 1fr; padding: 0 1; }
+    #welcome { height: auto; margin: 1 0; color: $accent; text-wrap: nowrap; }
     #status { height: 1; padding: 0 1; color: $text-muted; }
     #prompt { height: auto; max-height: 10; border: round $accent; }
     .user { margin: 1 0 0 0; padding: 0 1; background: $boost; color: $text; }
@@ -330,10 +336,24 @@ class WrenApp(App):
         # on a question or a command, so the program can actually exit.
         self._stop.set()
 
+    def _welcome_text(self, size: Size | None = None) -> str:
+        # Don't squeeze an eight-row bird into a short or narrow terminal.
+        size = self.size if size is None else size
+        if size.width < 20 or size.height < 20:
+            return "wren"
+        return TERMINAL_LOGO
+
+    def on_resize(self, event: events.Resize) -> None:
+        # Our handler runs before Textual updates the app's stored size.
+        for welcome in self.query("#welcome"):
+            welcome.update(self._welcome_text(event.size))
+
     async def _draw_conversation(self) -> None:
-        """Fill the transcript from the agent's history: nothing for a new
-        conversation, the whole of it for a resumed one."""
+        """Show the logo for a new conversation, or redraw a resumed history."""
         await self.transcript.remove_children()
+        if not self.agent.messages:
+            # Decoration only: never add it to model history or saved sessions.
+            await self.add(Static(self._welcome_text(), id="welcome", markup=False))
         await self._announce_memory()
         if self.notice:
             await self.note(self.notice)

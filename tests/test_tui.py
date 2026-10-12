@@ -21,7 +21,7 @@ from wren.providers.fake import FakeProvider
 from wren.sessions import SessionStore
 from wren.tools import Permissions, ToolRegistry, default_tools
 from wren.tools.permissions import FileChange
-from wren.tui import PermissionPrompt, Picker, WrenApp, change_text
+from wren.tui import TERMINAL_LOGO, PermissionPrompt, Picker, WrenApp, change_text
 
 
 def make_app(tmp_path, replies=None, memory=None, saved=False, choose_session=False):
@@ -66,6 +66,8 @@ def screen_text(app):
     """Everything in the conversation, as plain text."""
     parts = []
     for widget in app.transcript.query("*"):
+        if widget.id == "welcome":
+            continue  # decoration, not conversation; tested separately below
         if isinstance(widget, Markdown):
             parts.append(widget.source)
         elif isinstance(widget, Static):
@@ -83,6 +85,48 @@ def panel_text(app):
 def question(app):
     found = app.query(PermissionPrompt)
     return found.first() if found else None
+
+
+# --- Welcome ------------------------------------------------------------------------
+
+
+async def test_new_conversation_shows_the_logo_without_adding_it_to_history(tmp_path):
+    app = make_app(tmp_path, ["Hello"])
+    async with app.run_test(size=(80, 24)) as pilot:
+        welcome = app.query_one("#welcome", Static)
+        await until(pilot, lambda: welcome.region.height == 8, "the eight-row logo to be laid out")
+        assert str(welcome.content) == TERMINAL_LOGO
+        assert welcome.region.y >= app.transcript.region.y
+        assert welcome.region.bottom <= app.transcript.region.bottom
+        assert app.agent.messages == [] and app.focused is app.prompt
+
+        await say(app, pilot, "hi")
+        await finished(app, pilot)
+        assert [message.text for message in app.agent.messages] == ["hi", "Hello"]
+    assert history_problems(app.agent.messages) == []
+
+
+@pytest.mark.parametrize("size", [(18, 24), (80, 16)])
+async def test_small_terminals_use_text_and_restore_the_bird_after_resizing(tmp_path, size):
+    app = make_app(tmp_path)
+    async with app.run_test(size=size) as pilot:
+        welcome = app.query_one("#welcome", Static)
+        assert str(welcome.content) == "wren"
+        await pilot.resize_terminal(80, 24)
+        await until(pilot, lambda: str(welcome.content) == TERMINAL_LOGO, "the bird after enlarging")
+        await pilot.resize_terminal(*size)
+        await until(pilot, lambda: str(welcome.content) == "wren", "the compact logo after shrinking")
+        assert app.focused is app.prompt
+
+
+async def test_existing_history_opens_without_a_welcome_banner(tmp_path):
+    app = make_app(tmp_path, ["An earlier answer"])
+    list(app.agent.run_turn("An earlier question"))
+    async with app.run_test() as pilot:
+        assert not app.query("#welcome")
+        assert "An earlier answer" in screen_text(app)
+        assert len(app.agent.messages) == 2
+    assert history_problems(app.agent.messages) == []
 
 
 # --- Talking ------------------------------------------------------------------------
@@ -373,6 +417,8 @@ async def test_slash_commands_that_change_things_leave_a_note_and_clear_empties_
         await say(app, pilot, "/clear")
         await pilot.pause()
         assert screen_text(app) == "Conversation cleared." and app.agent.messages == []
+        assert len(app.query("#welcome")) == 1
+        assert str(app.query_one("#welcome", Static).content) == TERMINAL_LOGO
 
 
 async def test_compact_runs_in_the_background_and_reports_what_it_saved(tmp_path):

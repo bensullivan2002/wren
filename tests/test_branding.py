@@ -4,6 +4,7 @@ These are asset integrity tests, not claims about aesthetic quality. They
 use only the standard library and never regenerate files during a test.
 """
 
+from importlib.resources import files
 from pathlib import Path
 import runpy
 import struct
@@ -36,6 +37,10 @@ def test_pixel_master_is_a_connected_16_square_silhouette():
     assert visited == solid  # no stray, disconnected pixels
     assert PIXELS[4][11] == "."  # the eye stays a one-pixel cutout
     assert all(PIXELS[y][x] == "." for x, y in ((6, 8), (8, 9), (6, 10)))  # > wing
+
+
+def test_installed_package_bundles_the_same_terminal_mark():
+    assert files("wren").joinpath("wren-terminal.txt").read_bytes() == ARTIFACTS["wren-terminal.txt"]
 
 
 @pytest.mark.parametrize("name", sorted(ARTIFACTS))
