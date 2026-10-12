@@ -303,6 +303,7 @@ class WrenApp(App):
             await self._draw_message(message, pending)
         self.query_one("#header", Static).update(self._header_text())
         self._show_status()
+        self.to_the_end()  # a resumed conversation opens at its latest message
         if self.choose_session:
             self.choose_session = False
             await self.pick_session()
@@ -346,6 +347,31 @@ class WrenApp(App):
         await self.transcript.mount(widget)
         return widget
 
+    async def ask(self, widget: Widget) -> None:
+        """Put a widget that needs an answer (a permission question, a
+        picker) at the end of the conversation, give it the keyboard, and
+        make sure it can be seen.
+
+        The obvious way, mount it and call focus(), has a trap. Focusing a
+        widget scrolls it into view, and at that moment the new widget
+        hasn't been laid out yet: as far as Textual knows, it's at the very
+        top. So the conversation jumped to its beginning, and the question
+        was left off-screen at the bottom, waiting. Scrolling by hand also
+        cancels the "stay at the bottom" anchor, so it stayed wrong.
+
+        So: take the focus WITHOUT scrolling, then pin the conversation to
+        its end again, once now and once after the layout has caught up.
+        """
+        await self.transcript.mount(widget)
+        widget.focus(scroll_visible=False)
+        self.to_the_end()
+
+    def to_the_end(self) -> None:
+        """Scroll the conversation to its end, and keep it there as more
+        arrives (until the user scrolls away)."""
+        self.transcript.anchor()
+        self.call_after_refresh(self.transcript.scroll_end, animate=False)
+
     async def note(self, text: str, classes: str = "note") -> None:
         await self.add(Static(text, markup=False, classes=classes))
 
@@ -362,6 +388,7 @@ class WrenApp(App):
         else:
             self.prompt.clear()
             await self.add(Static(text, markup=False, classes="user"))
+            self.to_the_end()  # you've spoken: come back to the present, wherever you'd scrolled to
             self.busy = True
             self._stop.clear()
             self._show_status()
@@ -506,8 +533,7 @@ class WrenApp(App):
     async def _open_picker(self, title: str, rows: list, on_choice) -> None:
         self._close_picker()
         self._picker = Picker(title, rows, on_choice)
-        await self.add(self._picker)
-        self._picker.focus()
+        await self.ask(self._picker)
 
     def _close_picker(self) -> None:
         if self._picker is not None and self._picker.is_attached:
@@ -598,8 +624,7 @@ class WrenApp(App):
 
     async def show_question(self, request: PermissionRequest, answer: concurrent.futures.Future) -> None:
         self._question = PermissionPrompt(request, answer)
-        await self.add(self._question)
-        self._question.focus()
+        await self.ask(self._question)
 
     def hide_question(self) -> None:
         if self._question is not None and self._question.is_attached:

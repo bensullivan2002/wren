@@ -151,6 +151,12 @@ When it's answered, it hands the focus back to the prompt and removes itself. Th
 
 Escape is different: it's bound on the app with `priority=True`, so it works wherever the focus is.
 
+### A bug that focus caused, found later
+
+In real use, every permission question made the conversation jump to its very top, leaving the question waiting off-screen. The cause was one line: `question.focus()`. Focusing a widget scrolls it into view, and the widget had only just been mounted, so it hadn't been laid out yet and Textual took its position to be the top. That scroll also cancelled the "stay at the bottom" anchor, so the view stayed wrong afterwards.
+
+The fix (`WrenApp.ask`) is to take the focus without scrolling, `widget.focus(scroll_visible=False)`, then pin the conversation to its end again, once immediately and once after the layout has caught up. The headless tests had missed it because they used conversations too short to scroll. There's now a test with a long one that checks the scroll position. **A UI test that never scrolls can't catch a scrolling bug.**
+
 ## Idea 6: stopping is still closing the generator
 
 Escape sets a flag (`threading.Event`). The worker sees it at the next event and leaves the loop. Leaving the `with closing(...)` block closes the agent's generator, which raises `GeneratorExit` inside the agent, which runs step 3's `_close_unfinished_turn`.

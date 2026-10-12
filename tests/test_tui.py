@@ -196,6 +196,48 @@ async def test_a_command_shows_the_end_of_its_output_and_always_is_not_offered_f
         assert "→ 2 lines\none\ntwo" in screen_text(app)
 
 
+async def test_a_question_in_a_long_conversation_appears_on_screen_not_above_it(tmp_path):
+    # The bug: giving the question the keyboard scrolled the conversation to
+    # its very top, leaving the question waiting off-screen at the bottom.
+    app = make_app(tmp_path)
+
+    def at_the_end():
+        return app.transcript.max_scroll_y > 0 and app.transcript.scroll_y == app.transcript.max_scroll_y
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        for i in range(10):
+            await say(app, pilot, f"message {i} " + "word " * 30)
+            await finished(app, pilot)
+        await until(pilot, at_the_end, "the conversation to be scrolled to its end")
+
+        await say(app, pilot, "write notes.txt hello")
+        await until(pilot, lambda: question(app), "the permission question")
+        await until(pilot, at_the_end, "the question to be in view")
+
+        await pilot.press("y")
+        await finished(app, pilot)
+        await until(pilot, at_the_end, "the result to be in view")
+
+        await say(app, pilot, "/model")
+        await until(pilot, lambda: app.query(Picker), "the model picker")
+        await until(pilot, at_the_end, "the picker to be in view")
+
+
+async def test_sending_a_message_returns_to_the_end_after_scrolling_up(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test(size=(100, 30)) as pilot:
+        for i in range(10):
+            await say(app, pilot, f"message {i} " + "word " * 30)
+            await finished(app, pilot)
+        app.transcript.scroll_home(animate=False)  # the user scrolls up to read something
+        await pilot.pause()
+        assert app.transcript.scroll_y == 0
+
+        await say(app, pilot, "one more")
+        await finished(app, pilot)
+        await until(pilot, lambda: app.transcript.scroll_y == app.transcript.max_scroll_y, "a return to the end")
+
+
 # --- Stopping -----------------------------------------------------------------------------
 
 
