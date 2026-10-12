@@ -18,8 +18,9 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from wren.agent import Agent, Compacted
-from wren.config import API_KEYS, DEFAULT_MODELS
+from wren.config import API_KEYS, default_choice
 from wren.memory import Memory
+from wren.settings import UserDefaults
 from wren.sessions import SavedSession, SessionError, SessionStore
 from wren.messages import Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock
 from wren.providers import PROVIDERS, make_provider
@@ -67,16 +68,19 @@ def run_command(
     keys_help: str = "",
     memory: Memory | None = None,
     sessions: SessionStore | None = None,
+    defaults: UserDefaults | None = None,
 ) -> CommandResult:
     """Run one slash command. `keys_help` is the front end's own note about
-    its keys (Ctrl-C, Escape...), added to the end of /help."""
+    its keys (Ctrl-C, Escape...), added to the end of /help. `defaults` is
+    where the user's saved defaults are read from (never written here: only
+    a picker's Enter saves one)."""
     name, *args = line.split()
     name = name.lower()
 
     if name == "/provider":
         if not args:
             return CommandResult(pick_provider=True)
-        text, ok = switch_provider(agent, args[0].lower())
+        text, ok = switch_provider(agent, args[0].lower(), user=defaults)
         return CommandResult(text, is_error=not ok)
     if name == "/model":
         if not args:
@@ -150,7 +154,7 @@ def missing_key(provider_name: str) -> str | None:
     return key[0] if key is not None and not os.environ.get(key[0]) else None
 
 
-def provider_choices(agent: Agent) -> list[tuple[str, str]]:
+def provider_choices(agent: Agent, user: UserDefaults | None = None) -> list[tuple[str, str]]:
     """Each provider, with a note on where it stands: (label, name)."""
     rows = []
     for name in PROVIDERS:
@@ -159,14 +163,25 @@ def provider_choices(agent: Agent) -> list[tuple[str, str]]:
         elif missing_key(name):
             note = f"   (needs {missing_key(name)} to be set)"
         else:
-            note = f"   ({agent.model_last_used_with(name) or DEFAULT_MODELS[name]})"
+            note = f"   ({agent.model_last_used_with(name) or default_choice(name, user)[0]})"
         rows.append((name + note, name))
     return rows
 
 
-def switch_provider(agent: Agent, name: str, model: str | None = None, effort: str | None = None) -> tuple[str, bool]:
+def switch_provider(
+    agent: Agent,
+    name: str,
+    model: str | None = None,
+    effort: str | None = None,
+    user: UserDefaults | None = None,
+) -> tuple[str, bool]:
     """Move the conversation to another provider. Returns what to say, and
-    whether it worked. On any failure the current provider is kept."""
+    whether it worked. On any failure the current provider is kept.
+
+    With no `model` given, it goes back to the one this conversation last
+    used there, or else to the provider's default. When that is the default
+    model, it also gets the default effort, as it would at startup. A model
+    named by the caller (resuming a session) brings its own effort."""
     if name not in PROVIDERS:
         return f"no provider called {name}. There are: {', '.join(PROVIDERS)}", False
     if name == agent.provider.name:
@@ -174,8 +189,11 @@ def switch_provider(agent: Agent, name: str, model: str | None = None, effort: s
     variable = missing_key(name)
     if variable:
         return f"{name} needs an API key: set {variable} in your shell and start Wren again.", False
-    # Back to the model this conversation last used there, or else the provider's usual one.
-    model = model or agent.model_last_used_with(name) or DEFAULT_MODELS[name]
+    default_model, default_level = default_choice(name, user)
+    if model is None:
+        model = agent.model_last_used_with(name) or default_model
+        if model == default_model:
+            effort = default_level
     try:
         provider = make_provider(name, model, effort)
     except Exception as e:  # the SDK refused to start, for whatever reason
@@ -185,6 +203,49 @@ def switch_provider(agent: Agent, name: str, model: str | None = None, effort: s
     if agent.messages:
         note += " Its first reply re-reads the conversation at full price, and the earlier model's private reasoning doesn't carry over."
     return note, True
+
+
+def remember_model(agent: Agent, user: UserDefaults | None) -> str:
+    """Save the model now in use as this provider's default, for every
+    future session. Called after the model was chosen with Enter.
+
+    What's saved is the model with the effort it now has. Choosing a new
+    model puts effort back to that model's own default (set_model), so that
+    is what's saved with it; choosing the model already in use leaves its
+    effort alone. Starting Wren later is not choosing a model, so it takes
+    the pair as saved."""
+    if user is None:
+        return ""
+    provider = agent.provider
+    try:
+        user.save(provider.name, provider.model, provider.effort)
+    except OSError as e:
+        return f"Couldn't save {provider.model} as your default: {e}"
+    return f"Saved {provider.model} as your default {provider.name} model, for every session."
+
+
+def remember_effort(agent: Agent, user: UserDefaults | None) -> str:
+    """Save the effort now in use as the default effort for this provider's
+    default model. Called after it was chosen with Enter.
+
+    An effort level belongs to a model, and a model chosen only for this
+    session (Space) isn't the default one, so there's nothing to attach
+    the level to: it stays in this session."""
+    if user is None:
+        return ""
+    provider = agent.provider
+    default_model, _ = default_choice(provider.name, user)
+    if provider.model != default_model:
+        return (
+            f"This effort is for this session only: your default {provider.name} model is {default_model}, "
+            f"and efforts are saved with it. Choose {provider.model} with Enter to make it the default."
+        )
+    try:
+        user.save(provider.name, provider.model, provider.effort)
+    except OSError as e:
+        return f"Couldn't save your default effort: {e}"
+    level = provider.effort or "the model's own default"
+    return f"Saved {level} as your default effort with {provider.model}, for every session."
 
 
 def switch_model(agent: Agent, model: str) -> str:

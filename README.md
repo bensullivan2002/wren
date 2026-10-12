@@ -104,15 +104,19 @@ The files are plain text, readable only by your user account, and kept until you
 
 | Provider | Start with | Key | Starts on |
 | --- | --- | --- | --- |
-| Claude (the default) | `wren` | `ANTHROPIC_API_KEY` | `claude-sonnet-5-5` |
-| OpenAI | `wren --provider openai` | `OPENAI_API_KEY` | `gpt-5.6-terra` |
+| Claude (the default) | `wren` | `ANTHROPIC_API_KEY` | `claude-opus-5-5`, `xhigh` effort |
+| OpenAI | `wren --provider openai` | `OPENAI_API_KEY` | `gpt-6.1-sol`, `xhigh` effort |
 | A pretend model, offline | `wren --provider fake` | none | `demo` |
+
+(Those are Wren's own defaults. Yours, if you've set them, replace them: see "Models".)
 
 `export WREN_PROVIDER=openai` makes OpenAI the default, and `/provider` switches in the middle of a conversation: the conversation carries over, the next reply is billed in full once, and the previous model's private reasoning is left behind. A provider whose key isn't set can't be chosen. Everything else works the same on either. The OpenAI provider is tested against the SDK's types but has not yet been run against the live API. A conversation resumed under a different provider carries on, without the earlier model's private reasoning.
 
 ### Models
 
 `/model` lists the models your provider offers and switches to the one you pick (to change provider, use `/provider`); `/model NAME` switches directly. The conversation carries over. The first reply from a new model costs full price for the whole conversation, because the cache is kept per model. `/usage` shows the model the API reports as having written the last reply, so you can confirm a switch took effect. `--model` or `WREN_MODEL` sets the model Wren starts with.
+
+**Making a choice your default.** In the `/model` and `/effort` pickers, **Enter** chooses and keeps the choice as your default for every future session (in `~/.wren/settings.json`, one entry per provider); **Space** chooses for this session only, and leaves your saved default alone. Choosing a model with Enter saves it with that model's own default effort, so pick an effort with Enter afterwards if you want a specific one. An effort chosen with Enter is saved with your default model: if you're on a model you chose with Space, it applies to the session and isn't saved. `/model NAME` and `/effort LEVEL` typed out, and the plain `--plain` mode, never save anything. Starting Wren is not choosing a model, so it uses your saved model *and* effort as they are. Without a saved default, Wren starts on the models in the table above.
 
 `/effort` chooses how hard the model works on each reply (how much it thinks, how thorough it is): higher is slower and costs more. The levels offered are the ones the current model accepts (for OpenAI, every level the API knows, since it can't be asked per model); `/effort LEVEL` sets one directly, `/effort default` hands the choice back to the model, and `--effort` or `WREN_EFFORT` sets it at launch. Changing model puts effort back to that model's default. Some providers offer effort as part of the model choice and not as a separate setting; there, `/effort` tells you to look in `/model`.
 
@@ -156,16 +160,16 @@ The file tools are confined to the working directory, skip folders like `.git`, 
 
 ## Configuration
 
-Each setting can come from a flag, an environment variable, or the default, in that order of priority.
+Each setting can come from a flag, an environment variable, or the default, in that order of priority. For the model and effort the default has two layers: what you saved with Enter in the pickers, then Wren's own (Opus 5.5 and GPT 6.1 Sol, at `xhigh`). An effort you didn't ask for goes with the model it was saved for: `--model` or `WREN_MODEL` naming a different model starts at that model's own effort.
 
 | Flag           | Environment variable | Default             |
 | -------------- | -------------------- | ------------------- |
 | `--provider`   | `WREN_PROVIDER`      | `anthropic` (or `openai`, `fake`) |
-| `--model`      | `WREN_MODEL`         | the provider's default |
+| `--model`      | `WREN_MODEL`         | your saved default, else the provider's |
 | `--max-tokens` | `WREN_MAX_TOKENS`    | `32000`             |
 | `--max-steps`  | `WREN_MAX_STEPS`     | `25`                |
 | `--context-budget` | `WREN_CONTEXT_BUDGET` | `150000`       |
-| `--effort`     | `WREN_EFFORT`        | the model's default |
+| `--effort`     | `WREN_EFFORT`        | your saved default, else `xhigh` (for the default model); another model: its own |
 | `--resume [ID]` |                     |                     |
 | `--plain`      |                      | off                 |
 
@@ -215,6 +219,7 @@ src/wren/
   prompts.py        the system prompt, and the prompt used to compact a conversation
   memory.py         finds and loads WREN.md / AGENTS.md; /remember
   sessions.py       saves conversations as JSON Lines; lists and loads them
+  settings.py       the model and effort you chose to keep (~/.wren/settings.json)
   agent.py          owns the conversation; runs the agent loop; compacts it
   messages.py       provider-neutral message types, and the history rules
   tui.py            the full-screen front end (Textual)

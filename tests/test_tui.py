@@ -17,24 +17,27 @@ from textual.widgets import Markdown, Static
 from wren.agent import INTERRUPTED_NOTE, Agent
 from wren.memory import Memory
 from wren.messages import Message, TextBlock, ToolUseBlock, history_problems
+from wren.config import Config
 from wren.providers.fake import FakeProvider
 from wren.sessions import SessionStore
+from wren.settings import UserDefaults
 from wren.tools import Permissions, ToolRegistry, default_tools
 from wren.tools.permissions import FileChange
 from wren.tui import TERMINAL_LOGO, PermissionPrompt, Picker, WrenApp, change_text
 
 
-def make_app(tmp_path, replies=None, memory=None, saved=False, choose_session=False):
+def make_app(tmp_path, replies=None, memory=None, saved=False, choose_session=False, defaults=None):
     """An app on a throwaway project. With no `replies`, the fake model is in
     demo mode, where typing `read x`, `write x text` or `run cmd` asks for a tool.
-    With `saved`, its conversations are written under tmp_path/home."""
+    With `saved`, its conversations are written under tmp_path/home. With
+    `defaults`, choices made with Enter in the pickers are kept there."""
     tools = ToolRegistry(default_tools(), root=tmp_path, permissions=Permissions())
     agent = Agent(FakeProvider(replies), "sys", 100, tools)
     sessions = None
     if saved:
         sessions = SessionStore(tmp_path, agent.provider.name, agent.provider.model, home=tmp_path / "home")
         agent.journal = sessions
-    return WrenApp(agent, memory, sessions, choose_session=choose_session)
+    return WrenApp(agent, memory, sessions, choose_session=choose_session, defaults=defaults)
 
 
 def asks(*calls):
@@ -551,6 +554,115 @@ async def test_the_effort_picker_sets_effort_and_shows_it_in_the_header(tmp_path
         assert app.agent.provider.calls[-1]["effort"] == "high"
 
 
+# --- Enter keeps a choice for every session; Space keeps it to this one ----------------------------
+
+
+async def pick(app, pilot, command, *keys):
+    """Open a picker with a slash command, press `keys` in it, and wait for it to close."""
+    await say(app, pilot, command)
+    await until(pilot, lambda: app.query(Picker), "the picker")
+    await pilot.press(*keys)
+    await until(pilot, lambda: not app.query(Picker), "the picker to close")
+
+
+async def test_enter_in_the_model_picker_saves_it_as_the_default_for_every_session(tmp_path):
+    user = UserDefaults(tmp_path / "settings.json")
+    app = make_app(tmp_path, defaults=user)
+    async with app.run_test() as pilot:
+        await pick(app, pilot, "/model", "down", "enter")
+        assert app.agent.provider.model == "demo-large"
+        assert "Saved demo-large as your default fake model" in screen_text(app)
+    # Saved with the effort it has: a new model starts at its own default.
+    assert user.get("fake") == ("demo-large", None)
+    # The next run is not a new model choice: it starts on what was saved.
+    assert Config.load(provider="fake", env={}, user=user).model == "demo-large"
+
+
+async def test_space_in_the_model_picker_keeps_it_to_this_session(tmp_path):
+    user = UserDefaults(tmp_path / "settings.json")
+    app = make_app(tmp_path, defaults=user)
+    async with app.run_test() as pilot:
+        await pick(app, pilot, "/model", "down", "space")
+        assert app.agent.provider.model == "demo-large"
+        assert "demo-large" in str(app.query_one("#header").content)
+        assert "Saved" not in screen_text(app)
+    assert user.get("fake") is None and not user.path.exists()
+    assert Config.load(provider="fake", env={}, user=user).model == "demo"
+
+
+async def test_a_session_only_choice_does_not_disturb_an_earlier_saved_default(tmp_path):
+    user = UserDefaults(tmp_path / "settings.json")
+    app = make_app(tmp_path, defaults=user)
+    async with app.run_test() as pilot:
+        await pick(app, pilot, "/model", "down", "enter")  # demo-large, for good
+        await pick(app, pilot, "/model", "down", "down", "space")  # demo-fast, for now
+        assert app.agent.provider.model == "demo-fast"
+    assert user.get("fake") == ("demo-large", None)
+
+
+async def test_enter_in_the_effort_picker_saves_the_effort_with_the_default_model(tmp_path):
+    user = UserDefaults(tmp_path / "settings.json")
+    app = make_app(tmp_path, defaults=user)
+    async with app.run_test() as pilot:
+        await pick(app, pilot, "/effort", "down", "down", "down", "enter")  # default, low, medium, high
+        assert app.agent.provider.effort == "high"
+        assert "Saved high as your default effort with demo" in screen_text(app)
+    assert user.get("fake") == ("demo", "high")
+    config = Config.load(provider="fake", env={}, user=user)
+    assert (config.model, config.effort) == ("demo", "high")
+
+
+async def test_space_in_the_effort_picker_keeps_it_to_this_session(tmp_path):
+    user = UserDefaults(tmp_path / "settings.json")
+    app = make_app(tmp_path, defaults=user)
+    async with app.run_test() as pilot:
+        await pick(app, pilot, "/effort", "down", "down", "down", "space")
+        assert app.agent.provider.effort == "high"
+    assert not user.path.exists()
+
+
+async def test_an_effort_chosen_with_enter_on_a_session_only_model_is_not_saved(tmp_path):
+    # The saved effort is for the default model; this model isn't it.
+    user = UserDefaults(tmp_path / "settings.json")
+    app = make_app(tmp_path, defaults=user)
+    async with app.run_test() as pilot:
+        await pick(app, pilot, "/model", "down", "space")  # demo-large, for now
+        await pick(app, pilot, "/effort", "down", "down", "down", "enter")
+        assert app.agent.provider.effort == "high"  # applied to the session all the same
+        assert "for this session only" in screen_text(app)
+    assert not user.path.exists()
+
+
+async def test_enter_on_the_model_already_in_use_saves_it_with_the_effort_it_has(tmp_path):
+    user = UserDefaults(tmp_path / "settings.json")
+    app = make_app(tmp_path, defaults=user)
+    async with app.run_test() as pilot:
+        app.agent.set_effort("low")
+        await pick(app, pilot, "/model", "enter")  # "demo", already in use
+        assert "Already using demo" in screen_text(app)
+    assert user.get("fake") == ("demo", "low")
+
+
+async def test_typed_commands_never_save_a_default(tmp_path):
+    user = UserDefaults(tmp_path / "settings.json")
+    app = make_app(tmp_path, defaults=user)
+    async with app.run_test() as pilot:
+        await say(app, pilot, "/model demo-large")
+        await say(app, pilot, "/effort high")
+        await pilot.pause()
+        assert (app.agent.provider.model, app.agent.provider.effort) == ("demo-large", "high")
+    assert not user.path.exists()
+
+
+async def test_the_model_and_effort_pickers_say_what_the_two_keys_do(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await say(app, pilot, "/model")
+        await until(pilot, lambda: app.query(Picker), "the model picker")
+        assert "enter choose" not in app.panel.border_subtitle
+        assert "enter set as default" in app.panel.border_subtitle and "space this session only" in app.panel.border_subtitle
+
+
 async def test_effort_for_a_model_without_the_setting_explains_instead_of_offering_a_list(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
@@ -570,7 +682,7 @@ async def test_the_provider_picker_switches_provider_and_says_which_need_a_key(t
         await say(app, pilot, "/provider")
         await until(pilot, lambda: app.query(Picker), "the provider picker")
         rows = [str(app.query_one(Picker).get_option_at_index(i).prompt) for i in range(3)]
-        assert "anthropic" in rows[0] and "claude-sonnet-5-5" in rows[0]
+        assert "anthropic" in rows[0] and "claude-opus-5-5" in rows[0]
         assert "openai" in rows[1] and "needs OPENAI_API_KEY" in rows[1]
         assert "fake" in rows[2] and "in use" in rows[2]
 
@@ -583,7 +695,7 @@ async def test_the_provider_picker_switches_provider_and_says_which_need_a_key(t
         await pilot.press("enter")  # anthropic
         await until(pilot, lambda: "Now using anthropic" in screen_text(app), "the switch")
         assert app.agent.provider.name == "anthropic"
-        assert "anthropic · claude-sonnet-5-5" in str(app.query_one("#header").content)
+        assert "anthropic · claude-opus-5-5 (xhigh effort)" in str(app.query_one("#header").content)
 
 
 async def test_escape_closes_a_picker_without_choosing(tmp_path):

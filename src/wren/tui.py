@@ -59,6 +59,8 @@ from wren.commands import (
     plain_call,
     model_list,
     provider_choices,
+    remember_effort,
+    remember_model,
     resume_session,
     run_command,
     session_label,
@@ -71,6 +73,7 @@ from wren.memory import Memory
 from wren.messages import Completed, Message, TextDelta, ToolUseBlock
 from wren.prompts import COMPACTED_NOTE
 from wren.sessions import SessionError, SessionStore
+from wren.settings import UserDefaults
 from wren.tools import Decision, PermissionRequest, ToolResult
 from wren.tools.files import diff
 
@@ -210,14 +213,31 @@ class Picker(OptionList):
 
     It's Textual's own OptionList, plus a note of what each row stands for
     and what to do with the choice. It's shown in the command panel.
+
+    Space chooses too, but says "just for now". Most pickers treat the two
+    the same. The model and effort pickers (`saves=True`) use the difference:
+    Enter also makes the choice the default for every future session, and
+    Space keeps it to this session.
     """
 
-    def __init__(self, rows: list[tuple[str, Any]], on_choice) -> None:
+    BINDINGS = [Binding("space", "select_for_session", "Choose for this session only", show=False)]
+
+    def __init__(self, rows: list[tuple[str, Any]], on_choice, saves: bool = False) -> None:
         # Text objects, not strings: the labels come from outside (a model
         # id, the first line of an old conversation) and mustn't be read as markup.
         super().__init__(*[Text(label) for label, _ in rows], classes="picker")
         self.values = [value for _, value in rows]
         self.on_choice = on_choice
+        self.saves = saves
+        self.session_only = False  # which key made the choice that's being handled
+
+    def action_select(self) -> None:  # Enter
+        self.session_only = False
+        super().action_select()
+
+    def action_select_for_session(self) -> None:  # Space
+        self.session_only = True
+        super().action_select()
 
 
 class CommandPanel(VerticalScroll):
@@ -306,11 +326,13 @@ class WrenApp(App):
         sessions: SessionStore | None = None,
         notice: str = "",
         choose_session: bool = False,
+        defaults: UserDefaults | None = None,
     ) -> None:
         super().__init__()
         self.agent = agent
         self.memory = memory
         self.sessions = sessions
+        self.defaults = defaults  # the saved default model and effort; None: nothing is kept between sessions
         self.notice = notice  # something to say at startup, e.g. which session was resumed
         self.choose_session = choose_session  # started with --resume: open the session picker first
         self.busy = False  # True while a turn is running
@@ -487,7 +509,7 @@ class WrenApp(App):
             self.notify("Wren is still working. Press Escape to stop it, or try that when it has finished.")
             return
         await self.close_panel()  # one command's output at a time
-        result = run_command(self.agent, line, KEYS_HELP, self.memory, self.sessions)
+        result = run_command(self.agent, line, KEYS_HELP, self.memory, self.sessions, self.defaults)
 
         if result.quit:
             self.action_quit_wren()
@@ -570,10 +592,10 @@ class WrenApp(App):
     # --- Pickers: choosing a provider, a model, an effort or a saved conversation ----
 
     async def pick_provider(self) -> None:
-        await self._open_picker("/provider", provider_choices(self.agent), self._provider_chosen)
+        await self._open_picker("/provider", provider_choices(self.agent, self.defaults), self._provider_chosen)
 
     async def _provider_chosen(self, name: str) -> None:
-        text, ok = switch_provider(self.agent, name)
+        text, ok = switch_provider(self.agent, name, user=self.defaults)
         await self.note(text, "output" if ok else "error")
         self._show_header()
 
@@ -590,10 +612,13 @@ class WrenApp(App):
             return
         current = self.agent.provider.model
         rows = [(model + ("   (in use)" if model == current else ""), model) for model in models]
-        await self._open_picker(f"/model · {self.agent.provider.name}", rows, self._model_chosen)
+        await self._open_picker(f"/model · {self.agent.provider.name}", rows, self._model_chosen, saves=True)
 
-    async def _model_chosen(self, model: str) -> None:
-        await self.note(switch_model(self.agent, model))
+    async def _model_chosen(self, model: str, remember: bool) -> None:
+        text = switch_model(self.agent, model)
+        if remember:  # Enter: the default for every session. Space: this session only.
+            text = f"{text} {remember_model(self.agent, self.defaults)}".strip()
+        await self.note(text)
         self._show_header()
 
     @work(thread=True, exclusive=True, group="turn")
@@ -612,10 +637,13 @@ class WrenApp(App):
         means = f": {usual} for this model" if usual else ": let the model decide"
         rows = [(f"default{means}" + ("   (in use)" if current is None else ""), None)]
         rows += [(level + ("   (in use)" if level == current else ""), level) for level in levels]
-        await self._open_picker(f"/effort · {self.agent.provider.model}", rows, self._effort_chosen)
+        await self._open_picker(f"/effort · {self.agent.provider.model}", rows, self._effort_chosen, saves=True)
 
-    async def _effort_chosen(self, effort: str | None) -> None:
-        await self.note(switch_effort(self.agent, effort))
+    async def _effort_chosen(self, effort: str | None, remember: bool) -> None:
+        text = switch_effort(self.agent, effort)
+        if remember:
+            text = f"{text} {remember_effort(self.agent, self.defaults)}".strip()
+        await self.note(text)
         self._show_header()
 
     async def pick_session(self) -> None:
@@ -634,16 +662,21 @@ class WrenApp(App):
             return
         await self._draw_conversation()
 
-    async def _open_picker(self, title: str, rows: list, on_choice) -> None:
-        await self.panel.show(title, Picker(rows, on_choice), keys="↑↓ move · enter choose")
+    async def _open_picker(self, title: str, rows: list, on_choice, saves: bool = False) -> None:
+        keys = "↑↓ move · enter set as default · space this session only" if saves else "↑↓ move · enter choose"
+        await self.panel.show(title, Picker(rows, on_choice, saves), keys=keys)
 
     @on(OptionList.OptionSelected)
     async def _picked(self, event: OptionList.OptionSelected) -> None:
         picker = event.option_list
         if isinstance(picker, Picker):
             value, on_choice = picker.values[event.option_index], picker.on_choice
+            session_only = picker.session_only
             await self.close_panel()
-            await on_choice(value)
+            if picker.saves:
+                await on_choice(value, not session_only)
+            else:
+                await on_choice(value)
 
     def _on_app_thread(self, method, *args) -> None:
         """Run `method` on the app's thread and wait for it to finish.

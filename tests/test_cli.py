@@ -9,6 +9,7 @@ from datetime import date
 from pathlib import Path
 
 from wren.config import DEFAULT_MODEL, Config
+from wren.settings import UserDefaults
 from wren.prompts import build_system_prompt
 
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -193,15 +194,46 @@ def test_config_precedence_flag_then_env_then_default():
     assert Config.load(env=env).max_steps == 7
     assert Config.load(env={}).model == DEFAULT_MODEL
     # The default model follows the provider: a Claude name means nothing to OpenAI.
-    assert Config.load(provider="openai", env={}).model == "gpt-5.6-terra"
+    assert Config.load(provider="openai", env={}).model == "gpt-6.1-sol"
     assert Config.load(env={"WREN_PROVIDER": "openai", "WREN_MODEL": "gpt-6-astra"}).model == "gpt-6-astra"
     # 0 is a real value for the budget ("never compact"), from a flag or the environment.
     assert Config.load(context_budget=0, env={"WREN_CONTEXT_BUDGET": "5"}).context_budget == 0
     assert Config.load(env={"WREN_CONTEXT_BUDGET": "0"}).context_budget == 0
     assert Config.load(env={}).context_budget == 150_000
-    assert Config.load(env={}).effort is None  # unset: the model's own default
     assert Config.load(env={"WREN_EFFORT": "low"}).effort == "low"
     assert Config.load(effort="high", env={"WREN_EFFORT": "low"}).effort == "high"
+
+
+def test_wrens_own_defaults_are_opus_and_sol_at_xhigh():
+    anthropic = Config.load(env={})
+    assert (anthropic.provider, anthropic.model, anthropic.effort) == ("anthropic", "claude-opus-5-5", "xhigh")
+    openai = Config.load(provider="openai", env={})
+    assert (openai.model, openai.effort) == ("gpt-6.1-sol", "xhigh")
+    assert Config.load(provider="fake", env={}).effort is None  # the pretend model has no such default
+
+
+def test_a_saved_default_beats_wrens_and_flags_and_env_beat_it(tmp_path):
+    user = UserDefaults(tmp_path / "settings.json")
+    user.save("anthropic", "claude-sonnet-5-5", "low")
+
+    saved = Config.load(env={}, user=user)
+    assert (saved.model, saved.effort) == ("claude-sonnet-5-5", "low")
+    # Another provider has its own entry, and is untouched.
+    assert Config.load(provider="openai", env={}, user=user).model == "gpt-6.1-sol"
+    # Flag, then environment, then the saved default.
+    assert Config.load(model="m-flag", env={"WREN_MODEL": "m-env"}, user=user).model == "m-flag"
+    assert Config.load(env={"WREN_MODEL": "m-env"}, user=user).model == "m-env"
+    assert Config.load(effort="high", env={"WREN_EFFORT": "medium"}, user=user).effort == "high"
+    assert Config.load(env={"WREN_EFFORT": "medium"}, user=user).effort == "medium"
+
+
+def test_a_saved_effort_goes_with_its_model_and_is_not_lent_to_another():
+    # Starting on another model gives that model its own effort, because the
+    # saved level may not exist there. Naming the default model changes nothing.
+    assert Config.load(model="claude-sonnet-5-5", env={}).effort is None
+    assert Config.load(model="claude-opus-5-5", env={}).effort == "xhigh"
+    # An explicit effort still applies to whatever model was asked for.
+    assert Config.load(model="claude-sonnet-5-5", effort="low", env={}).effort == "low"
 
 
 def test_system_prompt_describes_the_environment():

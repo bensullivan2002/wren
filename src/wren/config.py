@@ -4,11 +4,13 @@ Each setting is looked up in layers, and the first layer that has a value wins:
 
     1. a command-line flag     wren --model claude-opus-5-5
     2. an environment variable WREN_MODEL=claude-opus-5-5 wren
-    3. the default below
+    3. your saved default      chosen with Enter in the /model or /effort picker
+    4. Wren's own default      below
+    5. the model's own default (for effort: nothing is sent)
 
 Flags win because they're the most specific ("just this run"); environment
 variables are good for "always, on this machine" (put them in your shell
-profile). A config file would slot in between 2 and 3 when we need one.
+profile); your saved default (settings.py) is what you last chose to keep.
 """
 
 from __future__ import annotations
@@ -17,15 +19,33 @@ import os
 from dataclasses import dataclass
 from typing import Mapping
 
+from wren.settings import UserDefaults
+
 DEFAULT_PROVIDER = "anthropic"
-# The model each provider starts with. For each, the mid-priced one: strong
-# at coding, cheaper and faster than the top of the range. /model changes it.
+# The model and effort each provider starts with: the strongest model, at
+# extra-high effort. /model and /effort change it for a session, and choosing with
+# Enter in their pickers changes it for good (settings.py).
 DEFAULT_MODELS = {
-    "anthropic": "claude-sonnet-5-5",
-    "openai": "gpt-5.6-terra",
+    "anthropic": "claude-opus-5-5",
+    "openai": "gpt-6.1-sol",
     "fake": "demo",
 }
+DEFAULT_EFFORTS: dict[str, str | None] = {
+    "anthropic": "xhigh",
+    "openai": "xhigh",
+    "fake": None,
+}
 DEFAULT_MODEL = DEFAULT_MODELS[DEFAULT_PROVIDER]
+
+
+def default_choice(provider: str, user: UserDefaults | None = None) -> tuple[str, str | None]:
+    """The (model, effort) a provider starts with when nothing was asked for:
+    what you saved, else Wren's own. An effort of None means "the model's own"."""
+    saved = user.get(provider) if user is not None else None
+    if saved is not None:
+        return saved
+    return DEFAULT_MODELS.get(provider, DEFAULT_MODEL), DEFAULT_EFFORTS.get(provider)
+
 
 # Where each provider's SDK looks for its key, and where to get one.
 API_KEYS = {
@@ -63,18 +83,26 @@ class Config:
         context_budget: int | None = None,
         effort: str | None = None,
         env: Mapping[str, str] = os.environ,
+        user: UserDefaults | None = None,
     ) -> Config:
-        """Build a Config. Arguments are command-line flags (None = not given)."""
+        """Build a Config. Arguments are command-line flags (None = not given);
+        `user` is where the saved defaults are read from."""
         provider = provider or env.get("WREN_PROVIDER") or DEFAULT_PROVIDER
+        # The defaults depend on the provider: a Claude model name means
+        # nothing to OpenAI.
+        default_model, default_effort = default_choice(provider, user)
+        model = model or env.get("WREN_MODEL") or default_model
+        # A default effort belongs to its model. Starting on some other model
+        # (a flag, or WREN_MODEL) must not borrow it: that level might not
+        # exist there. That model starts at its own default.
+        effort = effort or env.get("WREN_EFFORT") or (default_effort if model == default_model else None)
         return cls(
             provider=provider,
-            # The default depends on the provider: a Claude model name means
-            # nothing to OpenAI.
-            model=model or env.get("WREN_MODEL") or DEFAULT_MODELS.get(provider, DEFAULT_MODEL),
+            model=model,
             max_tokens=max_tokens or int(env.get("WREN_MAX_TOKENS") or DEFAULT_MAX_TOKENS),
             max_steps=max_steps or int(env.get("WREN_MAX_STEPS") or DEFAULT_MAX_STEPS),
+            effort=effort,
             # `is not None`, not `or`: 0 is a real choice here (never compact).
-            effort=effort or env.get("WREN_EFFORT") or None,
             context_budget=(
                 context_budget
                 if context_budget is not None

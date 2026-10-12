@@ -429,9 +429,10 @@ def test_switching_provider_keeps_the_conversation_and_is_recorded(tmp_path, mon
     assert run_command(agent, "/provider").pick_provider
 
     result = run_command(agent, "/provider OpenAI")
-    assert not result.is_error and "Now using openai, with gpt-5.6-terra." in result.text and "full price" in result.text
+    assert not result.is_error and "Now using openai, with gpt-6.1-sol." in result.text and "full price" in result.text
     assert agent.provider.name == "openai" and agent.messages == history
-    assert lines(store)[-1] == {"type": "model", "provider": "openai", "model": "gpt-5.6-terra", "effort": None}
+    # Wren's own default for OpenAI: that model, at xhigh effort.
+    assert lines(store)[-1] == {"type": "model", "provider": "openai", "model": "gpt-6.1-sol", "effort": "xhigh"}
     assert load(store.path).provider == "openai"
     assert "Already using openai" in run_command(agent, "/provider openai").text
 
@@ -443,7 +444,7 @@ def test_switching_back_returns_to_the_model_that_was_in_use_there(tmp_path, mon
     switch_provider(agent, "openai")
     agent.set_model("gpt-6-astra")
     switch_provider(agent, "anthropic")
-    assert agent.provider.model == "claude-sonnet-5-5"  # never used here: the provider's usual model
+    assert agent.provider.model == "claude-opus-5-5"  # never used here: the provider's usual model
     switch_provider(agent, "openai")
     assert agent.provider.model == "gpt-6-astra"  # used here before: back to it
 
@@ -469,8 +470,8 @@ def test_resuming_goes_back_to_the_sessions_provider_when_it_can(tmp_path, monke
 
     later, later_store = make(tmp_path, [])  # a new run, starting on the fake provider
     note = resume_session(later, later_store, later_store.find(None))
-    assert (later.provider.name, later.provider.model, later.provider.effort) == ("openai", "gpt-5.6-terra", "low")
-    assert "Back on openai, using gpt-5.6-terra at low effort, as it was." in note
+    assert (later.provider.name, later.provider.model, later.provider.effort) == ("openai", "gpt-6.1-sol", "low")
+    assert "Back on openai, using gpt-6.1-sol at low effort, as it was." in note
 
     monkeypatch.delenv("OPENAI_API_KEY")
     again, again_store = make(tmp_path, [])
