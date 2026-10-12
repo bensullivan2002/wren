@@ -203,6 +203,10 @@ def _usage(agent: Agent) -> str:
         f"This session: {u.sent_tokens:,} tokens in · {u.output_tokens:,} out",
         f"  of the input, {u.cache_read_tokens:,} were read from the cache (about a tenth of the price)",
         f"Conversation now: {context_meter(agent)}",
+        f"Model asked for: {agent.provider.model}",
+        # The second line is the provider's word, not ours. If /model is
+        # really working, it changes after the next reply.
+        f"Last reply came from: {agent.answered_by or '(no reply yet)'}  (as reported by {agent.provider.name})",
     ]
     return "\n".join(lines)
 

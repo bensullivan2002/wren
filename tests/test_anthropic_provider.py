@@ -179,3 +179,15 @@ def test_requests_ask_for_caching_and_cached_tokens_are_counted():
     assert client.requests[0]["cache_control"] == {"type": "ephemeral"}
     assert (done.usage.cache_read_tokens, done.usage.cache_write_tokens) == (900, 40)
     assert done.usage.sent_tokens == 12 + 900 + 40
+
+
+def test_the_reply_carries_the_model_the_api_says_answered_and_the_request_names_the_current_one():
+    client = FakeClient([], api_message([{"type": "text", "text": "Hi"}]))  # the response says claude-sonnet-5-5
+    provider = AnthropicProvider("claude-haiku-5-5", client=client)
+    done = list(provider.stream(system="", messages=[Message.user("hi")], max_tokens=5))[-1]
+    assert client.requests[0]["model"] == "claude-haiku-5-5"  # what we asked for
+    assert done.model == "claude-sonnet-5-5"  # what the response reported: taken from it, not assumed
+
+    provider.model = "claude-opus-5-5"  # what /model does
+    list(provider.stream(system="", messages=[Message.user("hi")], max_tokens=5))
+    assert client.requests[1]["model"] == "claude-opus-5-5"

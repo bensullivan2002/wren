@@ -142,6 +142,15 @@ Two things don't carry across, and Wren tells you the first:
 
 The list of models comes from the API when you open the picker, not from a list in the code, which would be out of date within months.
 
+**How do you know it worked?** The header shows the model Wren will *ask for*. That's Wren's own claim. Every API response also names the model that *answered*, so Wren keeps that (`Completed.model`, taken from the response) and `/usage` shows both:
+
+```
+Model asked for: claude-haiku-5-5
+Last reply came from: claude-haiku-5-5  (as reported by anthropic)
+```
+
+After `/model`, the first line changes at once and the second after the next reply. It's the same idea as the context meter in step 5: when the system will tell you the answer, show that, not your own belief about it.
+
 ## Idea 8: one picker, two uses
 
 The app has a `Picker` widget: Textual's `OptionList` plus a note of what each row stands for and what to do with the choice. `/model` and `/resume` both use it, and `wren --resume` simply opens the session picker as the app starts. Like a permission question, it sits in the conversation and takes the focus; Escape closes it.

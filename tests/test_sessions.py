@@ -262,6 +262,19 @@ def test_switching_model_takes_effect_on_the_next_request_and_is_recorded(tmp_pa
     assert "Already using demo-large" in run_command(agent, "/model demo-large").text
 
 
+def test_usage_shows_which_model_actually_answered(tmp_path):
+    agent, store = make(tmp_path, ["one", "two"])
+    assert "Last reply came from: (no reply yet)" in run_command(agent, "/usage").text
+    run(agent, "hi")
+    assert "Last reply came from: scripted  (as reported by fake)" in run_command(agent, "/usage").text
+
+    agent.set_model("demo-large")
+    asked_not_yet_answered = run_command(agent, "/usage").text
+    assert "Model asked for: demo-large" in asked_not_yet_answered and "came from: scripted" in asked_not_yet_answered
+    run(agent, "again")
+    assert "Last reply came from: demo-large" in run_command(agent, "/usage").text
+
+
 def test_ago():
     from datetime import datetime, timedelta
 

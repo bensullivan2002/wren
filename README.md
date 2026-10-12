@@ -91,7 +91,7 @@ The files are plain text, readable only by your user account, and kept until you
 
 ### Models
 
-`/model` lists the models your provider offers and switches to the one you pick; `/model NAME` switches directly. The conversation carries over. The first reply from a new model costs full price for the whole conversation, because the cache is kept per model. `--model` or `WREN_MODEL` sets the model Wren starts with.
+`/model` lists the models your provider offers and switches to the one you pick; `/model NAME` switches directly. The conversation carries over. The first reply from a new model costs full price for the whole conversation, because the cache is kept per model. `/usage` shows the model the API reports as having written the last reply, so you can confirm a switch took effect. `--model` or `WREN_MODEL` sets the model Wren starts with.
 
 ### Memory: standing instructions
 

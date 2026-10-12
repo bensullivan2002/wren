@@ -145,6 +145,7 @@ class Agent:
         # many tokens its request contained, which is an exact measurement
         # by the only tokenizer that matters, and it's free.
         self.context_tokens = 0
+        self.answered_by = ""  # the model the provider says wrote the latest reply
 
         # Where the current turn has got to, kept on the agent (not in local
         # variables) so that if the turn is cut short we still know what had
@@ -246,6 +247,7 @@ class Agent:
             # This request's input, plus the reply it produced, is what the
             # next request will carry.
             self.context_tokens = completed.usage.sent_tokens + completed.usage.output_tokens
+            self.answered_by = completed.model
 
             reply = completed.message
             if not reply.text and not reply.tool_uses:

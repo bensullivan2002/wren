@@ -402,3 +402,9 @@ Each event is one appended line: `meta`, `message`, `replaced` (a compaction), `
 *Step 7 · design*
 
 Every conversation is kept indefinitely. Both an age limit and a way to turn saving off are obvious next additions; neither was needed to make resuming work. Open to challenge: for a tool that records what it reads, an off switch may deserve to come sooner.
+
+### D64. `/usage` shows the model the API says answered
+*Step 7 · design*
+
+Each reply records the model named in the provider's response, and `/usage` shows it beside the model Wren asked for. Added when you asked how to tell whether the picker really changes anything: the header only shows Wren's intention.
+*Not chosen:* asking the model what it is (models often don't know, or get it wrong).
