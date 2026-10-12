@@ -3,7 +3,9 @@
 This file is deliberately boring. It's the one place that knows about every
 part of Wren, so the parts themselves don't have to know about each other:
 
-    Config ──> Provider ──> Agent ──> Repl
+    Config ──> Provider ──┐
+                          ├──> Agent ──> Repl
+    Tools  ──> Registry ──┘
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
 
 from wren import __version__
 from wren.agent import Agent
@@ -18,6 +21,7 @@ from wren.config import Config
 from wren.prompts import build_system_prompt
 from wren.providers import PROVIDERS, make_provider
 from wren.repl import Repl
+from wren.tools import ToolRegistry, default_tools
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -28,13 +32,19 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--provider", choices=PROVIDERS, help="model provider (env: WREN_PROVIDER)")
     parser.add_argument("--model", help="model name, e.g. claude-opus-5-5 (env: WREN_MODEL)")
     parser.add_argument("--max-tokens", type=int, help="longest reply allowed (env: WREN_MAX_TOKENS)")
+    parser.add_argument("--max-steps", type=int, help="most model calls in one turn (env: WREN_MAX_STEPS)")
     parser.add_argument("--version", action="version", version=f"wren {__version__}")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    config = Config.load(provider=args.provider, model=args.model, max_tokens=args.max_tokens)
+    config = Config.load(
+        provider=args.provider,
+        model=args.model,
+        max_tokens=args.max_tokens,
+        max_steps=args.max_steps,
+    )
 
     if config.provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
         print(
@@ -45,7 +55,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    root = Path.cwd()
     provider = make_provider(config.provider, config.model)
-    agent = Agent(provider, build_system_prompt(), config.max_tokens)
+    tools = ToolRegistry(default_tools(), root=root)
+    agent = Agent(provider, build_system_prompt(root), config.max_tokens, tools, config.max_steps)
     Repl(agent).run()
     return 0

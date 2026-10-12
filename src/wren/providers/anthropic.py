@@ -8,7 +8,7 @@ code, means they can be unit-tested without an API key.
 
 from __future__ import annotations
 
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 
 import anthropic
 
@@ -21,6 +21,7 @@ from wren.messages import (
     TextBlock,
     TextDelta,
     ToolResultBlock,
+    ToolSpec,
     ToolUseBlock,
     Usage,
 )
@@ -42,6 +43,7 @@ class AnthropicProvider:
         *,
         system: str,
         messages: list[Message],
+        tools: Sequence[ToolSpec] = (),
         max_tokens: int,
     ) -> Iterator[StreamEvent]:
         request: dict[str, Any] = {
@@ -51,12 +53,17 @@ class AnthropicProvider:
         }
         if system:
             request["system"] = system
+        if tools:
+            request["tools"] = to_api_tools(tools)
 
         # `messages.stream` keeps an HTTP connection open and receives the reply
         # as a series of server-sent events. The SDK's `text_stream` gives us
         # just the text fragments; `get_final_message` gives the assembled
         # message once the stream ends. The `with` block guarantees the
         # connection is closed even if we stop early (e.g. on Ctrl-C).
+        # While the model is writing a tool request, no text arrives: the
+        # request's JSON is assembled by the SDK and appears in the final
+        # message as a tool_use block.
         with self.client.messages.stream(**request) as stream:
             for text in stream.text_stream:
                 yield TextDelta(text)
@@ -70,6 +77,10 @@ class AnthropicProvider:
 
 
 # --- Translation: Wren -> Anthropic ---------------------------------------
+
+
+def to_api_tools(tools: Sequence[ToolSpec]) -> list[dict[str, Any]]:
+    return [{"name": t.name, "description": t.description, "input_schema": t.input_schema} for t in tools]
 
 
 def to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:

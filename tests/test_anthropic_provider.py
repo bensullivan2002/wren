@@ -12,6 +12,7 @@ from wren.messages import (
     TextBlock,
     TextDelta,
     ToolResultBlock,
+    ToolSpec,
     ToolUseBlock,
 )
 from wren.providers.anthropic import AnthropicProvider, from_api_message, to_api_messages
@@ -117,8 +118,33 @@ def test_stream_yields_deltas_then_completed():
     assert request["system"] == "be nice"
 
 
-def test_empty_system_prompt_is_left_out_of_the_request():
+def test_empty_system_prompt_and_no_tools_are_left_out_of_the_request():
     client = FakeClient([], api_message([{"type": "text", "text": ""}]))
     provider = AnthropicProvider("m", client=client)
     list(provider.stream(system="", messages=[Message.user("hi")], max_tokens=10))
     assert "system" not in client.requests[0]
+    assert "tools" not in client.requests[0]
+
+
+def test_tools_are_sent_in_anthropic_format_and_tool_requests_come_back():
+    final = api_message(
+        [{"type": "tool_use", "id": "t1", "name": "read_file", "input": {"path": "a.py"}}],
+        stop_reason="tool_use",
+    )
+    client = FakeClient([], final)
+    provider = AnthropicProvider("m", client=client)
+    schema = {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}
+
+    events = list(
+        provider.stream(
+            system="",
+            messages=[Message.user("read a.py")],
+            tools=[ToolSpec("read_file", "Read a file.", schema)],
+            max_tokens=10,
+        )
+    )
+
+    assert client.requests[0]["tools"] == [{"name": "read_file", "description": "Read a file.", "input_schema": schema}]
+    done = events[-1]
+    assert done.stop_reason == "tool_use"
+    assert done.message.tool_uses == [ToolUseBlock("t1", "read_file", {"path": "a.py"})]

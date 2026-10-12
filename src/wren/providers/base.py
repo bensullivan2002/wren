@@ -12,9 +12,9 @@ checker").
 
 from __future__ import annotations
 
-from typing import Iterator, Protocol
+from typing import Iterator, Protocol, Sequence
 
-from wren.messages import Message, StreamEvent
+from wren.messages import Message, StreamEvent, ToolSpec
 
 
 class Provider(Protocol):
@@ -26,11 +26,14 @@ class Provider(Protocol):
         *,
         system: str,
         messages: list[Message],
+        tools: Sequence[ToolSpec] = (),
         max_tokens: int,
     ) -> Iterator[StreamEvent]:
-        """Send the whole conversation to the model; yield events as it replies.
+        """Send the whole conversation, and the tools on offer, to the model;
+        yield events as it replies.
 
         Contract: yields zero or more TextDelta, then exactly one Completed,
-        which is always last. (Step 2 will add a `tools` parameter.)
+        which is always last. If the model wants tools, the Completed message
+        contains ToolUseBlocks; running them is the agent's job, not ours.
         """
         ...

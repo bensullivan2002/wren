@@ -20,6 +20,7 @@ from typing import Mapping
 DEFAULT_PROVIDER = "anthropic"
 DEFAULT_MODEL = "claude-sonnet-5-5"  # strong at coding, cheaper and faster than Opus
 DEFAULT_MAX_TOKENS = 8192  # the most the model may write in one reply
+DEFAULT_MAX_STEPS = 25  # the most model calls in one turn, before Wren stops and checks in
 
 
 @dataclass
@@ -27,6 +28,7 @@ class Config:
     provider: str = DEFAULT_PROVIDER
     model: str = DEFAULT_MODEL
     max_tokens: int = DEFAULT_MAX_TOKENS
+    max_steps: int = DEFAULT_MAX_STEPS
 
     @classmethod
     def load(
@@ -35,6 +37,7 @@ class Config:
         provider: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        max_steps: int | None = None,
         env: Mapping[str, str] = os.environ,
     ) -> Config:
         """Build a Config. Arguments are command-line flags (None = not given)."""
@@ -42,4 +45,5 @@ class Config:
             provider=provider or env.get("WREN_PROVIDER") or DEFAULT_PROVIDER,
             model=model or env.get("WREN_MODEL") or DEFAULT_MODEL,
             max_tokens=max_tokens or int(env.get("WREN_MAX_TOKENS") or DEFAULT_MAX_TOKENS),
+            max_steps=max_steps or int(env.get("WREN_MAX_STEPS") or DEFAULT_MAX_STEPS),
         )

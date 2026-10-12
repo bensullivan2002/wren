@@ -71,3 +71,55 @@ Sonnet is strong at coding and cheaper and faster than Opus, which matters for a
 *Step 1 · design*
 
 The docs version with the code, so they can't drift apart unnoticed, and they read well on GitHub (including diagrams).
+
+---
+
+### D13. Hand-written tool schemas now, Pydantic in step 3
+*Step 2 · you*
+
+In step 2, each tool's JSON Schema is written out by hand and checked by a small hand-rolled validator (`tools/validation.py`). You see exactly what the model sees and what validation involves. At the start of step 3, before any tool can change files, we refactor to one Pydantic model per tool, which generates the schema and validates input from a single definition.
+*Why not straight to Pydantic:* learning first, then the better-engineered version. The refactor is cheap because nothing outside each tool touches its schema.
+*Not chosen:* decorators that infer schemas from function signatures (terser, more magic; underneath, they build the same kind of model).
+
+### D14. Dedicated tools first; a shell tool in step 3
+*Step 2 · you*
+
+Reading, listing and searching are separate, narrow tools. The industry norm is dedicated tools *plus* a shell tool for everything else, gated by permissions, so a shell arrives in step 3.
+*Why:* dedicated tools are easy to judge as safe, their output can be shaped for the model, and they work on every OS. The shell's strength is reach, which only matters once Wren can act.
+
+### D15. The loop continues while replies contain tool requests
+*Step 2 · design*
+
+The agent checks the reply's content for `tool_use` blocks rather than relying on `stop_reason == "tool_use"`. A reply cut off by `max_tokens` can still contain a request, and every request must be answered.
+
+### D16. A step limit per turn, ended with a note
+*Step 2 · design*
+
+At most 25 model calls per turn by default (`--max-steps`). When the limit hits, the agent appends a bracketed note in the assistant's place, so the history stays valid and the model knows why it stopped. The user can say "continue".
+*Not chosen:* a final call with tools disabled to force a summary (one more request, and a provider feature to depend on).
+
+### D17. Tools are confined to the working directory
+*Step 2 · design*
+
+Every path is resolved (collapsing `..` and following symlinks) and must land inside the folder Wren was started in. Read-only access to `~/.ssh` would still be a leak.
+
+### D18. Tool failures are results, not exceptions
+*Step 2 · design*
+
+The registry turns every failure (an unknown tool, bad arguments, a `ToolError`, even a bug) into a result marked `is_error`, written for the model to act on. The loop never crashes because of a tool; only Ctrl-C escapes.
+
+### D19. Tool output is capped and paged
+*Step 2 · design*
+
+Each tool limits its own output (500 lines per read, 200 listing entries, 100 search matches) and says how to get more. The registry caps every result at 50,000 characters as a safety net. Results are re-sent with every later request, so size is a recurring cost.
+
+### D20. Pure-Python file tools, with a fixed ignore list
+*Step 2 · design*
+
+`search` uses Python's `re`, `list_files` uses `os.walk` with a small glob translator, and both skip a fixed set of folders (`.git`, `node_modules`, `.venv`…). No external programs, so it works anywhere Python does.
+*Cost:* slower than ripgrep on big projects; `.gitignore` isn't honoured yet.
+
+### D21. Tools run one at a time
+*Step 2 · design*
+
+When the model asks for several tools in one reply, they run sequentially, in order, and the results go back together. Running them in parallel is faster but complicates output and, once tools have side effects, ordering. Simple first.
