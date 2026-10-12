@@ -4,9 +4,10 @@ A small bird for a small, readable tool. The raised tail makes it a wren;
 the `>` cut out of the wing connects it to the terminal without putting
 the bird inside a generic terminal-window badge.
 
-The terminal bird appears in the TUI when you start a new conversation
-and after `/clear`. It scrolls with the transcript, uses the theme's accent,
-and never enters model history or saved sessions. Plain/piped output is unchanged.
+The terminal bird is pinned at the TUI's top left, outside the scrolling
+transcript. It stays visible while chatting, scrolling, clearing or resuming,
+uses the theme's accent, and never enters model history or saved sessions.
+Plain/piped output is unchanged.
 
 ## Preview
 
@@ -73,9 +74,10 @@ cat docs/branding/wren-terminal.txt
 
 The TUI renders the block text with its theme's accent and normal terminal
 line spacing. Spaces stay transparent. Below **20 columns or 20 rows**, it
-shows `wren` instead; resizing restores the bird when there is room. Existing
-conversations resume without a new banner. Plain mode and piped output do
-not print the logo. The contact sheet remains a design mockup, not a screenshot.
+shows `wren` instead; resizing restores the bird when there is room. The
+same pinned widget stays visible in both new and resumed conversations,
+including after `/clear`. Plain mode and piped output do not print the logo.
+The contact sheet remains a design mockup, not a screenshot.
 
 For other integrations, use the ASCII version if block glyphs are unavailable.
 
@@ -120,6 +122,6 @@ the actual 16 px / terminal marks before adopting it.
   one colour, with no tiny extra decoration to lose at small sizes.
 - Separate smooth and pixel drawings: more deliberate than automatic
   downsampling, while retaining the same pose and details.
-- The TUI welcome is decoration in the scrollback, not a permanent header
-  or a message to the model. It reappears after `/clear`; plain mode stays
-  unchanged. This follows up the original assets-only logo kit.
+- The TUI logo is pinned screen-level decoration, not part of scrollback
+  or a message to the model. One widget survives chatting, clearing and
+  resuming; plain mode stays unchanged. This replaces the scrolling welcome.

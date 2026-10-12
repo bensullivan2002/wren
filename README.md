@@ -30,7 +30,7 @@ If you use [uv](https://docs.astral.sh/uv/): `uv sync --extra dev`, then `uv run
 
 ## Using it
 
-Run `wren` inside the project you want to work on: its file tools can only see that folder. New conversations open with the Wren bird in the scrolling transcript; `/clear` brings it back. Small terminals show `wren` instead. The logo is decoration only, never part of the conversation sent to the model.
+Run `wren` inside the project you want to work on: its file tools can only see that folder. The Wren bird is pinned at the top left, above the conversation: chatting, scrolling, `/clear` and resuming don't move it. Small terminals show `wren` instead. The logo is decoration only, never part of the conversation sent to the model.
 
 The full-screen app asks permission in place:
 
