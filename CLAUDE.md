@@ -38,12 +38,13 @@ Things Ben has decided that aren't obvious from the code:
 - **He likes a full-screen, Claude Code-like feel:** input box at the bottom, conversation above, questions in place.
 - **Wren is multi-provider (Claude and OpenAI), and he may want more.** Keep provider differences behind the `Provider` interface, and have front ends ask the provider what it offers; adding a provider should touch only `providers/`, `config.py` and `cli.py`. An "OpenAI-compatible" Chat Completions provider for other vendors was offered and deferred (D70).
 - **He wants evidence, not assertion, in what Wren reports about itself.** He asked how to verify the model actually in use, then the same for effort. `/usage` labels each line with its source (reported by the provider, Wren's own record, or documentation with a date); keep to that, and never present a setting Wren sent as something the API confirmed (D64, D68).
+- **He likes how Claude Code and Codex CLI present things, and says so.** Slash commands open in a panel above the prompt and close with Escape (D80) because he asked for that. When adding UI, match that feel: reference output in the panel, events as notes in the transcript, questions in the transcript.
 - **He prefers one obvious way to do a thing over copying Claude Code's flags:** he rejected `--continue` plus `--resume` as confusing and chose `--resume` alone, opening the same picker as `/resume` (D57). Offer the simpler interface first.
 
 Carried over, for whenever they fit (see "Known limits" in journals 03 and 04):
 
 - An async core (D34) if parallel tools or subagents need it; Escape can lag while waiting for the model's first words.
-- Provider gaps: no way to switch provider mid-session, no custom base URL, text only (journal 08).
+- Provider gaps: no custom base URL, text only (journal 08).
 - Session gaps: no expiry and no off switch (D63), no names or search, one folder at a time.
 - Memory gaps: loading a subfolder's `WREN.md` on demand, imports, auto memory (D49), saved permission rules (D50).
 - Context gaps: trimming old tool results before resorting to a summary (D40), compacting inside a very long turn (D47), keeping recent messages verbatim (D42 explains why not), showing cost in money.

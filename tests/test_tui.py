@@ -73,6 +73,13 @@ def screen_text(app):
     return "\n".join(parts)
 
 
+def panel_text(app):
+    """What the command panel is showing ("" if it's closed)."""
+    if not app.panel.is_open:
+        return ""
+    return "\n".join(str(widget.content) for widget in app.panel.query(Static))
+
+
 def question(app):
     found = app.query(PermissionPrompt)
     return found.first() if found else None
@@ -295,15 +302,71 @@ async def test_a_provider_error_is_shown_and_the_conversation_survives(tmp_path)
 # --- Slash commands, and the prompt box ------------------------------------------------------
 
 
-async def test_slash_commands_show_their_output_and_clear_empties_the_screen(tmp_path):
+async def test_reference_commands_open_in_a_panel_that_escape_closes(tmp_path):
     app = make_app(tmp_path, ["Hello"])
     async with app.run_test() as pilot:
         await say(app, pilot, "/tools")
         await pilot.pause()
-        assert "edit_file" in screen_text(app) and "shell" in screen_text(app)
+        assert "edit_file" in panel_text(app) and "shell" in panel_text(app)
+        assert screen_text(app) == ""  # nothing was added to the conversation
+        assert app.panel.border_title == "/tools" and "esc to go back" in app.panel.border_subtitle
+        assert app.focused is app.panel  # so the arrow keys scroll it
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not app.panel.is_open and app.focused is app.prompt
+        assert screen_text(app) == ""  # and nothing was left behind
+
+
+async def test_one_command_replaces_another_in_the_panel(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await say(app, pilot, "/usage")
+        await pilot.pause()
+        assert "This conversation:" in panel_text(app)
+        app.prompt.focus()
+        await say(app, pilot, "/help")
+        await pilot.pause()
+        assert "/provider" in panel_text(app) and "This conversation:" not in panel_text(app)
+
+
+async def test_escape_with_the_panel_open_closes_it_and_does_not_stop_the_turn(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await say(app, pilot, "write a.txt one")
+        await until(pilot, lambda: question(app), "the permission question")
+        app.prompt.focus()
+        await say(app, pilot, "/usage")  # looking something up while Wren waits
+        await pilot.pause()
+        assert app.panel.is_open
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not app.panel.is_open and app.busy and question(app) is not None  # the turn is still alive
+        await pilot.press("escape")  # a second press does stop it
+        await finished(app, pilot)
+
+
+async def test_a_permission_question_closes_the_panel_and_takes_the_keyboard(tmp_path):
+    (tmp_path / "a.txt").write_text("one\n")
+    app = make_app(tmp_path, [asks(("t1", "read_file", {"path": "a.txt"})), asks(("t2", "write_file", {"path": "b.txt", "content": "x"})), "Done."])
+    async with app.run_test() as pilot:
+        await say(app, pilot, "/help")
+        await pilot.pause()
+        app.prompt.focus()
+        await say(app, pilot, "go")
+        await until(pilot, lambda: question(app), "the permission question")
+        assert not app.panel.is_open and app.focused is question(app)
+        await pilot.press("n")
+        await finished(app, pilot)
+
+
+async def test_slash_commands_that_change_things_leave_a_note_and_clear_empties_the_screen(tmp_path):
+    app = make_app(tmp_path, ["Hello"])
+    async with app.run_test() as pilot:
         await say(app, pilot, "/nonsense")
         await pilot.pause()
-        assert "unknown command /nonsense" in screen_text(app)
+        assert "unknown command /nonsense" in screen_text(app) and not app.panel.is_open
 
         await say(app, pilot, "hi")
         await finished(app, pilot)
@@ -382,6 +445,30 @@ async def test_effort_for_a_model_without_the_setting_explains_instead_of_offeri
         await say(app, pilot, "/effort")
         await until(pilot, lambda: "no separate effort setting" in screen_text(app), "the explanation")
         assert not app.query(Picker) and not app.busy
+
+
+async def test_the_provider_picker_switches_provider_and_says_which_need_a_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-not-real")
+    app = make_app(tmp_path)  # on the fake provider
+    async with app.run_test() as pilot:
+        await say(app, pilot, "/provider")
+        await until(pilot, lambda: app.query(Picker), "the provider picker")
+        rows = [str(app.query_one(Picker).get_option_at_index(i).prompt) for i in range(3)]
+        assert "anthropic" in rows[0] and "claude-sonnet-5-5" in rows[0]
+        assert "openai" in rows[1] and "needs OPENAI_API_KEY" in rows[1]
+        assert "fake" in rows[2] and "in use" in rows[2]
+
+        await pilot.press("down", "enter")  # openai: no key
+        await until(pilot, lambda: "needs an API key" in screen_text(app), "the refusal")
+        assert app.agent.provider.name == "fake"  # nothing changed
+
+        await say(app, pilot, "/provider")
+        await until(pilot, lambda: app.query(Picker), "the provider picker")
+        await pilot.press("enter")  # anthropic
+        await until(pilot, lambda: "Now using anthropic" in screen_text(app), "the switch")
+        assert app.agent.provider.name == "anthropic"
+        assert "anthropic · claude-sonnet-5-5" in str(app.query_one("#header").content)
 
 
 async def test_escape_closes_a_picker_without_choosing(tmp_path):

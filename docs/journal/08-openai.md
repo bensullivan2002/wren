@@ -136,7 +136,29 @@ Tests use SDK-validated responses with different sent and reported levels, a rep
 
 One more wrinkle: listing OpenAI's models returns everything on the account, including image, speech and embedding models. The picker filters by name. It's a guess at "can this hold a conversation", and it's labelled as one in the code.
 
-## Idea 7: a default per provider
+## Idea 7: switching provider mid-conversation
+
+`/provider` hands the conversation you're in to the other provider. Given everything above, it's a small method:
+
+```python
+def set_provider(self, provider: Provider) -> None:
+    self._models_used[self.provider.name] = self.provider.model
+    self.provider = provider
+    if self.journal is not None:
+        self.journal.model_changed(provider.name, provider.model, provider.effort)
+```
+
+The agent holds a provider; replace it, and the next request goes elsewhere, rendered in that provider's shape from the same neutral history. Claude can pick up half-way through a task that a GPT model started, tool calls and all.
+
+What it costs is the same as switching model, more so: the new provider reads the whole conversation at full price once, and the old provider's sealed reasoning is left out, because only its maker can read it. The visible conversation and every tool result carry over.
+
+Three details:
+
+- **A provider needs its key.** The picker shows which ones are missing theirs, and choosing one changes nothing.
+- **Switching back returns to the model you were using there,** not to the provider's default. The agent remembers one model per provider for the conversation.
+- **A session remembers its provider.** Resuming one goes back to that provider if its key is available, and says so if not.
+
+## Idea 8: a default per provider
 
 `DEFAULT_MODEL` was one constant, a Claude model. With two providers it became a table, because a Claude model name means nothing to OpenAI:
 
@@ -161,7 +183,7 @@ The API-key check became a table the same way. A reliable sign that a second cas
 
 - **Untested against the real API** (see the note at the top).
 - **`/effort` can offer a level the model rejects,** because OpenAI's API can't be asked (Idea 6).
-- **Moving a conversation between providers loses the private reasoning,** and a session saved under one provider keeps its model only when resumed under the same one.
+- **Moving a conversation between providers loses the private reasoning.** How well a model continues a task another provider's model began is untested.
 - **Only OpenAI itself.** There is no setting for another base URL, and the many "OpenAI-compatible" services mostly speak the older Chat Completions API, which this provider doesn't.
 - **Text only.** No images in or out.
 - **The model filter is a heuristic** and may hide a usable model or show an unusable one. `/model NAME` works for any name.
@@ -173,7 +195,7 @@ The API-key check became a table the same way. A reliable sign that a second cas
 2. Read `to_input_items` and `to_api_messages` (in `providers/anthropic.py`) side by side. Same input, two shapes.
 3. `/usage` after a few messages: are cache reads showing? OpenAI caches by itself, so they should appear without Wren asking.
 4. `/effort`, choose `none`, and send a message. Does this model accept it? Then try `xhigh`.
-5. Start a session with Claude, quit, and `wren --provider openai --resume`. What does the resume note say, and does the conversation carry on?
+5. Start a task with Claude, then `/provider` to OpenAI mid-way and ask it to continue. Check `/usage` to see who answered. Then quit and `wren --resume`: which provider does it come back on?
 6. In `to_api_tools`, delete the `"strict": False` line and (with a key) ask for a file read with no `limit`. What does the model send?
 7. Run `git diff --stat` for this step's commit and see which files it touched.
 

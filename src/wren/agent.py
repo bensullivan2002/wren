@@ -146,6 +146,7 @@ class Agent:
         # by the only tokenizer that matters, and it's free.
         self.context_tokens = 0
         self.answered_by = ""  # the model the provider says wrote the latest reply
+        self._models_used: dict[str, str] = {}  # provider name -> the model last used with it
         self.last_call: Completed | None = None  # the latest model call, for /usage to report on
 
         # Where the current turn has got to, kept on the agent (not in local
@@ -421,6 +422,26 @@ class Agent:
         self.provider.effort = None
         if self.journal is not None:
             self.journal.model_changed(self.provider.name, model, None)
+
+    def set_provider(self, provider: Provider) -> None:
+        """Hand the conversation to a different provider, from the next
+        request on.
+
+        This works for the reason switching model does, one level up: the
+        history is Wren's own neutral messages, and every provider knows how
+        to render them. The old provider's private reasoning doesn't cross
+        (each provider leaves out reasoning it didn't write), and the new
+        provider reads the conversation afresh, at full price, once.
+        """
+        self._models_used[self.provider.name] = self.provider.model
+        self.provider = provider
+        if self.journal is not None:
+            self.journal.model_changed(provider.name, provider.model, provider.effort)
+
+    def model_last_used_with(self, provider_name: str) -> str | None:
+        """The model this conversation last used with that provider, if any,
+        so switching back returns to it and not to the provider's default."""
+        return self._models_used.get(provider_name)
 
     def set_effort(self, effort: str | None) -> None:
         """Change how hard the model works on each reply, from the next

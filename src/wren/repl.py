@@ -31,6 +31,7 @@ from wren.commands import (
     effort_list,
     format_call,
     model_list,
+    provider_choices,
     run_command,
     session_label,
 )
@@ -232,6 +233,10 @@ class Repl:
     def command(self, line: str) -> bool:
         """Run a slash command. Returns False when the REPL should exit."""
         result = run_command(self.agent, line, KEYS_HELP, self.memory, self.sessions)
+        if result.pick_provider:
+            for label, _ in provider_choices(self.agent):
+                self.say(f"  {label}")
+            self.say(dim("Switch with /provider NAME"))
         if result.pick_model:
             self.list_models()
         if result.pick_effort:

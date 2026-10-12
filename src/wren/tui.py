@@ -56,12 +56,14 @@ from wren.commands import (
     effort_list,
     format_call,
     model_list,
+    provider_choices,
     resume_session,
     run_command,
     session_label,
     shorten,
     switch_effort,
     switch_model,
+    switch_provider,
 )
 from wren.memory import Memory
 from wren.messages import Completed, Message, TextDelta, ToolUseBlock
@@ -74,6 +76,7 @@ MAX_DIFF_LINES = 40  # of a diff or new file, in a permission question or a resu
 OUTPUT_TAIL_LINES = 10  # of a command's output, under its tool call
 
 KEYS_HELP = """\
+Commands open in a panel above the prompt. Escape closes it.
 Enter sends your message; Ctrl+J starts a new line in it.
 Wren asks before it edits a file or runs a command: y, n, or a for "always".
 Escape stops Wren while it's working. Whatever it had already done stays done,
@@ -184,22 +187,56 @@ class PermissionPrompt(Widget, can_focus=True):
 
 
 class Picker(OptionList):
-    """A list to choose one thing from: a model, or a saved conversation.
-    Arrow keys move, Enter chooses, Escape cancels.
+    """A list to choose one thing from: a provider, a model, an effort
+    level, a saved conversation. Arrow keys move, Enter chooses.
 
     It's Textual's own OptionList, plus a note of what each row stands for
-    and what to do with the choice. Like a permission question it sits in
-    the conversation and takes the focus while it's there.
+    and what to do with the choice. It's shown in the command panel.
     """
 
-    def __init__(self, title: str, rows: list[tuple[str, Any]], on_choice) -> None:
+    def __init__(self, rows: list[tuple[str, Any]], on_choice) -> None:
         # Text objects, not strings: the labels come from outside (a model
         # id, the first line of an old conversation) and mustn't be read as markup.
         super().__init__(*[Text(label) for label, _ in rows], classes="picker")
-        self.border_title = title
-        self.border_subtitle = "↑↓ move · enter choose · esc cancel"
         self.values = [value for _, value in rows]
         self.on_choice = on_choice
+
+
+class CommandPanel(VerticalScroll):
+    """Where a slash command shows its output: a box that opens above the
+    prompt, and closes with Escape.
+
+    Commands like /usage or /history are you asking Wren about itself. Their
+    answers aren't part of the conversation with the model, so they don't go
+    in the transcript, where they'd pile up between the messages that are.
+    The panel shows one thing at a time and leaves nothing behind.
+
+    It's always there, just hidden: opening it means filling it and adding
+    the CSS class that makes it visible.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(id="panel")
+        self.border_subtitle = "esc to go back"
+
+    @property
+    def is_open(self) -> bool:
+        return self.has_class("open")
+
+    async def show(self, title: str, content: Widget, keys: str = "↑↓ scroll") -> None:
+        await self.remove_children()
+        await self.mount(content)
+        self.border_title = title
+        self.border_subtitle = f"{keys} · esc to go back"
+        self.add_class("open")
+        self.scroll_home(animate=False)
+        # The keyboard goes to the content if it wants it (a picker), and
+        # otherwise to the panel itself, so the arrow keys scroll the text.
+        (content if content.can_focus else self).focus()
+
+    async def hide(self) -> None:
+        self.remove_class("open")
+        await self.remove_children()
 
 
 # --- The app ----------------------------------------------------------------------
@@ -224,7 +261,10 @@ class WrenApp(App):
     .permission { height: auto; margin: 1 0 0 2; padding: 0 1; border: round $warning; }
     .permission:focus { border: heavy $warning; }
     .permission .detail { margin: 0 0 1 0; }
-    .picker { height: auto; max-height: 12; margin: 1 0 0 2; border: round $accent; }
+    #panel { display: none; height: auto; max-height: 60%; padding: 0 1; border: round $accent; }
+    #panel.open { display: block; }
+    #panel:focus-within { border: heavy $accent; }
+    .picker { height: auto; border: none; padding: 0; background: transparent; }
     """
 
     BINDINGS = [
@@ -246,7 +286,6 @@ class WrenApp(App):
         self.sessions = sessions
         self.notice = notice  # something to say at startup, e.g. which session was resumed
         self.choose_session = choose_session  # started with --resume: open the session picker first
-        self._picker: Picker | None = None
         self.busy = False  # True while a turn is running
         # Set (by Escape) to ask the worker thread to stop. A threading.Event
         # is a flag that's safe for one thread to set and another to read.
@@ -267,6 +306,7 @@ class WrenApp(App):
         provider, tools = self.agent.provider, self.agent.tools
         yield Static(self._header_text(), id="header", markup=False)
         yield VerticalScroll(id="transcript")
+        yield CommandPanel()
         yield Static("", id="status", markup=False)
         yield Prompt(id="prompt", placeholder="Ask Wren something, or /help", show_line_numbers=False)
 
@@ -301,7 +341,7 @@ class WrenApp(App):
         pending: dict[str, ToolCallView] = {}  # tool calls waiting for the result in the next message
         for message in self.agent.messages:
             await self._draw_message(message, pending)
-        self.query_one("#header", Static).update(self._header_text())
+        self._show_header()
         self._show_status()
         self.to_the_end()  # a resumed conversation opens at its latest message
         if self.choose_session:
@@ -338,6 +378,10 @@ class WrenApp(App):
     @property
     def transcript(self) -> VerticalScroll:
         return self.query_one("#transcript", VerticalScroll)
+
+    @property
+    def panel(self) -> CommandPanel:
+        return self.query_one("#panel", CommandPanel)
 
     @property
     def prompt(self) -> Prompt:
@@ -395,47 +439,56 @@ class WrenApp(App):
             self.run_turn(text)
 
     async def run_slash(self, line: str) -> None:
-        if self.busy and line.split()[0].lower() == "/clear":
-            self.notify("Stop Wren (Escape) before clearing the conversation.")
+        name = line.split()[0].lower()
+        if self.busy and name in ("/clear", "/compact", "/provider", "/model", "/effort", "/resume"):
+            self.notify("Wren is still working. Press Escape to stop it, or try that when it has finished.")
             return
-        if self.busy and line.split()[0].lower() == "/compact":
-            self.notify("Wren is still working. Compact when it has finished.")
-            return
-        if self.busy and line.split()[0].lower() in ("/model", "/effort", "/resume"):
-            self.notify("Wren is still working. Try that when it has finished.")
-            return
+        await self.close_panel()  # one command's output at a time
         result = run_command(self.agent, line, KEYS_HELP, self.memory, self.sessions)
-        if result.pick_model:
+
+        if result.quit:
+            self.action_quit_wren()
+        elif result.pick_provider:
+            await self.pick_provider()
+        elif result.pick_model:
             self.busy = True  # fetching the list is a network call: off to the worker
             self._show_status()
             self.fetch_models()
-            return
-        if result.pick_effort:
+        elif result.pick_effort:
             self.busy = True  # another question for the API
             self._show_status()
             self.fetch_efforts()
-            return
-        if result.pick_session:
+        elif result.pick_session:
             await self.pick_session()
-            return
-        if result.resumed:
+        elif result.resumed:
             self.notice = result.text
             await self._draw_conversation()
-            return
-        if result.compact:
+        elif result.compact:
             self.busy = True
             self._stop.clear()
             self._show_status()
             self.run_compact()
-            return
-        if result.quit:
-            self.action_quit_wren()
-            return
-        if result.cleared:
-            await self._draw_conversation()  # empty now, with memory re-read for the new conversation
-        if result.text:
-            await self.note(result.text, "error" if result.is_error else "output")
-        self.query_one("#header", Static).update(self._header_text())  # /model NAME and /effort LEVEL change it
+        elif result.panel and not result.is_error:
+            # Reference output (/usage, /history...): shown in the panel,
+            # and gone when you press Escape.
+            await self.panel.show(line, Static(result.text, markup=False))
+        else:
+            # Something that changed the conversation or its settings
+            # (/clear, /remember, /model NAME), or went wrong: a note in
+            # the transcript, so there's a record of it where it happened.
+            if result.cleared:
+                await self._draw_conversation()  # empty now, with memory re-read for the new conversation
+            if result.text:
+                await self.note(result.text, "error" if result.is_error else "output")
+        self._show_header()  # /provider, /model NAME and /effort LEVEL change it
+
+    async def close_panel(self) -> None:
+        if self.panel.is_open:
+            await self.panel.hide()
+            self.prompt.focus()
+
+    def _show_header(self) -> None:
+        self.query_one("#header", Static).update(self._header_text())
 
     # --- A turn, on the worker thread -------------------------------------------
 
@@ -471,7 +524,15 @@ class WrenApp(App):
             error = e
         self._on_app_thread(self.turn_ended, error)
 
-    # --- Pickers: choosing a model or a saved conversation ----------------------------
+    # --- Pickers: choosing a provider, a model, an effort or a saved conversation ----
+
+    async def pick_provider(self) -> None:
+        await self._open_picker("/provider", provider_choices(self.agent), self._provider_chosen)
+
+    async def _provider_chosen(self, name: str) -> None:
+        text, ok = switch_provider(self.agent, name)
+        await self.note(text, "output" if ok else "error")
+        self._show_header()
 
     @work(thread=True, exclusive=True, group="turn")
     def fetch_models(self) -> None:
@@ -486,11 +547,11 @@ class WrenApp(App):
             return
         current = self.agent.provider.model
         rows = [(model + ("   (in use)" if model == current else ""), model) for model in models]
-        await self._open_picker("Choose a model", rows, self._model_chosen)
+        await self._open_picker(f"/model · {self.agent.provider.name}", rows, self._model_chosen)
 
     async def _model_chosen(self, model: str) -> None:
         await self.note(switch_model(self.agent, model))
-        self.query_one("#header", Static).update(self._header_text())
+        self._show_header()
 
     @work(thread=True, exclusive=True, group="turn")
     def fetch_efforts(self) -> None:
@@ -508,11 +569,11 @@ class WrenApp(App):
         means = f": {usual} for this model" if usual else ": let the model decide"
         rows = [(f"default{means}" + ("   (in use)" if current is None else ""), None)]
         rows += [(level + ("   (in use)" if level == current else ""), level) for level in levels]
-        await self._open_picker(f"Effort for {self.agent.provider.model}", rows, self._effort_chosen)
+        await self._open_picker(f"/effort · {self.agent.provider.model}", rows, self._effort_chosen)
 
     async def _effort_chosen(self, effort: str | None) -> None:
         await self.note(switch_effort(self.agent, effort))
-        self.query_one("#header", Static).update(self._header_text())
+        self._show_header()
 
     async def pick_session(self) -> None:
         saved = [s for s in self.sessions.saved() if s.id != self.sessions.current_id] if self.sessions else []
@@ -520,7 +581,7 @@ class WrenApp(App):
             await self.note("There are no other saved conversations for this folder.")
             return
         rows = [(session_label(session), session) for session in saved[:50]]
-        await self._open_picker("Resume a conversation", rows, self._session_chosen)
+        await self._open_picker("/resume", rows, self._session_chosen)
 
     async def _session_chosen(self, session) -> None:
         try:
@@ -531,22 +592,14 @@ class WrenApp(App):
         await self._draw_conversation()
 
     async def _open_picker(self, title: str, rows: list, on_choice) -> None:
-        self._close_picker()
-        self._picker = Picker(title, rows, on_choice)
-        await self.ask(self._picker)
-
-    def _close_picker(self) -> None:
-        if self._picker is not None and self._picker.is_attached:
-            self._picker.remove()
-        self._picker = None
-        self.prompt.focus()
+        await self.panel.show(title, Picker(rows, on_choice), keys="↑↓ move · enter choose")
 
     @on(OptionList.OptionSelected)
     async def _picked(self, event: OptionList.OptionSelected) -> None:
         picker = event.option_list
         if isinstance(picker, Picker):
             value, on_choice = picker.values[event.option_index], picker.on_choice
-            self._close_picker()
+            await self.close_panel()
             await on_choice(value)
 
     def _on_app_thread(self, method, *args) -> None:
@@ -623,6 +676,7 @@ class WrenApp(App):
         self._reply = self._stream = None
 
     async def show_question(self, request: PermissionRequest, answer: concurrent.futures.Future) -> None:
+        await self.close_panel()  # a question needs the keyboard, and your attention
         self._question = PermissionPrompt(request, answer)
         await self.ask(self._question)
 
@@ -648,11 +702,13 @@ class WrenApp(App):
 
     # --- Keys, status and quitting ---------------------------------------------------
 
-    def action_stop(self) -> None:
+    async def action_stop(self) -> None:
         """Escape. Stopping is cooperative: the worker notices at its next
         event, and a running command within a fraction of a second."""
-        if self._picker is not None:
-            self._close_picker()  # Escape at a picker: never mind
+        if self.panel.is_open:
+            # Escape with the command panel open goes back to the chat. It
+            # doesn't also stop a running turn: one press, one meaning.
+            await self.close_panel()
         elif self.busy and not self._stop.is_set():
             self._stop.set()
             self._show_status()

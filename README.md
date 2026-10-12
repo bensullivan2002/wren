@@ -35,11 +35,13 @@ Type in the box at the bottom. Replies stream into the conversation as rendered 
 | --- | --- |
 | Enter | Send your message |
 | Ctrl+J | Start a new line in your message |
-| Escape | Stop Wren while it's working |
+| Escape | Close the command panel if it's open; otherwise stop Wren while it's working |
 | `y` / `a` / `n` | Answer a permission question |
 | Ctrl+C | Copy the text you've selected with the mouse |
 | Ctrl+P | Textual's command palette (themes, and more) |
 | Ctrl+Q | Quit |
+
+Slash commands open in a panel above the prompt: the arrow keys scroll or choose, and Escape closes it and returns you to the chat. Commands that only show you something leave nothing in the conversation.
 
 Escape stops Wren at once in most cases. Anything it had already done stays done, and stays in the conversation, so Wren knows where it left off.
 
@@ -66,6 +68,7 @@ Wren asks before every file edit and every shell command, and shows you exactly 
 | `/system`       | Show the system prompt sent with every request        |
 | `/usage`        | Tokens used this session, and how full the context is |
 | `/compact`      | Replace the conversation with a summary, to save tokens |
+| `/provider`     | Choose a different provider (`/provider NAME`)        |
 | `/model`        | Choose a different model (`/model NAME` switches directly) |
 | `/effort`       | Choose how hard the model works (`/effort LEVEL`)     |
 | `/resume`       | Go back to an earlier conversation in this folder     |
@@ -98,11 +101,11 @@ The files are plain text, readable only by your user account, and kept until you
 | OpenAI | `wren --provider openai` | `OPENAI_API_KEY` | `gpt-5.6-terra` |
 | A pretend model, offline | `wren --provider fake` | none | `demo` |
 
-`export WREN_PROVIDER=openai` makes OpenAI the default. Everything else works the same on either. The OpenAI provider is tested against the SDK's types but has not yet been run against the live API. A conversation resumed under a different provider carries on, without the earlier model's private reasoning.
+`export WREN_PROVIDER=openai` makes OpenAI the default, and `/provider` switches in the middle of a conversation: the conversation carries over, the next reply is billed in full once, and the previous model's private reasoning is left behind. A provider whose key isn't set can't be chosen. Everything else works the same on either. The OpenAI provider is tested against the SDK's types but has not yet been run against the live API. A conversation resumed under a different provider carries on, without the earlier model's private reasoning.
 
 ### Models
 
-`/model` lists the models your provider offers and switches to the one you pick (it lists one provider's models: to change provider, restart with `--provider`); `/model NAME` switches directly. The conversation carries over. The first reply from a new model costs full price for the whole conversation, because the cache is kept per model. `/usage` shows the model the API reports as having written the last reply, so you can confirm a switch took effect. `--model` or `WREN_MODEL` sets the model Wren starts with.
+`/model` lists the models your provider offers and switches to the one you pick (to change provider, use `/provider`); `/model NAME` switches directly. The conversation carries over. The first reply from a new model costs full price for the whole conversation, because the cache is kept per model. `/usage` shows the model the API reports as having written the last reply, so you can confirm a switch took effect. `--model` or `WREN_MODEL` sets the model Wren starts with.
 
 `/effort` chooses how hard the model works on each reply (how much it thinks, how thorough it is): higher is slower and costs more. The levels offered are the ones the current model accepts (for OpenAI, every level the API knows, since it can't be asked per model); `/effort LEVEL` sets one directly, `/effort default` hands the choice back to the model, and `--effort` or `WREN_EFFORT` sets it at launch. Changing model puts effort back to that model's default. Some providers offer effort as part of the model choice and not as a separate setting; there, `/effort` tells you to look in `/model`.
 

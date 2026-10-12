@@ -156,6 +156,14 @@ def test_effort_can_be_listed_and_set_in_plain_mode_and_from_the_command_line():
     assert "demo-fast has no separate effort setting" in out
 
 
+def test_providers_can_be_listed_and_a_keyless_one_is_refused_in_plain_mode():
+    result = wren("--provider", "fake", stdin="/provider\n/provider openai\n/provider fake\n")
+    out = result.stdout
+    assert "fake   (in use, with demo)" in out and "openai   (needs OPENAI_API_KEY to be set)" in out
+    assert "Switch with /provider NAME" in out
+    assert "openai needs an API key: set OPENAI_API_KEY" in out and "Already using fake." in out
+
+
 def test_tools_command_lists_and_shows_tools():
     result = wren("--provider", "fake", stdin="/tools\n/tools read_file\n")
     assert "list_files" in result.stdout and "search" in result.stdout

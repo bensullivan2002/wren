@@ -7,7 +7,7 @@ import stat
 import pytest
 
 from wren.agent import NEVER_RECORDED, RESUMED_NOTE, Agent
-from wren.commands import ago, effort_list, resume_session, run_command
+from wren.commands import ago, effort_list, provider_choices, resume_session, run_command, switch_provider
 from wren.messages import Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock, history_problems
 from wren.prompts import COMPACTED_NOTE
 from wren.providers.fake import FakeProvider
@@ -416,3 +416,63 @@ def test_ago():
     assert ago(now - timedelta(minutes=1), now) == "1 minute ago"
     assert ago(now - timedelta(hours=5), now) == "5 hours ago"
     assert ago(now - timedelta(days=3), now) == "3 days ago"
+
+
+# --- Switching provider ------------------------------------------------------------------------
+
+
+def test_switching_provider_keeps_the_conversation_and_is_recorded(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+    agent, store = make(tmp_path, ["hello"])
+    run(agent, "hi")
+    history = list(agent.messages)
+    assert run_command(agent, "/provider").pick_provider
+
+    result = run_command(agent, "/provider OpenAI")
+    assert not result.is_error and "Now using openai, with gpt-5.6-terra." in result.text and "full price" in result.text
+    assert agent.provider.name == "openai" and agent.messages == history
+    assert lines(store)[-1] == {"type": "model", "provider": "openai", "model": "gpt-5.6-terra", "effort": None}
+    assert load(store.path).provider == "openai"
+    assert "Already using openai" in run_command(agent, "/provider openai").text
+
+
+def test_switching_back_returns_to_the_model_that_was_in_use_there(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-not-real")
+    agent, store = make(tmp_path, [])
+    switch_provider(agent, "openai")
+    agent.set_model("gpt-6-astra")
+    switch_provider(agent, "anthropic")
+    assert agent.provider.model == "claude-sonnet-5-5"  # never used here: the provider's usual model
+    switch_provider(agent, "openai")
+    assert agent.provider.model == "gpt-6-astra"  # used here before: back to it
+
+
+def test_a_provider_without_a_key_or_a_name_that_is_not_one_changes_nothing(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    agent, store = make(tmp_path, [])
+    result = run_command(agent, "/provider openai")
+    assert result.is_error and "set OPENAI_API_KEY" in result.text and agent.provider.name == "fake"
+    result = run_command(agent, "/provider gemini")
+    assert result.is_error and "anthropic, openai, fake" in result.text and agent.provider.name == "fake"
+    assert any("needs OPENAI_API_KEY" in label for label, _ in provider_choices(agent))
+
+
+def test_resuming_goes_back_to_the_sessions_provider_when_it_can(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+    agent, store = make(tmp_path, ["hello"])
+    run(agent, "hi")
+    switch_provider(agent, "openai")
+    agent.set_effort("low")
+    store.append(Message.user("a message sent while on openai"))
+    store.append(Message.assistant("and its reply"))
+
+    later, later_store = make(tmp_path, [])  # a new run, starting on the fake provider
+    note = resume_session(later, later_store, later_store.find(None))
+    assert (later.provider.name, later.provider.model, later.provider.effort) == ("openai", "gpt-5.6-terra", "low")
+    assert "Back on openai, using gpt-5.6-terra at low effort, as it was." in note
+
+    monkeypatch.delenv("OPENAI_API_KEY")
+    again, again_store = make(tmp_path, [])
+    note = resume_session(again, again_store, again_store.find(None))
+    assert again.provider.name == "fake" and "isn't available now; continuing with scripted" in note

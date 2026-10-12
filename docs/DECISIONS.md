@@ -494,3 +494,17 @@ The API lists every model on the account, including image, speech and embedding 
 
 You asked to check effort from the OpenAI API response, not local settings. The installed SDK exposes optional `response.reasoning.effort`; the earlier blanket claim that no API returns effort was wrong for OpenAI. `Completed.effort_reported` carries that field to `/usage`, alongside the existing `effort_sent` request record and thinking-token counts. Absent or null response effort stays unknown; the string `"none"` is a valid reported level. This extends D68 without treating request settings or token counts as API-confirmed effort.
 *Not chosen:* falling back to the requested effort, inferring effort from thinking tokens, or calling response metadata a measurement of internal work. Saving last-call metadata in sessions is left out of this change; restart, send a message and use `/usage` for a fresh response check. Tests use SDK-validated stand-ins; this is not a claim of live API verification.
+
+### D79. `/provider` switches provider mid-conversation
+*Step 8 · you*
+
+You asked to change provider without restarting. `/provider` opens a picker (or `/provider NAME`); the conversation carries over, and the session records the change.
+*Design details:* a provider without its API key is shown as such and can't be chosen. Switching back to a provider returns to the model last used with it in this conversation. Resuming a session returns to its provider if the key is available.
+*Cost:* one uncached request, and the previous model's private reasoning doesn't cross providers.
+
+### D80. Slash commands open in a panel that Escape closes
+*Step 8 · you*
+
+You asked for commands to open the way they do in Claude Code and Codex: inline, and dismissed with Escape. Reference output (`/usage`, `/help`, `/history`, `/tools`, `/system`, `/memory`, `/permissions`) and the pickers now open in a panel above the prompt, and nothing is added to the transcript.
+*Design details:* commands that change something (`/clear`, `/remember`, `/model NAME`, `/compact`) and errors still leave a note in the transcript, as a record. With the panel open, Escape closes it and does not also stop a running turn. A permission question closes the panel. This revises D38 for pickers, which used to sit in the transcript; permission questions stay there.
+*Not chosen:* a full-screen modal (it hides the conversation you may be asking about).

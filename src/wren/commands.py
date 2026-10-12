@@ -12,14 +12,17 @@ for the same reason: it's what lets more than one interface exist.
 from __future__ import annotations
 
 import json
+import os
 import textwrap
 from dataclasses import dataclass
 from datetime import datetime
 
 from wren.agent import Agent, Compacted
+from wren.config import API_KEYS, DEFAULT_MODELS
 from wren.memory import Memory
 from wren.sessions import SavedSession, SessionError, SessionStore
 from wren.messages import Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock
+from wren.providers import PROVIDERS, make_provider
 from wren.tools import ToolError
 
 COMMANDS = """\
@@ -30,6 +33,7 @@ COMMANDS = """\
 /system        show the system prompt sent with every request
 /usage         tokens used in this conversation, and how full the context is
 /compact       replace the conversation with a summary of it, to save tokens
+/provider      choose a different provider: anthropic, openai (/provider NAME)
 /model         choose a different model (/model NAME switches straight to it)
 /effort        choose how hard the model works on each reply (/effort LEVEL)
 /resume        go back to an earlier conversation in this folder (/resume ID)
@@ -46,7 +50,11 @@ class CommandResult:
     is_error: bool = False
     quit: bool = False  # the front end should exit
     compact: bool = False  # the front end should run agent.compact() (a model call, so it takes a while)
-    pick_model: bool = False  # the front end should offer the provider's models to choose from
+    # Shown for reference, not part of the conversation: a front end with
+    # somewhere better than the transcript to put it should use that.
+    panel: bool = False
+    pick_provider: bool = False  # the front end should offer the providers to choose from
+    pick_model: bool = False  # ...or the provider's models
     pick_effort: bool = False  # ...or the effort levels the current model takes
     pick_session: bool = False  # ...or this folder's saved sessions
     resumed: bool = False  # the conversation was swapped for a saved one; redraw it
@@ -65,6 +73,11 @@ def run_command(
     name, *args = line.split()
     name = name.lower()
 
+    if name == "/provider":
+        if not args:
+            return CommandResult(pick_provider=True)
+        text, ok = switch_provider(agent, args[0].lower())
+        return CommandResult(text, is_error=not ok)
     if name == "/model":
         if not args:
             return CommandResult(pick_model=True)
@@ -84,27 +97,27 @@ def run_command(
             return CommandResult(f"couldn't resume: {e}", is_error=True)
 
     if name == "/memory":
-        return CommandResult(memory.describe() if memory else "Memory files are switched off.")
+        return CommandResult(memory.describe() if memory else "Memory files are switched off.", panel=True)
     if name == "/remember":
         return _remember(memory, line.partition(" ")[2].strip())
 
     if name in ("/quit", "/exit"):
         return CommandResult(quit=True)
     if name == "/help":
-        return CommandResult(f"{COMMANDS}\n\n{keys_help}".rstrip())
+        return CommandResult(f"{COMMANDS}\n\n{keys_help}".rstrip(), panel=True)
     if name == "/clear":
         agent.reset()
         return CommandResult("Conversation cleared.", cleared=True)
     if name == "/compact":
         return CommandResult(compact=True)
     if name == "/usage":
-        return CommandResult(_usage(agent))
+        return CommandResult(_usage(agent), panel=True)
     if name == "/system":
-        return CommandResult(agent.system_prompt)
+        return CommandResult(agent.system_prompt, panel=True)
     if name == "/history":
-        return CommandResult(_history(agent))
+        return CommandResult(_history(agent), panel=True)
     if name == "/permissions":
-        return CommandResult(_permissions(agent))
+        return CommandResult(_permissions(agent), panel=True)
     if name == "/tools":
         return _tools(agent, args[0] if args else None)
     return CommandResult(f"unknown command {name}  (try /help)", is_error=True)
@@ -117,17 +130,61 @@ def _tools(agent: Agent, name: str | None) -> CommandResult:
             first_sentence = tool.description.split(". ")[0].rstrip(".")
             lines.append(f"{tool.name:<12} {first_sentence}")
         lines.append("\n/tools NAME shows exactly what the model is told about a tool.")
-        return CommandResult("\n".join(lines))
+        return CommandResult("\n".join(lines), panel=True)
     tool = agent.tools.get(name)
     if tool is None:
         return CommandResult(f"no tool named {name}", is_error=True)
     spec = tool.spec()
     return CommandResult(
-        json.dumps({"name": spec.name, "description": spec.description, "input_schema": spec.input_schema}, indent=2)
+        json.dumps({"name": spec.name, "description": spec.description, "input_schema": spec.input_schema}, indent=2),
+        panel=True,
     )
 
 
 # --- Models and sessions: used by the commands above, and by the pickers ------
+
+
+def missing_key(provider_name: str) -> str | None:
+    """The environment variable a provider needs and doesn't have, if any."""
+    key = API_KEYS.get(provider_name)
+    return key[0] if key is not None and not os.environ.get(key[0]) else None
+
+
+def provider_choices(agent: Agent) -> list[tuple[str, str]]:
+    """Each provider, with a note on where it stands: (label, name)."""
+    rows = []
+    for name in PROVIDERS:
+        if name == agent.provider.name:
+            note = f"   (in use, with {agent.provider.model})"
+        elif missing_key(name):
+            note = f"   (needs {missing_key(name)} to be set)"
+        else:
+            note = f"   ({agent.model_last_used_with(name) or DEFAULT_MODELS[name]})"
+        rows.append((name + note, name))
+    return rows
+
+
+def switch_provider(agent: Agent, name: str, model: str | None = None, effort: str | None = None) -> tuple[str, bool]:
+    """Move the conversation to another provider. Returns what to say, and
+    whether it worked. On any failure the current provider is kept."""
+    if name not in PROVIDERS:
+        return f"no provider called {name}. There are: {', '.join(PROVIDERS)}", False
+    if name == agent.provider.name:
+        return f"Already using {name}.", True
+    variable = missing_key(name)
+    if variable:
+        return f"{name} needs an API key: set {variable} in your shell and start Wren again.", False
+    # Back to the model this conversation last used there, or else the provider's usual one.
+    model = model or agent.model_last_used_with(name) or DEFAULT_MODELS[name]
+    try:
+        provider = make_provider(name, model, effort)
+    except Exception as e:  # the SDK refused to start, for whatever reason
+        return f"couldn't start {name}: {e}", False
+    agent.set_provider(provider)
+    note = f"Now using {name}, with {provider.model}."
+    if agent.messages:
+        note += " Its first reply re-reads the conversation at full price, and the earlier model's private reasoning doesn't carry over."
+    return note, True
 
 
 def switch_model(agent: Agent, model: str) -> str:
@@ -239,15 +296,20 @@ def resume_session(agent: Agent, sessions: SessionStore, session: SavedSession) 
 
     provider = agent.provider
     note = f"Resumed {session.id} ({ago(session.modified)}): {len(agent.messages)} messages."
+    effort = f" at {session.effort} effort" if session.effort else ""
     if session.provider == provider.name and session.model:
         # Carry on with the model and effort it was using.
         if (session.model, session.effort) != (provider.model, provider.effort):
             provider.model, provider.effort = session.model, session.effort
             sessions.provider, sessions.model, sessions.effort = provider.name, session.model, session.effort
-            effort = f" at {session.effort} effort" if session.effort else ""
             note += f" Using {session.model}{effort}, as it was."
     elif session.model:
-        note += f" It was using {session.provider}'s {session.model}; continuing with {provider.model}."
+        # It was with a different provider. Go back to that one if we can.
+        _, switched = switch_provider(agent, session.provider, session.model, session.effort)
+        if switched:
+            note += f" Back on {session.provider}, using {session.model}{effort}, as it was."
+        else:
+            note += f" It was using {session.provider}'s {session.model}, which isn't available now; continuing with {provider.model}."
     return note + " Files may have changed since."
 
 

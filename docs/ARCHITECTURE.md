@@ -140,7 +140,10 @@ Each provider stores its own reasoning as a `ReasoningBlock` tagged with its nam
 
 **Entry points.** `wren --resume` starts the front end on the session list; `wren --resume ID` resumes before it starts; `/resume` and `/resume ID` do the same from inside. In the app, the list is a `Picker` and the transcript is redrawn from the history.
 
-## Switching models and effort
+## Switching provider, model and effort
+
+`Agent.set_provider` replaces the agent's provider object. `commands.switch_provider` builds the new one with `make_provider`, after checking its API key is set, using the model this conversation last used with that provider, or else the provider's default. The history is untouched; each provider leaves out the other's `ReasoningBlock`s. Resuming a session returns to its provider when that provider's key is available.
+
 
 A provider has a `model` and an `effort` (None for the model's default), both read on each request. `Agent.set_model` and `Agent.set_effort` set them and tell the journal; switching model puts effort back to None.
 
@@ -182,7 +185,8 @@ Three things flow the other way, from a front end into the core:
 | Hook | Set on | In the app | In the REPL |
 | --- | --- | --- | --- |
 | Permission question | `Permissions.ask` | `WrenApp.ask_permission`: shows a `PermissionPrompt`, waits for a key | `Repl.ask_permission`: prints, then `input()` |
-| A choice from a list (model, effort, session) | a `CommandResult` flag from `commands.py` | a `Picker` in the transcript | a printed list, and a command to type |
+| A choice from a list (provider, model, effort, session) | a `CommandResult` flag from `commands.py` | a `Picker` in the command panel | a printed list, and a command to type |
+| Reference output (`/usage`, `/history`, …) | `CommandResult.panel` | the command panel, closed with Escape | printed |
 | Stop the turn | closing the `run_turn` generator | Escape sets a flag; the worker's loop breaks | Ctrl-C |
 | Stop a slow tool | `ToolContext.should_stop` | the same flag; the shell polls it | not used (Ctrl-C interrupts directly) |
 
@@ -229,6 +233,7 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 11. **Front ends are interchangeable.** The agent, tools and providers contain nothing specific to the app or to the REPL.
 12. **In the app, only the app's thread touches widgets.** The worker thread reaches the screen through `call_from_thread`.
 13. **Text from outside is never interpreted as markup.**
+    Reference output from slash commands goes in the command panel, not the transcript: the transcript holds the conversation and the events in it.
 14. **Compaction is all or nothing.** It either replaces the whole history with a summary or leaves it exactly as it was.
 15. **Reasoning blocks are returned as they came:** same data, same position. Only the provider that produced one looks inside it.
 16. **Requests are built identically every time,** with new content only at the end, so the cached prefix stays valid.

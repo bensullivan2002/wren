@@ -12,6 +12,7 @@ Run `wren` and it now takes over the terminal, the way `vim` or `htop` does:
 - You type in a box at the bottom. **Enter** sends; **Ctrl+J** adds a line.
 - Tool calls appear as one line each. Edits show their **diff**; commands show the **end of their output**.
 - Permission questions appear in the conversation, where they come up: **y**, **a** or **n**.
+- Slash commands open in a panel above the prompt, and **Escape** closes it.
 - **Escape** stops Wren. **Ctrl+Q** quits.
 
 It's built on [Textual](https://textual.textualize.io), a Python framework for terminal apps. The old line-by-line interface is still there as `wren --plain`, and Wren switches to it by itself when it isn't attached to a terminal (`echo hi | wren`).
@@ -156,6 +157,37 @@ Escape is different: it's bound on the app with `priority=True`, so it works whe
 In real use, every permission question made the conversation jump to its very top, leaving the question waiting off-screen. The cause was one line: `question.focus()`. Focusing a widget scrolls it into view, and the widget had only just been mounted, so it hadn't been laid out yet and Textual took its position to be the top. That scroll also cancelled the "stay at the bottom" anchor, so the view stayed wrong afterwards.
 
 The fix (`WrenApp.ask`) is to take the focus without scrolling, `widget.focus(scroll_visible=False)`, then pin the conversation to its end again, once immediately and once after the layout has caught up. The headless tests had missed it because they used conversations too short to scroll. There's now a test with a long one that checks the scroll position. **A UI test that never scrolls can't catch a scrolling bug.**
+
+### The command panel: what isn't conversation doesn't go in the conversation
+
+At first, the output of `/usage` or `/history` was added to the transcript like everything else. It piled up between the real messages, and a long `/history` pushed the conversation off the screen.
+
+Those commands are you asking Wren about itself. Their answers aren't part of what's being said to the model. So they now open in a **panel**: a box above the prompt that shows one thing, and closes when you press Escape, leaving nothing behind. Pickers (`/provider`, `/model`, `/effort`, `/resume`) open in the same place.
+
+```python
+class CommandPanel(VerticalScroll):
+    async def show(self, title, content, keys="↑↓ scroll"):
+        await self.remove_children()
+        await self.mount(content)
+        self.border_title = title
+        self.border_subtitle = f"{keys} · esc to go back"
+        self.add_class("open")
+        (content if content.can_focus else self).focus()
+```
+
+The panel is always in the layout, hidden by CSS (`display: none`), and "opening" it adds a class. That's the usual way to show and hide things in Textual, as on the web: change a class, and let the stylesheet do the rest.
+
+What decides where a command's output goes is a flag on its result, set in `commands.py`:
+
+| The command | Its output goes | Because |
+| --- | --- | --- |
+| tells you something (`/usage`, `/help`, `/history`, `/tools`, `/system`, `/memory`, `/permissions`) | in the panel | it's reference: read it and dismiss it |
+| changes something (`/clear`, `/remember`, `/model NAME`, `/compact`) | in the transcript, as a note | it's an event in the session, and belongs where it happened |
+| fails | in the transcript | so you can't miss it |
+
+Escape now has two jobs, and they're ordered: with the panel open it closes the panel; otherwise it stops Wren. One press never does both, so looking something up mid-turn can't cancel the turn by accident. A permission question closes the panel by itself, because it needs the keyboard more than the panel does.
+
+The plain REPL has no panel. The same commands print their text, which is all a line-by-line interface can do. The flag is a hint a front end may ignore.
 
 ## Idea 6: stopping is still closing the generator
 
