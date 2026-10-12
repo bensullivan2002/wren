@@ -26,6 +26,10 @@ concurrency:
 # Actions are pinned to a commit, not a tag: a tag can be moved to different
 # code, a commit can't. The comment says which release it is, and Dependabot
 # updates both.
+#
+# Every job's name (the matrix values included) is a required check on main
+# (D114). Rename a job or change the matrix, and update the branch protection
+# to match, or pull requests wait for ever on a check that never reports.
 jobs:
   lint:
     name: Lint and format
