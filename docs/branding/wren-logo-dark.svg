@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="160" viewBox="0 0 480 160" role="img" aria-labelledby="title desc">
+  <title id="title">Wren</title>
+  <desc id="desc">A right-facing wren with an upright tail and a code-chevron cut out of its wing.</desc>
+  <g transform="translate(16 24) scale(1.6)"><path fill="#E6B17C" fill-rule="evenodd" d="M7 7 L18 12 L28 29 C31 27 34 24 35 21 C35 14 39 9 46 9 C52 9 56 13 56 19 L62 23 L55 27 C54 39 45 49 34 52 L34 57 H40 V60 H30 V53 H26 V57 H20 V54 H23 V52 C14 50 9 45 9 38 C9 35 10 32 12 30 Z M48 18 A2 2 0 1 0 44 18 A2 2 0 1 0 48 18 Z M26 32 H30 L38 39 L30 46 H26 L33 39 Z"/></g>
+  <g transform="translate(158 56) scale(1.4)" fill="none" stroke="#F3EEE5" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 0 L14 36 L24 13 L34 36 L44 0"/>
+    <path d="M62 36 V0 M62 14 C62 3 70 -1 80 0"/>
+    <path d="M92 18 H124 C124 6 118 0 108 0 C97 0 90 7 90 18 C90 30 97 36 108 36 C115 36 120 33 124 29"/>
+    <path d="M142 36 V0 M142 14 C142 -5 176 -5 176 14 V36"/>
+  </g>
+</svg>
