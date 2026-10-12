@@ -15,7 +15,8 @@ Wren is a coding-agent harness for the terminal, built step by step by Claude wi
   - `README.md`: status line, commands, tools, config, roadmap, file tree.
 - **Code is written to be read.** Module docstrings explain why the module exists; comments teach the non-obvious. Prefer clarity to cleverness.
 - **Tests:** `pytest`, using `FakeProvider`, so no network or API key is needed. Agent tests must leave `history_problems(agent.messages) == []`.
-- **One commit per step** on `main`, unless Ben asks otherwise.
+- **One commit per step**, on that step's own branch, merged into `main`, unless Ben asks otherwise.
+- **All new work happens in a new git worktree, never in the main checkout.** This keeps parallel sessions and pieces of work from conflicting. Start each one from an up-to-date `main` with `git worktree add .claude/worktrees/<name> -b <branch> main`, and make every edit, test run and commit there. A new worktree has no `.venv` (it's gitignored), so create one there with the commands below; the main checkout's `.venv/bin/wren` runs the main checkout's code. Once the branch is merged, remove it with `git worktree remove .claude/worktrees/<name>`.
 
 ## Status
 
