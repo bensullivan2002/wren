@@ -82,7 +82,9 @@ COMPACTED_NOTE = (
 )
 
 
-def build_system_prompt(cwd: Path | None = None, today: date | None = None, memory: str = "") -> str:
+def build_system_prompt(
+    cwd: Path | None = None, today: date | None = None, memory: str = ""
+) -> str:
     cwd = cwd or Path.cwd()
     today = today or date.today()
     environment = "\n".join(

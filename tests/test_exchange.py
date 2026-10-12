@@ -76,7 +76,9 @@ def test_a_failed_lookup_keeps_the_last_rate_and_waits_until_tomorrow(tmp_path):
     bank.error = OSError("no network")
     exchange = ExchangeRate(tmp_path, bank, today)
     assert exchange.claim_lookup()
-    assert exchange.look_up().gbp_per_usd == Decimal("0.75555")  # yesterday's still shown
+    assert exchange.look_up().gbp_per_usd == Decimal(
+        "0.75555"
+    )  # yesterday's still shown
     assert not exchange.claim_lookup()  # one try a day, not one every ten seconds
     assert bank.calls == 2
 
@@ -98,7 +100,12 @@ def test_an_implausible_rate_is_not_believed(tmp_path):
 def test_a_damaged_cache_file_is_ignored(tmp_path):
     path = tmp_path / CACHE_FILE
     path.parent.mkdir(parents=True)
-    for damaged in ["{not json", "[]", '{"gbp_per_usd": "abc", "rate_date": "x", "looked_up_on": "y"}', "{}"]:
+    for damaged in [
+        "{not json",
+        "[]",
+        '{"gbp_per_usd": "abc", "rate_date": "x", "looked_up_on": "y"}',
+        "{}",
+    ]:
         path.write_text(damaged)
         assert ExchangeRate(tmp_path, Bank(), Today()).rate is None
 

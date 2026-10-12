@@ -39,8 +39,9 @@ other part of Wren, which assumes the history lives in `agent.messages`.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator, Sequence
 from decimal import Decimal
-from typing import Any, Iterator, Sequence
+from typing import Any
 
 import openai
 
@@ -69,7 +70,9 @@ EFFORT_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 # Documented defaults, used independently of the last response's effort.
 # Copied from OpenAI's reasoning guide, so they can go stale. A model that
 # isn't covered is reported as unknown, never guessed. Checked October 2026.
-DEFAULT_EFFORT_SOURCE = "per OpenAI's documentation, October 2026; not measured from a response"
+DEFAULT_EFFORT_SOURCE = (
+    "per OpenAI's documentation, October 2026; not measured from a response"
+)
 DOCUMENTED_DEFAULT_EFFORT = {
     "gpt-5.5": "medium",
     "gpt-5.6": "medium",
@@ -83,26 +86,61 @@ DOCUMENTED_DEFAULT_EFFORT = {
 # model that isn't listed has its cost shown as unknown, never guessed.
 # These are the Standard tier, the one Wren uses, on the normal endpoint
 # (regional data-residency endpoints charge 10% more).
-PRICES_SOURCE = "https://developers.openai.com/api/docs/pricing, checked 12 October 2026"
+PRICES_SOURCE = (
+    "https://developers.openai.com/api/docs/pricing, checked 12 October 2026"
+)
 LONG_PROMPT = 272_000  # "Long context" on the pricing page: more than 272K input tokens
 
 
-def _usd(input: str, cached_input: str, cache_writes: str, output: str, **long_prompt: Any) -> Prices:
+def _usd(
+    input: str, cached_input: str, cache_writes: str, output: str, **long_prompt: Any
+) -> Prices:
     """A row of the pricing page's table, in the page's column order, so the
     two can be compared line by line."""
     return Prices(
-        input=Decimal(input), output=Decimal(output),
-        cache_read=Decimal(cached_input), cache_write=Decimal(cache_writes), **long_prompt,
+        input=Decimal(input),
+        output=Decimal(output),
+        cache_read=Decimal(cached_input),
+        cache_write=Decimal(cache_writes),
+        **long_prompt,
     )
 
 
 DOCUMENTED_PRICES: dict[str, Prices] = {
     # Short and long context prices both published.
-    "gpt-6-astra": _usd("10", "1", "12.50", "50", long_prompt_over=LONG_PROMPT, long_prompt=_usd("20", "2", "25", "75")),
-    "gpt-6.1-sol": _usd("2", "0.10", "2.50", "10", long_prompt_over=LONG_PROMPT, long_prompt=_usd("4", "0.20", "5", "15")),
-    "gpt-6-luna": _usd("0.10", "0.01", "0.125", "0.50", long_prompt_over=LONG_PROMPT, long_prompt=_usd("0.20", "0.02", "0.25", "0.75")),
+    "gpt-6-astra": _usd(
+        "10",
+        "1",
+        "12.50",
+        "50",
+        long_prompt_over=LONG_PROMPT,
+        long_prompt=_usd("20", "2", "25", "75"),
+    ),
+    "gpt-6.1-sol": _usd(
+        "2",
+        "0.10",
+        "2.50",
+        "10",
+        long_prompt_over=LONG_PROMPT,
+        long_prompt=_usd("4", "0.20", "5", "15"),
+    ),
+    "gpt-6-luna": _usd(
+        "0.10",
+        "0.01",
+        "0.125",
+        "0.50",
+        long_prompt_over=LONG_PROMPT,
+        long_prompt=_usd("0.20", "0.02", "0.25", "0.75"),
+    ),
     # A promotional price, "available at least through November 21, 2026".
-    "gpt-5.6-sol": _usd("4", "0.40", "5", "20", long_prompt_over=LONG_PROMPT, long_prompt=_usd("8", "0.80", "10", "30")),
+    "gpt-5.6-sol": _usd(
+        "4",
+        "0.40",
+        "5",
+        "20",
+        long_prompt_over=LONG_PROMPT,
+        long_prompt=_usd("8", "0.80", "10", "30"),
+    ),
     # One price published, with no long context price.
     "gpt-6-sol": _usd("2", "0.20", "2.50", "10"),
     "gpt-5.6-terra": _usd("2", "0.20", "2.50", "12"),
@@ -136,14 +174,27 @@ DOCUMENTED_CONTEXT_WINDOWS: dict[str, int] = {
 # `models.list()` returns everything on the account: image, speech and
 # embedding models too. These fragments mark the ones that can't hold a
 # conversation with tools, so the picker can leave them out.
-_NOT_CHAT = ("embedding", "whisper", "tts", "audio", "realtime", "transcribe", "image", "dall-e", "sora", "moderation")
+_NOT_CHAT = (
+    "embedding",
+    "whisper",
+    "tts",
+    "audio",
+    "realtime",
+    "transcribe",
+    "image",
+    "dall-e",
+    "sora",
+    "moderation",
+)
 
 
 class OpenAIProvider:
     name = "openai"
     default_effort_source = DEFAULT_EFFORT_SOURCE
 
-    def __init__(self, model: str, client: Any = None, effort: str | None = None) -> None:
+    def __init__(
+        self, model: str, client: Any = None, effort: str | None = None
+    ) -> None:
         self.model = model
         self.effort = effort
         # The SDK reads OPENAI_API_KEY from the environment by itself.
@@ -152,7 +203,11 @@ class OpenAIProvider:
 
     def models(self) -> list[str]:
         ids = [model.id for model in self.client.models.list()]
-        chat = [i for i in ids if i.startswith(("gpt-", "o")) and not any(part in i for part in _NOT_CHAT)]
+        chat = [
+            i
+            for i in ids
+            if i.startswith(("gpt-", "o")) and not any(part in i for part in _NOT_CHAT)
+        ]
         return sorted(chat, reverse=True)  # roughly newest first
 
     def efforts(self) -> list[str]:
@@ -259,11 +314,20 @@ def _block_to_item(block: Block, role: str) -> dict[str, Any] | None:
         return {"role": role, "content": block.text}
     if isinstance(block, ToolUseBlock):
         # Arguments go back as they came: a string containing JSON.
-        return {"type": "function_call", "call_id": block.id, "name": block.name, "arguments": json.dumps(block.input)}
+        return {
+            "type": "function_call",
+            "call_id": block.id,
+            "name": block.name,
+            "arguments": json.dumps(block.input),
+        }
     if isinstance(block, ToolResultBlock):
         # There's no "is_error" here. An error is just text the model reads,
         # and Wren's error results already say what went wrong.
-        return {"type": "function_call_output", "call_id": block.tool_use_id, "output": block.content}
+        return {
+            "type": "function_call_output",
+            "call_id": block.tool_use_id,
+            "output": block.content,
+        }
     if isinstance(block, ReasoningBlock):
         # Ours go back exactly as they came. Another provider's reasoning
         # would mean nothing to this one, so it's left out.
@@ -285,12 +349,20 @@ def from_response(response: Any) -> Message:
                 elif part.type == "refusal":
                     blocks.append(TextBlock(part.refusal))
         elif item.type == "function_call":
-            blocks.append(ToolUseBlock(id=item.call_id, name=item.name, input=_arguments(item.arguments)))
+            blocks.append(
+                ToolUseBlock(
+                    id=item.call_id, name=item.name, input=_arguments(item.arguments)
+                )
+            )
         elif item.type == "reasoning":
             # Kept whole, in its place, to be sent back unchanged (see
             # messages.ReasoningBlock). `model_dump` turns the SDK's object
             # back into the plain dict the API sent us.
-            blocks.append(ReasoningBlock(OpenAIProvider.name, item.model_dump(mode="json", exclude_none=True)))
+            blocks.append(
+                ReasoningBlock(
+                    OpenAIProvider.name, item.model_dump(mode="json", exclude_none=True)
+                )
+            )
         # Any other item type is something Wren doesn't use, and is dropped.
     return Message("assistant", blocks)
 
@@ -332,5 +404,8 @@ def _usage(api_usage: Any) -> Usage:
         output_tokens=api_usage.output_tokens,
         cache_read_tokens=cached,
         cache_write_tokens=written,
-        thinking_tokens=getattr(api_usage.output_tokens_details, "reasoning_tokens", None) or 0,
+        thinking_tokens=getattr(
+            api_usage.output_tokens_details, "reasoning_tokens", None
+        )
+        or 0,
     )

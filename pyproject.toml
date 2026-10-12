@@ -17,7 +17,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    # Runs the lint and format checks in .pre-commit-config.yaml (which pins
+    # their versions), on commit and in CI.
+    "pre-commit>=4",
+]
 
 # `pip install -e .` puts a `wren` command on your PATH that calls wren.cli:main
 [project.scripts]
@@ -34,3 +40,21 @@ packages = ["src/wren"]
 testpaths = ["tests"]
 asyncio_mode = "auto"  # lets a test be `async def`: needed to drive the Textual app
 pythonpath = ["src"]
+
+# Ruff lints and formats. Its version is pinned in .pre-commit-config.yaml;
+# run it with `pre-commit run --all-files`. The Python version it targets
+# comes from requires-python above.
+[tool.ruff]
+# The docs' code snippets are laid out by hand for reading, and record each
+# step as it was: leave them alone.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+# Ruff's default rules, plus bugbear (likely bugs) and bandit (security).
+extend-select = ["B", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+# Bandit's rules are for the code Wren runs. Tests and the logo generator
+# assert, run commands and use fixed paths on purpose.
+"tests/**" = ["S"]
+"docs/**" = ["S"]

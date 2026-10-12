@@ -29,8 +29,8 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Iterator, Sequence
 from decimal import Decimal
-from typing import Iterator, Sequence
 
 from wren.messages import (
     Completed,
@@ -46,11 +46,15 @@ from wren.messages import (
 )
 from wren.prompts import COMPACT_PROMPT
 
+
 class FakeProvider:
     name = "fake"
 
     def __init__(
-        self, replies: list[str | Message] | None = None, delay: float = 0.0, effort: str | None = None
+        self,
+        replies: list[str | Message] | None = None,
+        delay: float = 0.0,
+        effort: str | None = None,
     ) -> None:
         self.replies = list(replies) if replies is not None else None
         self.model = "demo" if replies is None else "scripted"
@@ -78,7 +82,12 @@ class FakeProvider:
         # offline. "demo-large" plays a model whose prices aren't known.
         if self.model == "demo-large":
             return None
-        return Prices(input=Decimal(3), output=Decimal(15), cache_read=Decimal("0.3"), cache_write=Decimal("3.75"))
+        return Prices(
+            input=Decimal(3),
+            output=Decimal(15),
+            cache_read=Decimal("0.3"),
+            cache_write=Decimal("3.75"),
+        )
 
     context_window_source = "made up: it's the fake provider"
 
@@ -117,13 +126,19 @@ class FakeProvider:
 
         for block in reply.content:
             if isinstance(block, TextBlock):
-                for word in re.findall(r"\S+\s*", block.text):  # each word keeps its trailing space
+                for word in re.findall(
+                    r"\S+\s*", block.text
+                ):  # each word keeps its trailing space
                     yield TextDelta(word)
                     if self.delay:
                         time.sleep(self.delay)
 
         # Rough rule of thumb: one token is about four characters of English.
-        sent = len(system) + sum(_chars(m) for m in messages) + sum(len(json.dumps(t.input_schema)) for t in tools)
+        sent = (
+            len(system)
+            + sum(_chars(m) for m in messages)
+            + sum(len(json.dumps(t.input_schema)) for t in tools)
+        )
         # Pretend to think harder at higher effort, so the effect of the
         # setting can be seen (and tested) without a real model.
         # (Scripted tests that haven't set an effort get none, so their
@@ -136,7 +151,9 @@ class FakeProvider:
             effort_sent=self.effort,
             stop_reason="tool_use" if reply.tool_uses else "end_turn",
             usage=Usage(
-                input_tokens=sent // 4, output_tokens=_chars(reply) // 4 + thinking, thinking_tokens=thinking
+                input_tokens=sent // 4,
+                output_tokens=_chars(reply) // 4 + thinking,
+                thinking_tokens=thinking,
             ),
         )
 
@@ -151,8 +168,14 @@ class FakeProvider:
         if last.tool_results:
             result = last.tool_results[0]
             lines = result.content.splitlines() or [""]
-            verdict = "returned an error" if result.is_error else f"returned {len(lines)} line(s)"
-            return Message.assistant(f"(fake model) The tool {verdict}. The first line is: {lines[0]}")
+            verdict = (
+                "returned an error"
+                if result.is_error
+                else f"returned {len(lines)} line(s)"
+            )
+            return Message.assistant(
+                f"(fake model) The tool {verdict}. The first line is: {lines[0]}"
+            )
 
         command, _, arg = last.text.strip().partition(" ")
         arg = arg.strip()
@@ -164,7 +187,13 @@ class FakeProvider:
         elif command == "search" and arg:
             call = ("search", {"pattern": arg})
         elif command == "run" and arg:
-            call = ("shell", {"description": "Run the command you typed after 'run'.", "command": arg})
+            call = (
+                "shell",
+                {
+                    "description": "Run the command you typed after 'run'.",
+                    "command": arg,
+                },
+            )
         elif command == "write" and " " in arg:
             path, _, text = arg.partition(" ")
             call = ("write_file", {"path": path, "content": text + "\n"})
@@ -179,7 +208,10 @@ class FakeProvider:
         name, args = call
         return Message(
             "assistant",
-            [TextBlock(f"(fake model) I'll use {name}."), ToolUseBlock(f"fake_{self._next_id}", name, args)],
+            [
+                TextBlock(f"(fake model) I'll use {name}."),
+                ToolUseBlock(f"fake_{self._next_id}", name, args),
+            ],
         )
 
 

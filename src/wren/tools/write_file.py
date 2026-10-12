@@ -12,7 +12,15 @@ from __future__ import annotations
 from pydantic import Field
 
 from wren.tools.base import Tool, ToolContext, ToolError, ToolInput, ToolResult
-from wren.tools.files import diff, diff_summary, read_text, resolve_for_writing, runs_by_itself, shown, write_text
+from wren.tools.files import (
+    diff,
+    diff_summary,
+    read_text,
+    resolve_for_writing,
+    runs_by_itself,
+    shown,
+    write_text,
+)
 from wren.tools.permissions import FileChange, PermissionRequest
 
 
@@ -26,7 +34,9 @@ class WriteFile(Tool):
     )
 
     class Input(ToolInput):
-        path: str = Field(description="Path to the file, relative to the working directory.")
+        path: str = Field(
+            description="Path to the file, relative to the working directory."
+        )
         content: str = Field(description="The complete new content of the file.")
 
     def permission(self, args: Input, ctx: ToolContext) -> PermissionRequest:
@@ -53,7 +63,11 @@ class WriteFile(Tool):
         lines = "1 line" if count == 1 else f"{count:,} lines"
         change = FileChange(path, before, args.content)
         if before is None:
-            return ToolResult(f"Created {name} ({lines}).", summary=f"created {name}, {lines}", change=change)
+            return ToolResult(
+                f"Created {name} ({lines}).",
+                summary=f"created {name}, {lines}",
+                change=change,
+            )
         return ToolResult(
             f"Overwrote {name} ({lines}).",
             summary=f"overwrote {name} {diff_summary(before, args.content)}",
@@ -68,5 +82,7 @@ class WriteFile(Tool):
             raise ToolError(f"{name} is a folder, so it can't be written as a file.")
         if not path.exists():
             return path, name, None, "\n"
-        before, newline = read_text(path, name)  # refuses binary files: we won't overwrite those
+        before, newline = read_text(
+            path, name
+        )  # refuses binary files: we won't overwrite those
         return path, name, before, newline

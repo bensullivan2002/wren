@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 Role = Literal["user", "assistant"]
 
@@ -75,7 +75,7 @@ class ReasoningBlock:
     data: dict[str, Any]
 
 
-Block = Union[TextBlock, ToolUseBlock, ToolResultBlock, ReasoningBlock]
+Block = TextBlock | ToolUseBlock | ToolResultBlock | ReasoningBlock
 
 
 # --- Messages -------------------------------------------------------------
@@ -120,18 +120,26 @@ def history_problems(messages: list[Message]) -> list[str]:
     if messages[0].role != "user":
         problems.append("the conversation must start with a user message")
     if messages[-1].role != "assistant":
-        problems.append("between turns, the conversation must end with an assistant message")
+        problems.append(
+            "between turns, the conversation must end with an assistant message"
+        )
     for i, message in enumerate(messages):
         if not message.content:
             problems.append(f"message {i} has no content")
         if i and message.role == messages[i - 1].role:
-            problems.append(f"messages {i - 1} and {i} are both from the {message.role}")
+            problems.append(
+                f"messages {i - 1} and {i} are both from the {message.role}"
+            )
         asked = [b.id for b in message.tool_uses]
         if asked:
             following = messages[i + 1] if i + 1 < len(messages) else None
-            answered = [b.tool_use_id for b in following.tool_results] if following else []
+            answered = (
+                [b.tool_use_id for b in following.tool_results] if following else []
+            )
             if sorted(asked) != sorted(answered):
-                problems.append(f"message {i} asks for tools {asked} but the next message answers {answered}")
+                problems.append(
+                    f"message {i} asks for tools {asked} but the next message answers {answered}"
+                )
     return problems
 
 
@@ -154,7 +162,9 @@ class ToolSpec:
 # "tool_use"   it wants us to run a tool and send back the result
 # "refusal"    it declined to continue
 # "other"      anything else a provider might report
-StopReason = Literal["end_turn", "max_tokens", "tool_use", "stop_sequence", "refusal", "other"]
+StopReason = Literal[
+    "end_turn", "max_tokens", "tool_use", "stop_sequence", "refusal", "other"
+]
 
 
 @dataclass
@@ -220,7 +230,10 @@ class Prices:
     def cost(self, usage: Usage) -> Decimal | None:
         """What `usage`, one model call, cost in US dollars, or None if the
         prices for a call that size aren't known."""
-        if self.long_prompt_over is not None and usage.sent_tokens > self.long_prompt_over:
+        if (
+            self.long_prompt_over is not None
+            and usage.sent_tokens > self.long_prompt_over
+        ):
             return self.long_prompt.cost(usage) if self.long_prompt else None
         return (
             usage.input_tokens * self.input
@@ -264,4 +277,4 @@ class Completed:
     effort_reported: str | None = None
 
 
-StreamEvent = Union[TextDelta, Completed]
+StreamEvent = TextDelta | Completed

@@ -41,7 +41,15 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from wren import __version__
-from wren.messages import Block, Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock, Usage
+from wren.messages import (
+    Block,
+    Message,
+    ReasoningBlock,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    Usage,
+)
 
 FORMAT_VERSION = 1  # bump if the lines change shape in a way old code can't read
 
@@ -77,9 +85,19 @@ def block_to_json(block: Block) -> dict[str, Any]:
     if isinstance(block, TextBlock):
         return {"type": "text", "text": block.text}
     if isinstance(block, ToolUseBlock):
-        return {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+        return {
+            "type": "tool_use",
+            "id": block.id,
+            "name": block.name,
+            "input": block.input,
+        }
     if isinstance(block, ToolResultBlock):
-        return {"type": "tool_result", "tool_use_id": block.tool_use_id, "content": block.content, "is_error": block.is_error}
+        return {
+            "type": "tool_result",
+            "tool_use_id": block.tool_use_id,
+            "content": block.content,
+            "is_error": block.is_error,
+        }
     if isinstance(block, ReasoningBlock):
         # Saved sealed, as it's held in memory: the provider's own data,
         # which only that provider can read (see messages.ReasoningBlock).
@@ -94,14 +112,19 @@ def block_from_json(data: dict[str, Any]) -> Block:
     if kind == "tool_use":
         return ToolUseBlock(data["id"], data["name"], data["input"])
     if kind == "tool_result":
-        return ToolResultBlock(data["tool_use_id"], data["content"], data.get("is_error", False))
+        return ToolResultBlock(
+            data["tool_use_id"], data["content"], data.get("is_error", False)
+        )
     if kind == "reasoning":
         return ReasoningBlock(data["provider"], data["data"])
     raise ValueError(f"unknown block type in a session file: {kind!r}")
 
 
 def message_to_json(message: Message) -> dict[str, Any]:
-    return {"role": message.role, "content": [block_to_json(block) for block in message.content]}
+    return {
+        "role": message.role,
+        "content": [block_to_json(block) for block in message.content],
+    }
 
 
 def message_from_json(data: dict[str, Any]) -> Message:
@@ -124,7 +147,9 @@ class SavedSession:
     created: str  # ISO date and time
     title: str  # the first thing the user said, shortened
     usage: Usage  # what the conversation has cost so far, added up
-    context_tokens: int | None  # its size at the last model call; None if the file doesn't say
+    context_tokens: (
+        int | None
+    )  # its size at the last model call; None if the file doesn't say
 
     @property
     def modified(self) -> datetime:
@@ -155,7 +180,11 @@ def load(path: Path) -> SavedSession:
                     elif kind == "message":
                         message = message_from_json(record)
                         messages.append(message)
-                        if not title and message.role == "user" and message.text.strip():
+                        if (
+                            not title
+                            and message.role == "user"
+                            and message.text.strip()
+                        ):
                             title = message.text.strip()
                     elif kind == "replaced":
                         messages = [message_from_json(m) for m in record["messages"]]
@@ -169,19 +198,33 @@ def load(path: Path) -> SavedSession:
                         )
                         context_tokens = record.get("context_tokens", context_tokens)
                     elif kind == "model":
-                        meta.update(provider=record["provider"], model=record["model"], effort=record.get("effort"))
+                        meta.update(
+                            provider=record["provider"],
+                            model=record["model"],
+                            effort=record.get("effort"),
+                        )
                     # Any other type is from a newer Wren: skip it, don't fail.
-                except (json.JSONDecodeError, KeyError, ValueError, TypeError, AttributeError) as e:
+                except (
+                    json.JSONDecodeError,
+                    KeyError,
+                    ValueError,
+                    TypeError,
+                    AttributeError,
+                ) as e:
                     # The very last line may be half-written if Wren was
                     # killed mid-write. Anywhere else, the file is damaged.
                     if _is_last_line(path, number):
                         break
-                    raise SessionError(f"{path.name} is damaged at line {number}: {e}") from None
+                    raise SessionError(
+                        f"{path.name} is damaged at line {number}: {e}"
+                    ) from None
     except OSError as e:
         raise SessionError(f"couldn't read {path.name}: {e}") from None
 
     if meta.get("version", FORMAT_VERSION) > FORMAT_VERSION:
-        raise SessionError(f"{path.name} was saved by a newer version of Wren, which this one can't read")
+        raise SessionError(
+            f"{path.name} was saved by a newer version of Wren, which this one can't read"
+        )
     first_line = (title.splitlines() or ["(no messages)"])[0]
     return SavedSession(
         id=path.stem,
@@ -213,7 +256,12 @@ class SessionStore:
     """
 
     def __init__(
-        self, cwd: Path, provider: str, model: str, home: Path | None = None, effort: str | None = None
+        self,
+        cwd: Path,
+        provider: str,
+        model: str,
+        home: Path | None = None,
+        effort: str | None = None,
     ) -> None:
         self.cwd = cwd.resolve()
         home = home if home is not None else Path.home()
@@ -229,12 +277,21 @@ class SessionStore:
         self._write({"type": "message", **message_to_json(message)})
 
     def replace(self, messages: list[Message]) -> None:
-        self._write({"type": "replaced", "messages": [message_to_json(m) for m in messages]})
+        self._write(
+            {"type": "replaced", "messages": [message_to_json(m) for m in messages]}
+        )
 
     def model_changed(self, provider: str, model: str, effort: str | None) -> None:
         self.provider, self.model, self.effort = provider, model, effort
         if self.path is not None:  # otherwise the first line will carry it
-            self._write({"type": "model", "provider": provider, "model": model, "effort": effort})
+            self._write(
+                {
+                    "type": "model",
+                    "provider": provider,
+                    "model": model,
+                    "effort": effort,
+                }
+            )
 
     def spent(self, usage: Usage, context_tokens: int) -> None:
         # Saved so that a resumed conversation knows its totals and its size
@@ -322,7 +379,9 @@ class SessionStore:
         matches = [s for s in sessions if s.id.startswith(wanted)]
         if len(matches) != 1:
             problem = "no session" if not matches else f"{len(matches)} sessions"
-            raise SessionError(f"{problem} here with an id starting {wanted!r} (/resume lists them)")
+            raise SessionError(
+                f"{problem} here with an id starting {wanted!r} (/resume lists them)"
+            )
         return matches[0]
 
     def continue_in(self, session: SavedSession) -> None:

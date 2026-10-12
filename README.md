@@ -7,6 +7,8 @@
 
 A small, readable coding-agent harness for the terminal, built step by step so every part can be understood.
 
+[![CI](https://github.com/bensullivan2002/wren/actions/workflows/ci.yml/badge.svg)](https://github.com/bensullivan2002/wren/actions/workflows/ci.yml)
+
 > **Status: step 9 of the roadmap.** Wren is a full-screen terminal app that chats with Claude or OpenAI's models, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first, or not, in auto mode. On macOS its commands run in a sandbox: no network, and writes only inside the project. It saves every conversation so you can resume it, switches models mid-conversation, reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable.
 
 ## Quickstart
@@ -218,10 +220,22 @@ The docs are written to teach, not just to reference:
 ## Development
 
 ```bash
-pytest
+pip install -e ".[dev]"       # or: uv sync --extra dev
+pre-commit install            # once: lint and format the files in each commit
+pytest                        # the tests
+pre-commit run --all-files    # the lint and format checks, on every file
+git config blame.ignoreRevsFile .git-blame-ignore-revs   # once: blame looks past the big reformat
 ```
 
 The tests use a fake model, so they need no API key and no network. The app's tests run it headless and press its keys.
+
+**CI** runs on every pull request and every push to `main`:
+
+- the pre-commit checks: [ruff](https://docs.astral.sh/ruff/) lint and format, plus whitespace and file checks;
+- `pip-audit` on the locked dependencies;
+- the tests on Linux and macOS, with Python 3.10 and 3.14. The sandbox's tests only run on macOS.
+
+Dependabot proposes dependency updates weekly. The choices behind all of this are D108 to D115 in [Decisions](docs/DECISIONS.md).
 
 ```
 src/wren/
@@ -258,4 +272,8 @@ src/wren/
     shell.py        ┘
 tests/              unit and end-to-end tests
 docs/               architecture, decisions, build journal
+.github/
+  workflows/ci.yml  lint, audit and tests, on every pull request
+  dependabot.yml    weekly dependency updates
+.pre-commit-config.yaml   the checks run on each commit, and by CI
 ```

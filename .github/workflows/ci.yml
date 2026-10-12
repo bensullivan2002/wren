@@ -1,0 +1,80 @@
+# Checks every pull request and every push to main: lint and format, a
+# dependency audit, and the tests on Linux and macOS. Each job is one check
+# on the pull request. See "Development" in README.md, and D108 to D115 in
+# docs/DECISIONS.md.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Weekly as well, so a vulnerability newly published for a dependency shows
+  # up in a quiet week too.
+  schedule:
+    - cron: "0 6 * * 1" # Mondays, 06:00 UTC
+  workflow_dispatch: # adds a "Run workflow" button on the Actions tab
+
+# The token each job is given can read the code, and nothing else.
+permissions:
+  contents: read
+
+# A new push to a branch cancels the run it replaces.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Actions are pinned to a commit, not a tag: a tag can be moved to different
+# code, a commit can't. The comment says which release it is, and Dependabot
+# updates both.
+jobs:
+  lint:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # later steps don't need to push
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      # The same hooks, at the same versions, as `git commit` runs locally.
+      - name: Run the pre-commit hooks on every file
+        run: uv run --locked --extra dev pre-commit run --all-files --show-diff-on-failure
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      # Every package in uv.lock, the dev tools included, checked against
+      # PyPI's records of known vulnerabilities. --strict fails the job if any
+      # package couldn't be checked, rather than passing it quietly.
+      - name: Check the locked dependencies for known vulnerabilities
+        run: |
+          uv export --locked --all-extras --no-emit-project --output-file "$RUNNER_TEMP/requirements.txt"
+          uvx pip-audit --requirement "$RUNNER_TEMP/requirements.txt" --require-hashes --disable-pip --strict --progress-spinner off
+
+  test:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false # a failure in one combination shouldn't hide the others'
+      matrix:
+        # macOS runs the sandbox's tests, which skip anywhere else.
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.10", "3.14"] # the oldest Python Wren supports, and the newest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: ${{ matrix.python }}
+      # If a test hangs for 60 seconds, faulthandler prints every thread's
+      # stack, so the log shows where.
+      - name: Run the tests
+        run: uv run --locked --extra dev pytest -o faulthandler_timeout=60

@@ -1,0 +1,28 @@
+# Dependabot opens a pull request each week to update the dependencies: one
+# for the Python packages in uv.lock, one for the actions in .github/workflows.
+# CI runs on each, like any other pull request.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    # Wait a week after a release before proposing it. A hijacked release is
+    # usually found and pulled within days. This applies to these routine
+    # updates only: Dependabot's security updates, if they're switched on in
+    # the repository's settings, don't wait.
+    cooldown:
+      default-days: 7
+    groups:
+      python-packages:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]

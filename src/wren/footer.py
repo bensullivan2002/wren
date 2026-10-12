@@ -65,7 +65,9 @@ class AppState:
     memory_files: int | None = None  # None: memory files are switched off
     session_id: str | None = None  # None: nothing saved yet
     resumed: bool = False
-    gbp_per_usd: Decimal | None = None  # None: no exchange rate yet, so money is shown in dollars
+    gbp_per_usd: Decimal | None = (
+        None  # None: no exchange rate yet, so money is shown in dollars
+    )
 
 
 @dataclass
@@ -77,7 +79,9 @@ class Part:
 # --- The rows -----------------------------------------------------------------------
 
 
-def footer_rows(agent: Agent, stats: RunStats, state: AppState, width: int) -> list[Text]:
+def footer_rows(
+    agent: Agent, stats: RunStats, state: AppState, width: int
+) -> list[Text]:
     rows = [
         _settings(agent, stats, state),
         _context(agent, stats, state),
@@ -104,7 +108,9 @@ def _settings(agent: Agent, stats: RunStats, state: AppState) -> list[list[Part]
         groups[0].append(Part(kv("auto", "on", "yellow"), 8))
     other = stats.answered_by_another(provider)
     if other:
-        groups.append([Part(Text(f"⚠ last reply came from {other}", style="yellow"), 8)])
+        groups.append(
+            [Part(Text(f"⚠ last reply came from {other}", style="yellow"), 8)]
+        )
     if state.git is not None:
         git = [Part(kv("git", state.git.branch), 6)]
         if state.git.uncommitted:
@@ -112,18 +118,36 @@ def _settings(agent: Agent, stats: RunStats, state: AppState) -> list[list[Part]
         groups.append(git)
     groups.append([Part(Text(where), 5)])
     if state.session_id:
-        groups.append([Part(kv("session id", state.session_id + (" (resumed)" if state.resumed else "")), 2)])
-    groups.append([Part(Text(f"wren {__version__} · {len(agent.tools)} tools", style="dim"), 1)])
+        groups.append(
+            [
+                Part(
+                    kv(
+                        "session id",
+                        state.session_id + (" (resumed)" if state.resumed else ""),
+                    ),
+                    2,
+                )
+            ]
+        )
+    groups.append(
+        [Part(Text(f"wren {__version__} · {len(agent.tools)} tools", style="dim"), 1)]
+    )
     return groups
 
 
 def _context(agent: Agent, stats: RunStats, state: AppState) -> list[list[Part]]:
     budget = agent.context_budget  # read once: it's worked out from the model's window
     if budget:
-        meter = Text.assemble(("context: ", "dim"), bar(agent.context_tokens / budget), " ")
-        meter.append(f"{budget_used(agent, budget)} · {tokens(agent.context_tokens)}/{tokens(budget)}")
+        meter = Text.assemble(
+            ("context: ", "dim"), bar(agent.context_tokens / budget), " "
+        )
+        meter.append(
+            f"{budget_used(agent, budget)} · {tokens(agent.context_tokens)}/{tokens(budget)}"
+        )
     else:
-        meter = kv("context", f"{tokens(agent.context_tokens)} ({no_budget_reason(agent)})")
+        meter = kv(
+            "context", f"{tokens(agent.context_tokens)} ({no_budget_reason(agent)})"
+        )
     hit = stats.cache_hit()
     allowed = len(agent.tools.permissions.always)
     memory = "off" if state.memory_files is None else str(state.memory_files)
@@ -167,7 +191,10 @@ def _time(stats: RunStats) -> list[list[Part]]:
     if running is not None:
         turn = kv("this turn", clock(running))
     else:
-        turn = kv("last turn", "—" if stats.last_turn_seconds is None else clock(stats.last_turn_seconds))
+        turn = kv(
+            "last turn",
+            "—" if stats.last_turn_seconds is None else clock(stats.last_turn_seconds),
+        )
     average = stats.average_turn_tokens()
     if stats.last_turn_tokens is None:
         per_turn = "—"
@@ -175,7 +202,10 @@ def _time(stats: RunStats) -> list[list[Part]]:
         per_turn = f"{tokens(stats.last_turn_tokens)} (avg {tokens(average or 0)})"
     first = stats.first_word_seconds
     return [
-        [Part(kv("session", clock(stats.elapsed())), 9), Part(kv("turns", str(stats.turns)), 8)],
+        [
+            Part(kv("session", clock(stats.elapsed())), 9),
+            Part(kv("turns", str(stats.turns)), 8),
+        ],
         [Part(turn, 8), Part(kv("tokens/turn", per_turn), 6)],
         [Part(kv("first word", "—" if first is None else f"{first:.1f}s"), 4)],
     ]
@@ -203,12 +233,21 @@ def _activity(agent: Agent, stats: RunStats, state: AppState) -> list[list[Part]
     if state.stopping:
         return [[Part(spinner + Text("stopping…"), 9)]]
     if not stats.in_turn:  # /compact, or asking the API for a list of models
-        return [[Part(spinner + Text("working"), 9), Part(Text("esc to stop", style="dim"), 8)]]
+        return [
+            [
+                Part(spinner + Text("working"), 9),
+                Part(Text("esc to stop", style="dim"), 8),
+            ]
+        ]
     if stats.running_tool is not None:
         doing = Text("running " + shorten(format_call(stats.running_tool), 60))
     else:
         doing = Text("waiting for the model")
-    step = f"step {stats.step}/{agent.max_steps}" if agent.max_steps else f"step {stats.step}"  # no limit: no "/n"
+    step = (
+        f"step {stats.step}/{agent.max_steps}"
+        if agent.max_steps
+        else f"step {stats.step}"
+    )  # no limit: no "/n"
     return [
         [
             Part(spinner + Text(step), 9),
@@ -221,7 +260,9 @@ def _activity(agent: Agent, stats: RunStats, state: AppState) -> list[list[Part]
 # --- Laying out a row -------------------------------------------------------------
 
 
-SEPARATOR_CELLS = 3  # " · " between parts and " │ " between groups are both three cells wide
+SEPARATOR_CELLS = (
+    3  # " · " between parts and " │ " between groups are both three cells wide
+)
 
 
 def fit(groups: list[list[Part]], width: int) -> Text:
@@ -238,7 +279,9 @@ def fit(groups: list[list[Part]], width: int) -> Text:
     places = [(g, p) for g, group in enumerate(groups) for p in range(len(group))]
     if not places:
         return Text()
-    by_importance = sorted(places, key=lambda place: (-groups[place[0]][place[1]].keep, place))
+    by_importance = sorted(
+        places, key=lambda place: (-groups[place[0]][place[1]].keep, place)
+    )
     chosen: set[tuple[int, int]] = set()
     used = -SEPARATOR_CELLS  # the first part has no separator before it
     for g, p in by_importance:
@@ -248,14 +291,19 @@ def fit(groups: list[list[Part]], width: int) -> Text:
             used += needed
     if not chosen:
         chosen.add(by_importance[0])
-    kept = [[part for p, part in enumerate(group) if (g, p) in chosen] for g, group in enumerate(groups)]
+    kept = [
+        [part for p, part in enumerate(group) if (g, p) in chosen]
+        for g, group in enumerate(groups)
+    ]
     row = _join([group for group in kept if group])
     row.truncate(max(width, 0), overflow="ellipsis")
     return row
 
 
 def _join(groups: list[list[Part]]) -> Text:
-    group_texts = [Text(" · ", style="dim").join(part.text for part in group) for group in groups]
+    group_texts = [
+        Text(" · ", style="dim").join(part.text for part in group) for group in groups
+    ]
     return Text(" │ ", style="dim").join(group_texts)
 
 
@@ -263,7 +311,7 @@ def _join(groups: list[list[Part]]) -> Text:
 
 
 def kv(key: str, value: str, style: str = "") -> Text:
-    """"key: value", the key dimmed so the values stand out."""
+    """ "key: value", the key dimmed so the values stand out."""
     return Text.assemble((f"{key}: ", "dim"), (value, style))
 
 
@@ -323,7 +371,14 @@ def git_state(root: Path) -> GitState | None:
     """
     try:
         result = subprocess.run(
-            ["git", "-c", "core.fsmonitor=false", "status", "--porcelain=v2", "--branch"],
+            [  # noqa: S607 - git from the PATH, as in your terminal
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "status",
+                "--porcelain=v2",
+                "--branch",
+            ],
             cwd=root,
             capture_output=True,
             text=True,
@@ -331,6 +386,7 @@ def git_state(root: Path) -> GitState | None:
             errors="replace",
             timeout=5,
             env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+            check=False,  # a failure is read from returncode below
         )
     except (OSError, subprocess.SubprocessError):  # no git, or it took too long
         return None

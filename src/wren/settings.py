@@ -27,13 +27,19 @@ from pathlib import Path
 
 class UserDefaults:
     def __init__(self, path: Path | None = None) -> None:
-        self.path = path if path is not None else Path.home() / ".wren" / "settings.json"
+        self.path = (
+            path if path is not None else Path.home() / ".wren" / "settings.json"
+        )
 
     def get(self, provider: str) -> tuple[str, str | None] | None:
         """(model, effort) saved for this provider, or None if nothing is saved."""
         defaults = self._read().get("defaults")
         entry = defaults.get(provider) if isinstance(defaults, dict) else None
-        if not isinstance(entry, dict) or not isinstance(entry.get("model"), str) or not entry["model"]:
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("model"), str)
+            or not entry["model"]
+        ):
             return None
         effort = entry.get("effort")
         return entry["model"], effort if isinstance(effort, str) and effort else None

@@ -16,8 +16,9 @@ asked, so nobody is ever asked to approve a call that couldn't run anyway.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from wren.messages import ToolSpec
 from wren.tools.base import Tool, ToolContext, ToolError, ToolResult
@@ -79,7 +80,9 @@ class ToolRegistry:
         """
         tool = self._tools.get(name)
         if tool is None:
-            return _error(f"There is no tool named '{name}'. Available tools: {', '.join(self._tools)}.")
+            return _error(
+                f"There is no tool named '{name}'. Available tools: {', '.join(self._tools)}."
+            )
         try:
             checked = tool.parse(args)
             request = tool.permission(checked, self.context)
@@ -88,7 +91,7 @@ class ToolRegistry:
             result = tool.run(checked, self.context)
         except ToolError as e:
             return _error(str(e))
-        except Exception as e:  # a bug in the tool, or an OS error it didn't expect
+        except Exception as e:  # noqa: BLE001 - a bug in the tool, or an OS error it didn't expect
             return _error(f"{name} failed unexpectedly: {type(e).__name__}: {e}")
         return self._cap(result)
 

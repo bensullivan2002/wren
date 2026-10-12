@@ -120,7 +120,9 @@ class Memory:
         parts = ["<memory>", HEADER]
         for file in self.files:
             scope = "personal, applies to every project" if file.personal else "project"
-            parts.append(f'\n<file path="{self.shown(file.path)}" scope="{scope}">\n{file.text.strip()}\n</file>')
+            parts.append(
+                f'\n<file path="{self.shown(file.path)}" scope="{scope}">\n{file.text.strip()}\n</file>'
+            )
         parts.append("</memory>")
         return "\n".join(parts)
 
@@ -137,10 +139,16 @@ class Memory:
         if not self.files:
             lines = ["No memory files are loaded."]
         else:
-            lines = ["Loaded into this conversation's system prompt, most general first:"]
+            lines = [
+                "Loaded into this conversation's system prompt, most general first:"
+            ]
             for file in self.files:
                 size = "1 line" if file.lines == 1 else f"{file.lines:,} lines"
-                cut = f", cut off at {MAX_FILE_CHARS:,} characters" if file.truncated else ""
+                cut = (
+                    f", cut off at {MAX_FILE_CHARS:,} characters"
+                    if file.truncated
+                    else ""
+                )
                 lines.append(f"  {self.shown(file.path)}  ({size}{cut})")
         lines += [
             "",
@@ -162,7 +170,9 @@ class Memory:
         would be worse: it would shadow the AGENTS.md from then on.
         """
         note = " ".join(note.split())  # one line, whatever was typed
-        existing = self._project_files()  # looked up afresh: a file may have appeared since we loaded
+        existing = (
+            self._project_files()
+        )  # looked up afresh: a file may have appeared since we loaded
         if existing:
             target = existing[-1]  # the most specific: nearest the working directory
             text, newline = read_text(target, self.shown(target))
@@ -186,5 +196,8 @@ def _read(path: Path, personal: bool) -> MemoryFile | None:
         return None
     truncated = len(text) > MAX_FILE_CHARS
     if truncated:
-        text = text[:MAX_FILE_CHARS] + f"\n[This file is longer: only its first {MAX_FILE_CHARS:,} characters are shown.]"
+        text = (
+            text[:MAX_FILE_CHARS]
+            + f"\n[This file is longer: only its first {MAX_FILE_CHARS:,} characters are shown.]"
+        )
     return MemoryFile(path, text, personal, truncated)

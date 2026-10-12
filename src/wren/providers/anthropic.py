@@ -8,8 +8,9 @@ code, means they can be unit-tested without an API key.
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 from decimal import Decimal
-from typing import Any, Iterator, Sequence
+from typing import Any
 
 import anthropic
 
@@ -35,7 +36,9 @@ EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")  # lowest first
 # this, for any model, so it's copied from Anthropic's documentation and can
 # go stale: a model that isn't listed is reported as "unknown", never
 # guessed. Checked October 2026.
-DEFAULT_EFFORT_SOURCE = "per Anthropic's documentation, October 2026; the API doesn't report it"
+DEFAULT_EFFORT_SOURCE = (
+    "per Anthropic's documentation, October 2026; the API doesn't report it"
+)
 DOCUMENTED_DEFAULT_EFFORT = {
     "claude-opus-5-5": "medium",
     "claude-haiku-5-5": "medium",
@@ -56,15 +59,26 @@ DOCUMENTED_DEFAULT_EFFORT = {
 # never guessed. Cache writes are priced for the 5-minute cache, the one
 # Wren asks for (see `stream`). Wren uses neither of the options that change
 # these (US-only inference, fast mode).
-PRICES_SOURCE = "https://platform.claude.com/docs/en/about-claude/pricing, checked 12 October 2026"
+PRICES_SOURCE = (
+    "https://platform.claude.com/docs/en/about-claude/pricing, checked 12 October 2026"
+)
 
 
-def _usd(base_input: str, cache_write_5m: str, cache_hit: str, output: str, **long_prompt: Any) -> Prices:
+def _usd(
+    base_input: str,
+    cache_write_5m: str,
+    cache_hit: str,
+    output: str,
+    **long_prompt: Any,
+) -> Prices:
     """A row of the pricing page's table, in the page's column order, so the
     two can be compared line by line."""
     return Prices(
-        input=Decimal(base_input), output=Decimal(output),
-        cache_read=Decimal(cache_hit), cache_write=Decimal(cache_write_5m), **long_prompt,
+        input=Decimal(base_input),
+        output=Decimal(output),
+        cache_read=Decimal(cache_hit),
+        cache_write=Decimal(cache_write_5m),
+        **long_prompt,
     )
 
 
@@ -81,8 +95,12 @@ DOCUMENTED_PRICES: dict[str, Prices] = {
     "claude-sonnet-4-6": _usd("3", "3.75", "0.30", "15"),
     # Priced by prompt length: over 100,000 tokens, every token costs more.
     "claude-haiku-5-5": _usd(
-        "0.10", "0.125", "0.01", "0.50",
-        long_prompt_over=100_000, long_prompt=_usd("0.50", "0.625", "0.05", "2.50"),
+        "0.10",
+        "0.125",
+        "0.01",
+        "0.50",
+        long_prompt_over=100_000,
+        long_prompt=_usd("0.50", "0.625", "0.05", "2.50"),
     ),
 }
 
@@ -92,7 +110,9 @@ _KNOWN_STOP_REASONS = {"end_turn", "max_tokens", "tool_use", "stop_sequence", "r
 class AnthropicProvider:
     name = "anthropic"
 
-    def __init__(self, model: str, client: Any = None, effort: str | None = None) -> None:
+    def __init__(
+        self, model: str, client: Any = None, effort: str | None = None
+    ) -> None:
         self.model = model
         self.effort = effort
         # The SDK reads ANTHROPIC_API_KEY from the environment by itself.
@@ -106,7 +126,11 @@ class AnthropicProvider:
         effort = getattr(capabilities, "effort", None)
         if effort is None or not effort.supported:
             return []
-        return [level for level in EFFORT_LEVELS if getattr(getattr(effort, level, None), "supported", False)]
+        return [
+            level
+            for level in EFFORT_LEVELS
+            if getattr(getattr(effort, level, None), "supported", False)
+        ]
 
     def default_effort(self) -> str | None:
         return DOCUMENTED_DEFAULT_EFFORT.get(self.model)
@@ -119,7 +143,9 @@ class AnthropicProvider:
     def context_window(self) -> int | None:
         # Reported by the API for each model, so there's no table here to go
         # stale. (The agent asks once per model, not on every request.)
-        return getattr(self.client.models.retrieve(self.model), "max_input_tokens", None)
+        return getattr(
+            self.client.models.retrieve(self.model), "max_input_tokens", None
+        )
 
     context_window_source = "as reported by the Anthropic API"
 
@@ -193,7 +219,10 @@ def _usage(api_usage: Any) -> Usage:
         # None when caching played no part in the request.
         cache_read_tokens=getattr(api_usage, "cache_read_input_tokens", None) or 0,
         cache_write_tokens=getattr(api_usage, "cache_creation_input_tokens", None) or 0,
-        thinking_tokens=getattr(getattr(api_usage, "output_tokens_details", None), "thinking_tokens", None) or 0,
+        thinking_tokens=getattr(
+            getattr(api_usage, "output_tokens_details", None), "thinking_tokens", None
+        )
+        or 0,
     )
 
 
@@ -201,7 +230,10 @@ def _usage(api_usage: Any) -> Usage:
 
 
 def to_api_tools(tools: Sequence[ToolSpec]) -> list[dict[str, Any]]:
-    return [{"name": t.name, "description": t.description, "input_schema": t.input_schema} for t in tools]
+    return [
+        {"name": t.name, "description": t.description, "input_schema": t.input_schema}
+        for t in tools
+    ]
 
 
 def to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
@@ -220,7 +252,12 @@ def _block_to_api(block: Block) -> dict[str, Any] | None:
     if isinstance(block, TextBlock):
         return {"type": "text", "text": block.text}
     if isinstance(block, ToolUseBlock):
-        return {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+        return {
+            "type": "tool_use",
+            "id": block.id,
+            "name": block.name,
+            "input": block.input,
+        }
     if isinstance(block, ToolResultBlock):
         return {
             "type": "tool_result",
@@ -245,7 +282,11 @@ def from_api_message(api_message: Any) -> Message:
             # Kept whole, in its place among the other blocks, to be sent
             # back unchanged (see ReasoningBlock). `model_dump` turns the
             # SDK's object back into the plain dict the API sent us.
-            blocks.append(ReasoningBlock(AnthropicProvider.name, b.model_dump(mode="json", exclude_none=True)))
+            blocks.append(
+                ReasoningBlock(
+                    AnthropicProvider.name, b.model_dump(mode="json", exclude_none=True)
+                )
+            )
         # Any other block type is something Wren doesn't use yet, and is dropped.
     return Message("assistant", blocks)
 

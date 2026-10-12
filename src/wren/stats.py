@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import time
 from collections import Counter
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from wren.agent import Compacted, ToolFinished, ToolStarted
 from wren.messages import Completed, Prices, TextDelta, ToolUseBlock, Usage
@@ -47,12 +48,16 @@ class RunStats:
         self.finished_turn_tokens = 0  # across all finished turns, for the average
         self.last_turn_seconds: float | None = None
         self.last_turn_tokens: int | None = None
-        self.first_word_seconds: float | None = None  # in the latest model call that wrote any text
+        self.first_word_seconds: float | None = (
+            None  # in the latest model call that wrote any text
+        )
         # (provider, model asked for, model the provider says answered), for the latest reply
         self.last_reply: tuple[str, str, str] | None = None
 
         # Tools.
-        self.tool_calls: Counter[str] = Counter()  # tool name -> how many times it was called
+        self.tool_calls: Counter[str] = (
+            Counter()
+        )  # tool name -> how many times it was called
         self.files_changed: set[Path] = set()
         self.tool_errors = 0  # results that were errors; a "no" from you isn't counted
 
@@ -203,5 +208,5 @@ def prices_of(provider: Provider) -> Prices | None:
     know them, or has no way to say (a provider written before prices were)."""
     try:
         return provider.prices()
-    except Exception:
+    except Exception:  # noqa: BLE001 - the footer shows £? rather than fail
         return None

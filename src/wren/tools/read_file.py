@@ -21,10 +21,19 @@ class ReadFile(Tool):
         "ends with a note saying which offset to use to read the next part. "
         "If you don't know the exact path, use list_files or search first."
     )
+
     class Input(ToolInput):
-        path: str = Field(description="Path to the file, relative to the working directory.")
-        offset: int = Field(1, ge=1, description="Line number to start reading from (1 is the first line).")
-        limit: int = Field(DEFAULT_LIMIT, ge=1, description="Maximum number of lines to return.")
+        path: str = Field(
+            description="Path to the file, relative to the working directory."
+        )
+        offset: int = Field(
+            1,
+            ge=1,
+            description="Line number to start reading from (1 is the first line).",
+        )
+        limit: int = Field(
+            DEFAULT_LIMIT, ge=1, description="Maximum number of lines to return."
+        )
 
     def run(self, args: Input, ctx: ToolContext) -> ToolResult:
         path = resolve(ctx, args.path)
@@ -33,12 +42,18 @@ class ReadFile(Tool):
         if not path.exists():
             raise ToolError(f"No such file: {name}. Use list_files to see what exists.")
         if path.is_dir():
-            raise ToolError(f"{name} is a folder, not a file. Use list_files to see what's in it.")
+            raise ToolError(
+                f"{name} is a folder, not a file. Use list_files to see what's in it."
+            )
         size = path.stat().st_size
         if size > MAX_FILE_BYTES:
-            raise ToolError(f"{name} is too large to read ({size:,} bytes). Use search to find the part you need.")
+            raise ToolError(
+                f"{name} is too large to read ({size:,} bytes). Use search to find the part you need."
+            )
         if is_binary(path):
-            raise ToolError(f"{name} looks like a binary file, so it can't be shown as text.")
+            raise ToolError(
+                f"{name} looks like a binary file, so it can't be shown as text."
+            )
 
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         total = len(lines)
@@ -47,7 +62,9 @@ class ReadFile(Tool):
 
         start = args.offset
         if start > total:
-            raise ToolError(f"offset {start} is past the end of {name}, which has {total} lines.")
+            raise ToolError(
+                f"offset {start} is past the end of {name}, which has {total} lines."
+            )
         end = min(start - 1 + args.limit, total)
 
         # Line numbers let the model say "line 42", and find its way back to
@@ -62,4 +79,6 @@ class ReadFile(Tool):
         if end < total:
             note += f" To read on, call read_file with offset={end + 1}."
         note += "]"
-        return ToolResult(f"{shown_lines}\n\n{note}", summary=f"lines {start}-{end} of {total}")
+        return ToolResult(
+            f"{shown_lines}\n\n{note}", summary=f"lines {start}-{end} of {total}"
+        )

@@ -24,11 +24,11 @@ import json
 import os
 import tempfile
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-from typing import Callable
 
 RATE_URL = "https://api.frankfurter.dev/v1/latest?base=USD&symbols=GBP"
 SOURCE = "European Central Bank reference rate, via frankfurter.dev"
@@ -52,7 +52,7 @@ def fetch_rate() -> tuple[Decimal, str]:
     """Ask Frankfurter for the rate: pounds per dollar, and the date it's for.
     Blocks for up to TIMEOUT seconds, and raises one of LOOKUP_FAILED."""
     request = urllib.request.Request(RATE_URL, headers={"User-Agent": "wren"})
-    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # noqa: S310 - a fixed https URL
         data = json.load(response)
     # str() first: Decimal(0.75555), from a float, would carry the float's
     # binary error along (0.755549999...).
@@ -111,8 +111,15 @@ class ExchangeRate:
     def _load(self) -> Rate | None:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-            rate = Rate(Decimal(data["gbp_per_usd"]), str(data["rate_date"]), str(data["looked_up_on"]))
-        except (*LOOKUP_FAILED, AttributeError):  # missing, unreadable, or not what we wrote
+            rate = Rate(
+                Decimal(data["gbp_per_usd"]),
+                str(data["rate_date"]),
+                str(data["looked_up_on"]),
+            )
+        except (
+            *LOOKUP_FAILED,
+            AttributeError,
+        ):  # missing, unreadable, or not what we wrote
             return None
         return rate if 0 < rate.gbp_per_usd < 10 else None
 
@@ -120,9 +127,11 @@ class ExchangeRate:
         # Write to a temporary file, then rename it over the old one. A
         # rename is all-or-nothing, so two Wrens starting at once, or one
         # killed half-way, can't leave a half-written file.
-        assert self.rate is not None
+        assert self.rate is not None  # noqa: S101 - only called once a rate is set
         data = {
-            "gbp_per_usd": str(self.rate.gbp_per_usd),  # a string: JSON numbers are floats
+            "gbp_per_usd": str(
+                self.rate.gbp_per_usd
+            ),  # a string: JSON numbers are floats
             "rate_date": self.rate.rate_date,
             "looked_up_on": self.rate.looked_up_on,
             "source": SOURCE,

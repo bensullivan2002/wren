@@ -54,10 +54,16 @@ class EditFile(Tool):
     )
 
     class Input(ToolInput):
-        path: str = Field(description="Path to the file, relative to the working directory.")
+        path: str = Field(
+            description="Path to the file, relative to the working directory."
+        )
         old_string: str = Field(description="The exact text to replace.")
-        new_string: str = Field(description="The text to put in its place. May be empty, to delete old_string.")
-        replace_all: bool = Field(False, description="Replace every occurrence of old_string, not just one.")
+        new_string: str = Field(
+            description="The text to put in its place. May be empty, to delete old_string."
+        )
+        replace_all: bool = Field(
+            False, description="Replace every occurrence of old_string, not just one."
+        )
 
     def permission(self, args: Input, ctx: ToolContext) -> PermissionRequest:
         # Working out the edit here, before asking, does two jobs: an edit
@@ -88,9 +94,15 @@ class EditFile(Tool):
         times = "1 occurrence" if plan.count == 1 else f"all {plan.count} occurrences"
         content = f"Edited {plan.name}: replaced {times}."
         if lines:
-            where = "Around the change" if plan.count == 1 else "Around the first change"
+            where = (
+                "Around the change" if plan.count == 1 else "Around the first change"
+            )
             content += f" {where}, the file now reads:\n{numbered(lines[first - 1 : last], first)}"
-        return ToolResult(content, summary=f"{plan.name} {diff_summary(plan.before, plan.after)}", change=plan.change)
+        return ToolResult(
+            content,
+            summary=f"{plan.name} {diff_summary(plan.before, plan.after)}",
+            change=plan.change,
+        )
 
     def _plan(self, args: Input, ctx: ToolContext) -> _Plan:
         path = resolve_for_writing(ctx, args.path)
@@ -100,9 +112,13 @@ class EditFile(Tool):
         if not path.exists():
             raise ToolError(f"No such file: {name}. To create it, use write_file.")
         if args.old_string == "":
-            raise ToolError("old_string is empty. Quote the text you want to replace, or use write_file for a new file.")
+            raise ToolError(
+                "old_string is empty. Quote the text you want to replace, or use write_file for a new file."
+            )
         if args.old_string == args.new_string:
-            raise ToolError("old_string and new_string are the same, so there is nothing to change.")
+            raise ToolError(
+                "old_string and new_string are the same, so there is nothing to change."
+            )
 
         before, newline = read_text(path, name)
         count = before.count(args.old_string)
