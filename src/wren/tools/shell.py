@@ -9,9 +9,11 @@ far the most powerful thing Wren can do, and four facts follow from that.
    `rm -rf ~` is a perfectly valid string. So on macOS every command runs
    in a sandbox (sandbox.py): the operating system lets it write only
    inside the working directory and temp folders, and gives it no network.
-   A command that needs more (installing packages, `git commit`, `git push`)
-   has to ask for `outside_sandbox`, and is always asked about, even in auto
-   mode. Elsewhere there's no sandbox yet, and the protection is you: every
+   A command in the sandbox runs without a question: the operating system
+   enforces what you'd be asked to judge (D117). A command that needs more
+   (installing packages, `git commit`, `git push`) has to ask for
+   `outside_sandbox`, and is always asked about, even in auto mode.
+   Elsewhere there's no sandbox yet, and the protection is you: every
    command is shown to you before it runs.
 
 2. "Always allow" has to be careful. You can approve a command's first word
@@ -70,12 +72,12 @@ _PROTECTED = ", ".join(sandbox.PROTECTED)
 # again when a sandboxed command fails, which is when it needs to know.
 _SANDBOX_RULES = (
     "Commands run in a sandbox: they can read files, but can write only inside the working directory "
-    f"and temp folders (not {_PROTECTED}), and have no network. For a command that needs more, such as "
+    f"and temp folders (not {_PROTECTED}, in any folder), and have no network. For a command that needs more, such as "
     "installing packages, git commit or git push, set outside_sandbox; the user is always asked about those. "
 )
 SANDBOX_NOTE = (
     "[This command ran in the sandbox: no network, and writes only inside the working directory and temp "
-    f"folders, not {_PROTECTED}. If that is why it failed, run it again with outside_sandbox set to true. "
+    f"folders, not {_PROTECTED} in any folder. If that is why it failed, run it again with outside_sandbox set to true. "
     "The user will be asked.]"
 )
 
@@ -120,26 +122,25 @@ class Shell(Tool):
             ),
         )
 
-    def permission(self, args: Input, ctx: ToolContext) -> PermissionRequest:
+    def permission(self, args: Input, ctx: ToolContext) -> PermissionRequest | None:
         if not args.command.strip():
             raise ToolError("command is empty.")
+        if _sandboxed(args):
+            # Nothing to ask (D117). The operating system enforces what a
+            # question would only ask about: writes inside the project, no
+            # network. run() decides sandboxing the same way, so a command
+            # that wasn't asked about can't run anywhere but the sandbox.
+            return None
         word = command_word(args.command)
-        if not sandbox.available():  # nothing to be inside or outside of
-            title, scope, label = (
-                "Run a shell command",
-                f"shell:{word}",
-                f"commands starting with `{word}`",
-            )
-        elif args.outside_sandbox:
-            # Its own scope: "always allow `uv`" in the sandbox mustn't cover `uv` outside it.
+        if sandbox.available():  # so the model asked to leave it
             title, scope = (
                 "Run a shell command outside the sandbox",
                 f"shell-outside:{word}",
             )
             label = f"commands starting with `{word}`, outside the sandbox"
-        else:
+        else:  # nothing to be inside or outside of: every command asks
             title, scope, label = (
-                "Run a shell command in the sandbox",
+                "Run a shell command",
                 f"shell:{word}",
                 f"commands starting with `{word}`",
             )
@@ -149,7 +150,6 @@ class Shell(Tool):
             detail=args.command,
             scope=scope if word else None,
             scope_label=label if word else "",
-            contained=_sandboxed(args),
         )
 
     def run(self, args: Input, ctx: ToolContext) -> ToolResult:
@@ -197,8 +197,8 @@ class Shell(Tool):
 
 
 def _sandboxed(args: Shell.Input) -> bool:
-    """Whether this call runs in the sandbox. permission() and run() both
-    ask, so what you're asked about is what runs."""
+    """Whether this call runs in the sandbox, and so isn't asked about.
+    permission() and run() both ask, so what you're asked about is what runs."""
     return sandbox.available() and not args.outside_sandbox
 
 

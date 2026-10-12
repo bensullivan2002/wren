@@ -152,6 +152,8 @@ A sandboxed command can't write them. An edit to one, through `edit_file` or `wr
 
 The two checks differ, on purpose. The file tools check every folder in the path, so `sub/.vscode/tasks.json` asks too. The sandbox only protects these names at the top of the project, because SBPL can match a path *relative to a parameter* only by its start. Matching "a `.vscode` folder anywhere inside" would mean writing the project's path into a regular expression, which Idea 7 rules out. That gap is listed below.
 
+*(Later, D116: it didn't need pasting. SBPL's `string-append` can build the regular expression inside the profile from an escaped parameter, so the sandbox now checks every folder too. Worktrees in `.worktrees/` prompted it.)*
+
 With `.git` read-only, `git status`, `git log` and `git diff` work in the sandbox, and `git add` and `git commit` don't: they write to `.git`. Committing is something to ask about anyway.
 
 ## Idea 7: never paste a path into a program
@@ -193,6 +195,8 @@ Run a shell command outside the sandbox
 
 "Always" keeps the two apart. Approving `uv` in the sandbox gives the scope `shell:uv`; outside it, `shell-outside:uv`. So "always allow `uv`" for `uv run pytest` doesn't quietly cover `uv pip install` with the network on. A side effect improves D28's worst case: "always allow `git`" in the sandbox can no longer push or commit.
 
+*(Later, D117: a command in the sandbox isn't asked about at all now, in either mode, so the first of those questions is gone. Only `shell-outside:` scopes remain on macOS. "Things to try" 1 below no longer shows a question: the command just fails in the sandbox.)*
+
 ---
 
 ## Python worth knowing from this step
@@ -208,7 +212,7 @@ Run a shell command outside the sandbox
 - **macOS only.** On Linux the same idea needs different machinery (bubblewrap, or the kernel's Landlock); on Windows, more again. Without a sandbox, auto mode still asks before every command, and says so.
 - **Commands get your environment variables, API keys included.** With no network they can't send them anywhere, but a command that prints them (`env`) puts them in the conversation, which goes to the provider and into the session file. That was already true before this step; stripping keys from a sandboxed command's environment is a small follow-up.
 - **Reading is broad.** A command can read anything you can, apart from the credential folders: other projects, shell history. Whatever it prints goes to the model.
-- **Protected names are protected only at the top of the project inside the sandbox** (Idea 6). A command could write `sub/.envrc`.
+- **Protected names are protected only at the top of the project inside the sandbox** (Idea 6). A command could write `sub/.envrc`. *(Fixed after this step: the sandbox now protects them in every folder, D116.)*
 - **Memory files aren't protected.** In auto mode, Wren can edit `WREN.md` or `AGENTS.md` without asking, and the next conversation reads them. They can't grant permissions (D53), but they can steer.
 - **The sandbox fences what runs now, not what's written for later.** Wren can write a test, a `Makefile` or a `package.json` script that runs outside the sandbox the next time *you* run it. Read changes before running them yourself.
 - **The network is all or nothing.** Installing a package means leaving the sandbox entirely. Anthropic's sandbox-runtime allows a list of domains through a proxy; that's a bigger piece of work.

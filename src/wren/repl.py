@@ -87,7 +87,7 @@ PROMPT = "\001\033[1;36m\002›\001\033[0m\002 " if _COLOR else "> "
 MAX_DETAIL_LINES = 40
 
 KEYS_HELP = """\
-Wren asks before it edits a file or runs a command: y, n, or a for "always".
+Wren asks before edits and commands outside the sandbox: y, n, or a for "always".
 /auto stops most of the questions: see /permissions for what still asks.
 Ctrl-C while Wren is working stops it. Whatever it had already done stays done,
 and stays in the conversation. Ctrl-D quits."""

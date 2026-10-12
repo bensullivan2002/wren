@@ -24,7 +24,7 @@ from wren.messages import Message, TextBlock, ToolUseBlock, history_problems
 from wren.providers.fake import FakeProvider
 from wren.sessions import SessionStore
 from wren.settings import UserDefaults
-from wren.tools import Permissions, ToolRegistry, default_tools
+from wren.tools import Permissions, ToolRegistry, default_tools, sandbox
 from wren.tools.permissions import FileChange
 from wren.tui import TERMINAL_LOGO, PermissionPrompt, Picker, WrenApp, change_text
 
@@ -342,8 +342,9 @@ async def test_an_edit_asks_first_and_y_lets_it_happen(tmp_path):
 
 
 async def test_a_command_is_asked_about_in_plain_english_with_the_command_itself_underneath(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
+    monkeypatch.setattr(sandbox, "available", lambda: False)  # so commands ask
     command = "grep -rl TODO src | xargs sed -i '' -e 's/TODO/DONE/g'"
     why = "Replace every TODO marker with DONE in the files under src."
     app = make_app(
@@ -462,8 +463,9 @@ async def test_the_app_looks_up_the_days_rate_and_shows_pounds(tmp_path):
 
 @pytest.mark.skipif(os.name != "posix", reason="uses POSIX shell commands")
 async def test_a_command_shows_the_end_of_its_output_and_always_is_not_offered_for_shell_syntax(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
+    monkeypatch.setattr(sandbox, "available", lambda: False)  # so commands ask
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
         await say(app, pilot, "run echo one; echo two")
@@ -557,8 +559,9 @@ async def test_escape_stops_a_running_command_promptly(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
         await say(app, pilot, "run sleep 30")
-        await until(pilot, lambda: question(app), "the permission question")
-        await pilot.press("y")
+        if not sandbox.available():  # in the sandbox it runs without a question
+            await until(pilot, lambda: question(app), "the permission question")
+            await pilot.press("y")
         await pilot.pause(0.3)  # the command is now running
         await pilot.press("escape")
         await finished(app, pilot)  # would time out if we waited for sleep

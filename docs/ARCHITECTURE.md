@@ -24,7 +24,7 @@ flowchart LR
     perms -.->|"ask(request)"| ui
     registry --> ro["list_files · read_file · search<br/><i>read-only, never ask</i>"] --> fs[("Your project<br/>(working directory only)")]
     registry --> rw["edit_file · write_file<br/><i>ask first, except ordinary files in auto mode</i>"] --> fs
-    registry --> sh["shell<br/><i>asks first, except sandboxed commands in auto mode</i>"]
+    registry --> sh["shell<br/><i>asks first, except sandboxed commands, which never ask</i>"]
     sh -->|"by default (macOS)"| sb["<b>Sandbox</b><br/>tools/sandbox.py<br/><i>writes: project and temp only<br/>no network</i>"] --> fs
     sh -->|"outside_sandbox, or no sandbox on this system"| os[("Your machine<br/>(not fenced)")]
 ```
@@ -85,7 +85,7 @@ What happens when you type *"rename helper to assist in util.py"* and press Ente
 6. **For each tool request,** the agent yields `ToolStarted`, calls `registry.run(name, args)`, and yields `ToolFinished`. The registry:
    1. finds the tool, or returns an error result listing the real ones;
    2. parses the arguments into the tool's `Input`, filling in defaults (`Tool.parse`);
-   3. asks the tool what it's about to change (`Tool.permission`). Read-only tools say nothing. `edit_file` works out the edit and returns a diff; an edit that can't work fails here;
+   3. asks the tool what it's about to change (`Tool.permission`). Read-only tools say nothing, and so does the shell for a command that will run in the sandbox. `edit_file` works out the edit and returns a diff; an edit that can't work fails here;
    4. if there's a request, asks `Permissions.allows`. That returns at once if auto mode is on and the request is `contained`, or if its scope is already "always" allowed, and otherwise calls the front end's `ask_permission`, which shows the request and waits for y / n / a. A no becomes an error result telling the model not to retry;
    5. calls `tool.run(args, ctx)`, turning any exception into an error result;
    6. caps the output's size.
@@ -235,21 +235,21 @@ The theme-coloured bird is a top-docked `Static` outside the transcript, pinned 
 | --- | --- | --- | --- | --- |
 | `list_files`, `read_file`, `search` | never | never | | |
 | `edit_file`, `write_file` | yes | only for a path through `.envrc`, `.vscode`, `.idea`, `.claude` or `.codex` | `edit` | all file edits (working directory only, never `.git`) |
-| `shell`, in the sandbox, simple command | yes | no | `shell:<first word>` | commands in the sandbox starting with that word |
+| `shell`, in the sandbox | never | never | | |
 | `shell`, `outside_sandbox`, simple command | yes | yes | `shell-outside:<first word>` | commands outside the sandbox starting with that word |
-| `shell`, with any shell syntax (`;`, `&&`, pipes, `$`, redirects, brackets, line breaks) | every time | no if sandboxed, else yes | none | |
+| `shell`, `outside_sandbox`, with any shell syntax (`;`, `&&`, pipes, `$`, redirects, brackets, line breaks) | every time | every time | none | |
 
-Where there's no sandbox (anything but macOS), every command is unsandboxed, its scope is `shell:<first word>`, and auto mode asks about it.
+Where there's no sandbox (anything but macOS), every command is unsandboxed and asked about in both modes, with the scope `shell:<first word>` (none for shell syntax).
 
 Scopes live in `Permissions.always`, and auto mode in `Permissions.auto`, in memory, until Wren exits. `/permissions` lists both; `/auto` switches auto mode, and the app's footer shows `auto: on` while it lasts.
 
-**Containment.** `Permissions.allows` lets a request through without asking when `auto` is on and `request.contained` is true. The tool sets `contained`, from facts Wren establishes: the file tools from the resolved path (`files.runs_by_itself`: no part of it is in `sandbox.PROTECTED`), the shell from whether the command will run in the sandbox (`_sandboxed`). The model's only say is `outside_sandbox`, which makes a request *not* contained. The default is `False`, so a tool that doesn't set it is asked about in every mode.
+**Containment.** `Permissions.allows` lets a request through without asking when `auto` is on and `request.contained` is true. The file tools set `contained` from the resolved path (`files.runs_by_itself`: no part of it is in `sandbox.PROTECTED`). The shell makes no request at all for a command that will run in the sandbox (`_sandboxed`), in either mode (D117): the sandbox is a stronger containment than any flag, because the operating system enforces it. The model's only say is `outside_sandbox`, which turns that into a request, never contained. The default is `False`, so a tool that doesn't set it is asked about in every mode.
 
 **The sandbox** (`tools/sandbox.py`, macOS only, used when `available()`). `sandbox.command(line, root)` returns `sandbox-exec -p PROFILE -DNAME=path… /bin/sh -c line`, which `shell._run` starts in place of the command line. The profile starts from `(deny default)`, and allows:
 
 - running programs (each inherits the profile);
 - reading anywhere except `sandbox.CREDENTIALS` in the home directory;
-- writing in the project and the temporary folders, except `sandbox.PROTECTED` at the project's top level (a later rule in a profile wins over an earlier one);
+- writing in the project and the temporary folders, except `sandbox.PROTECTED` in any folder of the project, so a git worktree inside it is protected like the project itself. That rule is a regular expression: the profile joins the escaped project path (parameter `ROOT_ESCAPED`) to a fixed pattern with `string-append`. It comes after the allow rule, because a later rule in a profile wins over an earlier one;
 - writing to `/dev/null` and the like; reading system settings; a short list of system services (`mach-lookup`).
 
 No network rule is allowed, so there is no network. Paths are parameters (`-D`), made real with `os.path.realpath` (`/tmp` is `/private/tmp`). A sandboxed command that exits non-zero gets `SANDBOX_NOTE` added to its result, telling the model where it ran and how to ask to leave.
@@ -262,7 +262,7 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 2. **The history is truthful, and append-only between compactions.** Anything a tool did stays in the history, even if the turn was interrupted or failed. Nothing is removed or rewritten except by compaction, which replaces all of it with a summary, and `/clear`.
 3. **Every provider stream ends with exactly one `Completed`.** Zero or more `TextDelta` come first.
 4. **Tools never crash the loop.** Every failure becomes an error result the model can read. Only Ctrl-C escapes.
-5. **Nothing changes without permission.** A tool whose `permission()` returns a request runs only if `Permissions.allows` said yes: you answered yes, an "always" covers it, or auto mode is on and the request is contained. With nobody to ask, the answer to anything else is no.
+5. **Nothing changes without permission, except inside the sandbox.** A tool whose `permission()` returns a request runs only if `Permissions.allows` said yes: you answered yes, an "always" covers it, or auto mode is on and the request is contained. With nobody to ask, the answer to anything else is no. The one tool that changes things without a request is the shell, for a command that will run in the sandbox (D117).
 6. **Nobody is asked about a call that can't run.** Arguments are validated, and edits worked out, before the question.
 7. **File tools stay inside the working directory.** Every path is resolved (following `..` and symlinks) *before* it's checked. Writing tools also refuse anything inside `.git`. *(The shell is the exception: the sandbox fences what a command writes, but not what it reads, and a command outside the sandbox isn't fenced at all.)*
 8. **No tool result exceeds 50,000 characters.**
@@ -283,9 +283,9 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 22. **A restored history is valid or it isn't used.** `restore` ties off loose ends, then `history_problems` must be empty.
 23. **Session files are outside the project and private to the user** (`0o700` folders, `0o600` files).
 24. **However the app closes, it releases its worker thread.**
-25. **Containment is established by Wren, never claimed by the model.** `contained` comes from the resolved path or from where the command will run; the model can only opt out of it, with `outside_sandbox`.
-26. **What you're asked about is what runs.** The shell's `permission()` and `run()` both decide sandboxing with `_sandboxed(args)`, so a question that says "in the sandbox" can't be followed by an unsandboxed run.
-27. **Paths are never pasted into the sandbox profile.** They're passed as parameters, so a folder's name can't change what the profile says.
+25. **Containment is established by Wren, never claimed by the model.** `contained` comes from the resolved path, and a command goes unasked only if Wren will run it in the sandbox; the model can only opt out, with `outside_sandbox`.
+26. **What you're asked about is what runs.** The shell's `permission()` and `run()` both decide sandboxing with `_sandboxed(args)`, so a command that wasn't asked about can only run in the sandbox.
+27. **Paths are never pasted into the sandbox profile.** They're passed as parameters, so a folder's name can't change what the profile says. The one regular expression gets the project's path as a parameter too, already escaped.
 
 ## Where the next steps plug in
 

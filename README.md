@@ -9,7 +9,7 @@ A small, readable coding-agent harness for the terminal, built step by step so e
 
 [![CI](https://github.com/bensullivan2002/wren/actions/workflows/ci.yml/badge.svg)](https://github.com/bensullivan2002/wren/actions/workflows/ci.yml)
 
-> **Status: step 9 of the roadmap.** Wren is a full-screen terminal app that chats with Claude or OpenAI's models, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first, or not, in auto mode. On macOS its commands run in a sandbox: no network, and writes only inside the project. It saves every conversation so you can resume it, switches models mid-conversation, reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable.
+> **Status: step 9 of the roadmap.** Wren is a full-screen terminal app that chats with Claude or OpenAI's models, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first, or not, in auto mode. On macOS its commands run in a sandbox: no network, and writes only inside the project, so they don't need asking about. It saves every conversation so you can resume it, switches models mid-conversation, reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable.
 
 ## Quickstart
 
@@ -60,7 +60,7 @@ Escape stops Wren at once in most cases. Anything it had already done stays done
 
 ### Permission
 
-Wren asks before every file edit and every shell command (unless you turn on auto mode, below), and shows you exactly what it will do. For a command, it first says in plain English what the command is for, in Wren's own words, with the command itself underneath: read the description to understand it, and the command to check it.
+Wren asks before every file edit (unless you turn on auto mode, below) and every shell command that runs outside the sandbox (on macOS, below; elsewhere, every command), and shows you exactly what it will do. For a command, it first says in plain English what the command is for, in Wren's own words, with the command itself underneath: read the description to understand it, and the command to check it.
 
 | Answer | Meaning |
 | ------ | ------- |
@@ -70,11 +70,11 @@ Wren asks before every file edit and every shell command (unless you turn on aut
 
 `a` is only offered for simple commands: anything with `;`, `&&`, pipes, `$` or redirects is asked about every time. "Always" answers are forgotten when you quit. Reading, listing and searching never ask.
 
-**The sandbox (macOS).** Every command runs in a sandbox the operating system enforces: it can read your files (but not `~/.ssh`, `~/.aws` and other places keys live), write only inside the project and temporary folders, and has no network. It can't write `.git`, `.envrc`, `.vscode`, `.idea`, `.claude` or `.codex`, because git, direnv, editors and other agents run things from those later, outside the sandbox. So `git status` and `git diff` work there; `git commit` doesn't. A command that needs more (installing packages, committing, pushing) is run outside the sandbox, and the question says so: "Run a shell command outside the sandbox". On other systems there's no sandbox yet.
+**The sandbox (macOS).** Every command runs in a sandbox the operating system enforces: it can read your files (but not `~/.ssh`, `~/.aws` and other places keys live), write only inside the project and temporary folders, and has no network. It can't write `.git`, `.envrc`, `.vscode`, `.idea`, `.claude` or `.codex`, in any folder of the project (a git worktree inside it has its own), because git, direnv, editors and other agents run things from those later, outside the sandbox. So `git status` and `git diff` work there; `git commit` doesn't. A command in the sandbox runs without a question, in either mode: the operating system enforces what you'd be asked to judge, and the conversation shows what ran. A command that needs more (installing packages, committing, pushing) is run outside the sandbox, and the question says so: "Run a shell command outside the sandbox". On other systems there's no sandbox yet.
 
-**Auto mode.** `/auto` stops the questions for things that can only change the project: edits to its files, and commands in the sandbox. Wren still asks before a command outside the sandbox, and before an edit to `.envrc`, `.vscode`, `.idea`, `.claude` or `.codex`. The footer shows `auto: on` while it lasts; `/auto` again turns it off, and quitting forgets it. Without a sandbox, auto mode still asks about every command.
+**Auto mode.** `/auto` stops the questions for edits to the project's files too. Wren still asks before a command outside the sandbox, and before an edit to `.envrc`, `.vscode`, `.idea`, `.claude` or `.codex`. The footer shows `auto: on` while it lasts; `/auto` again turns it off, and quitting forgets it. Without a sandbox, auto mode still asks about every command.
 
-Two things auto mode doesn't protect against: what Wren writes for later (a test or a `Makefile` runs outside the sandbox when *you* run it), and edits to memory files such as `WREN.md`, which steer future conversations. Read the changes before you run or commit them.
+Two things neither the sandbox nor auto mode protects against: what Wren writes for later (a test or a `Makefile` runs outside the sandbox when *you* run it), and edits to memory files such as `WREN.md`, which steer future conversations. A command in the sandbox can change any ordinary file in the project without a question, in either mode. Read the changes (`git diff`) before you run or commit them.
 
 | Command         | What it does                                          |
 | --------------- | ----------------------------------------------------- |

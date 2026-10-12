@@ -5,7 +5,8 @@ where the rules that apply to *all* tools live:
 
   1. the tool must exist,
   2. its arguments must match its `Input` model,
-  3. if it's about to change something, the user must allow it,
+  3. if it's about to change something, the user must allow it (a command
+     in the sandbox doesn't ask: the sandbox is the fence, D117),
   4. whatever goes wrong, the model gets a readable error result, and the
      agent loop never crashes because of a tool,
   5. no result may be big enough to flood the model's context.

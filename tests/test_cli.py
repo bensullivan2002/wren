@@ -8,9 +8,12 @@ import tempfile
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from wren.config import API_KEYS, DEFAULT_MODEL, Config
 from wren.prompts import build_system_prompt
 from wren.settings import UserDefaults
+from wren.tools import sandbox
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 EMPTY_HOME = Path(tempfile.mkdtemp(prefix="wren-test-home-"))
@@ -91,6 +94,9 @@ def test_an_edit_is_shown_as_a_diff_and_happens_once_approved(tmp_path):
     assert (tmp_path / "hello.txt").read_text() == "1st line\nsecond line\n"
 
 
+# In the sandbox a command isn't asked about (D117), and the fake model can't
+# ask to leave it, so the question is only seen where there's no sandbox.
+@pytest.mark.skipif(sandbox.available(), reason="sandboxed commands don't ask")
 def test_a_declined_command_does_not_run(tmp_path):
     result = wren("--provider", "fake", stdin="run touch made.txt\nn\n", cwd=tmp_path)
     assert (
@@ -100,6 +106,12 @@ def test_a_declined_command_does_not_run(tmp_path):
     assert "That is Wren's description. What will actually run is:" in result.stdout
     assert "✗ declined" in result.stdout
     assert not (tmp_path / "made.txt").exists()
+
+
+@pytest.mark.skipif(not sandbox.available(), reason="needs macOS's sandbox-exec")
+def test_a_sandboxed_command_runs_without_a_question(tmp_path):
+    result = wren("--provider", "fake", stdin="run touch made.txt\n", cwd=tmp_path)
+    assert "Allow?" not in result.stdout and (tmp_path / "made.txt").exists()
 
 
 def test_always_is_remembered_for_the_session_and_listed(tmp_path):
