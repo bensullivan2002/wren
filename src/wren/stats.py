@@ -47,12 +47,16 @@ class RunStats:
         self.finished_turn_tokens = 0  # across all finished turns, for the average
         self.last_turn_seconds: float | None = None
         self.last_turn_tokens: int | None = None
-        self.first_word_seconds: float | None = None  # in the latest model call that wrote any text
+        self.first_word_seconds: float | None = (
+            None  # in the latest model call that wrote any text
+        )
         # (provider, model asked for, model the provider says answered), for the latest reply
         self.last_reply: tuple[str, str, str] | None = None
 
         # Tools.
-        self.tool_calls: Counter[str] = Counter()  # tool name -> how many times it was called
+        self.tool_calls: Counter[str] = (
+            Counter()
+        )  # tool name -> how many times it was called
         self.files_changed: set[Path] = set()
         self.tool_errors = 0  # results that were errors; a "no" from you isn't counted
 

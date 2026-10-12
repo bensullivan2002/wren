@@ -12,7 +12,16 @@ from pydantic import Field
 
 from wren.agent import Agent
 from wren.providers.fake import FakeProvider
-from wren.tools import Decision, Permissions, Tool, ToolError, ToolInput, ToolRegistry, ToolResult, default_tools
+from wren.tools import (
+    Decision,
+    Permissions,
+    Tool,
+    ToolError,
+    ToolInput,
+    ToolRegistry,
+    ToolResult,
+    default_tools,
+)
 from wren.tools import list_files as list_files_module
 from wren.tools import sandbox
 from wren.tools import search as search_module
@@ -28,7 +37,9 @@ from wren.tools.shell import command_word
 def project(tmp_path):
     (tmp_path / "README.md").write_text("# Demo\nHello world\n")
     (tmp_path / "src" / "app").mkdir(parents=True)
-    (tmp_path / "src" / "app" / "main.py").write_text("def main():\n    print('Hello')\n")
+    (tmp_path / "src" / "app" / "main.py").write_text(
+        "def main():\n    print('Hello')\n"
+    )
     (tmp_path / "src" / "app" / "util.py").write_text("def helper():\n    return 42\n")
     (tmp_path / "src" / "notes.txt").write_text("TODO: hello again\n")
     (tmp_path / ".git").mkdir()
@@ -133,8 +144,15 @@ def test_arguments_must_be_an_object():
 
 
 def test_a_tool_without_an_input_model_takes_no_arguments(tmp_path):
-    assert Boom().spec().input_schema == {"type": "object", "properties": {}, "additionalProperties": False}
-    assert "unknown argument 'x'" in err(ToolRegistry([Boom()], root=tmp_path).run("boom", {"x": 1})).content
+    assert Boom().spec().input_schema == {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    }
+    assert (
+        "unknown argument 'x'"
+        in err(ToolRegistry([Boom()], root=tmp_path).run("boom", {"x": 1})).content
+    )
 
 
 def test_every_real_tool_describes_all_of_its_arguments():
@@ -177,7 +195,9 @@ def test_invalid_arguments_are_an_error_result(tools):
 
 
 def test_huge_output_is_truncated_with_a_note(tmp_path):
-    result = ok(ToolRegistry([Big()], root=tmp_path, max_output_chars=100).run("big", {}))
+    result = ok(
+        ToolRegistry([Big()], root=tmp_path, max_output_chars=100).run("big", {})
+    )
     assert result.content.startswith("x" * 100)
     assert "showing the first 100 of 500 characters" in result.content
 
@@ -190,9 +210,14 @@ def test_duplicate_tool_names_are_refused(tmp_path):
 # --- Staying inside the working directory ---------------------------------------
 
 
-@pytest.mark.parametrize("path", ["../outside.txt", "src/../../outside.txt", "/etc/hostname"])
+@pytest.mark.parametrize(
+    "path", ["../outside.txt", "src/../../outside.txt", "/etc/hostname"]
+)
 def test_paths_outside_the_working_directory_are_refused(tools, path):
-    assert "outside the working directory" in err(tools.run("read_file", {"path": path})).content
+    assert (
+        "outside the working directory"
+        in err(tools.run("read_file", {"path": path})).content
+    )
 
 
 def test_a_symlink_pointing_outside_is_refused(tools, project, tmp_path_factory):
@@ -200,7 +225,10 @@ def test_a_symlink_pointing_outside_is_refused(tools, project, tmp_path_factory)
     secret.write_text("password=hunter2\n")
     os.symlink(secret, project / "innocent.txt")
 
-    assert "outside the working directory" in err(tools.run("read_file", {"path": "innocent.txt"})).content
+    assert (
+        "outside the working directory"
+        in err(tools.run("read_file", {"path": "innocent.txt"})).content
+    )
     assert "hunter2" not in tools.run("search", {"pattern": "password"}).content
 
 
@@ -223,7 +251,10 @@ def test_read_file_pages_through_long_files(tools, project):
     assert result.content.splitlines()[0] == "     4\tline 4"
     assert "Showing lines 4-6 of 10" in result.content
     assert "offset=7" in result.content
-    assert "offset" in err(tools.run("read_file", {"path": "long.txt", "offset": 11})).content
+    assert (
+        "offset"
+        in err(tools.run("read_file", {"path": "long.txt", "offset": 11})).content
+    )
 
 
 @pytest.mark.parametrize(
@@ -236,9 +267,15 @@ def test_read_file_explains_what_went_wrong(tools, path, message):
 
 def test_read_file_handles_empty_files_and_long_lines(tools, project):
     (project / "empty.txt").write_text("")
-    assert ok(tools.run("read_file", {"path": "empty.txt"})).content == "(this file is empty)"
+    assert (
+        ok(tools.run("read_file", {"path": "empty.txt"})).content
+        == "(this file is empty)"
+    )
     (project / "wide.txt").write_text("y" * 2000)
-    assert "1,500 more characters" in ok(tools.run("read_file", {"path": "wide.txt"})).content
+    assert (
+        "1,500 more characters"
+        in ok(tools.run("read_file", {"path": "wide.txt"})).content
+    )
 
 
 # --- list_files ---------------------------------------------------------------
@@ -246,7 +283,11 @@ def test_read_file_handles_empty_files_and_long_lines(tools, project):
 
 def test_list_files_shows_one_folder_by_default(tools):
     listing = ok(tools.run("list_files", {})).content.splitlines()
-    assert listing == ["src/", "README.md", "logo.png"]  # .git and node_modules are skipped
+    assert listing == [
+        "src/",
+        "README.md",
+        "logo.png",
+    ]  # .git and node_modules are skipped
 
 
 def test_list_files_recurses_with_double_star(tools):
@@ -296,7 +337,10 @@ def test_glob_to_regex(pattern, path, matches):
 
 def test_search_finds_matching_lines_with_locations(tools):
     result = ok(tools.run("search", {"pattern": "Hello"}))
-    assert result.content.splitlines() == ["README.md:2: Hello world", "src/app/main.py:2:     print('Hello')"]
+    assert result.content.splitlines() == [
+        "README.md:2: Hello world",
+        "src/app/main.py:2:     print('Hello')",
+    ]
     assert result.summary == "2 matches in 2 files"
 
 
@@ -314,7 +358,10 @@ def test_search_can_filter_by_file_name_and_path(tools):
 
 
 def test_search_reports_bad_regex_and_no_matches(tools):
-    assert "Invalid regular expression" in err(tools.run("search", {"pattern": "("})).content
+    assert (
+        "Invalid regular expression"
+        in err(tools.run("search", {"pattern": "("})).content
+    )
     assert ok(tools.run("search", {"pattern": "zebra"})).summary == "no matches"
 
 
@@ -371,7 +418,9 @@ def test_always_for_a_command_does_not_cover_a_chained_command(tools, user, proj
     user.decision = Decision.ALWAYS
     ok(tools.run("shell", {"description": WHY, "command": "echo hi"}))
     user.decision = Decision.DENY
-    err(tools.run("shell", {"description": WHY, "command": "echo hi; touch sneaky.txt"}))
+    err(
+        tools.run("shell", {"description": WHY, "command": "echo hi; touch sneaky.txt"})
+    )
     assert user.seen[-1].scope is None  # "always" isn't even offered for it
     assert not (project / "sneaky.txt").exists()
 
@@ -380,7 +429,10 @@ def test_always_for_a_command_does_not_cover_a_chained_command(tools, user, proj
     "command, word",
     [
         ("pytest -q tests", "pytest"),
-        ("git commit -m 'a message; with punctuation?'", None),  # we don't parse quotes: when unsure, ask
+        (
+            "git commit -m 'a message; with punctuation?'",
+            None,
+        ),  # we don't parse quotes: when unsure, ask
         ("git status", "git"),
         ("echo hi; rm -rf /", None),
         ("echo hi && rm x", None),
@@ -398,7 +450,12 @@ def test_command_word(command, word):
 
 
 def test_a_call_that_cannot_work_fails_before_the_user_is_asked(tools, user):
-    err(tools.run("edit_file", {"path": "README.md", "old_string": "not there", "new_string": "x"}))
+    err(
+        tools.run(
+            "edit_file",
+            {"path": "README.md", "old_string": "not there", "new_string": "x"},
+        )
+    )
     err(tools.run("edit_file", {"path": "README.md"}))  # invalid arguments
     assert user.seen == []
 
@@ -408,16 +465,34 @@ def test_a_call_that_cannot_work_fails_before_the_user_is_asked(tools, user):
 
 def test_edit_file_replaces_the_text_and_shows_the_result(tools, user, project):
     result = ok(
-        tools.run("edit_file", {"path": "src/app/util.py", "old_string": "return 42", "new_string": "return 43"})
+        tools.run(
+            "edit_file",
+            {
+                "path": "src/app/util.py",
+                "old_string": "return 42",
+                "new_string": "return 43",
+            },
+        )
     )
     assert (project / "src/app/util.py").read_text() == "def helper():\n    return 43\n"
     assert "replaced 1 occurrence" in result.content
-    assert "     2\t    return 43" in result.content  # the model sees the new lines, numbered
+    assert (
+        "     2\t    return 43" in result.content
+    )  # the model sees the new lines, numbered
     assert result.summary == "src/app/util.py +1 −1"
 
 
 def test_the_user_is_shown_a_diff_of_the_edit(tools, user):
-    ok(tools.run("edit_file", {"path": "src/app/util.py", "old_string": "return 42", "new_string": "return 43"}))
+    ok(
+        tools.run(
+            "edit_file",
+            {
+                "path": "src/app/util.py",
+                "old_string": "return 42",
+                "new_string": "return 43",
+            },
+        )
+    )
     request = user.seen[0]
     assert request.title == "Edit src/app/util.py"
     assert "-    return 42" in request.detail and "+    return 43" in request.detail
@@ -425,40 +500,82 @@ def test_the_user_is_shown_a_diff_of_the_edit(tools, user):
 
 def test_edit_file_refuses_text_that_is_missing_or_ambiguous(tools, project):
     (project / "twice.txt").write_text("a = 1\nb = 2\na = 1\n")
-    assert "was not found" in err(tools.run("edit_file", {"path": "twice.txt", "old_string": "c", "new_string": "d"})).content
-    ambiguous = err(tools.run("edit_file", {"path": "twice.txt", "old_string": "a = 1", "new_string": "a = 9"}))
+    assert (
+        "was not found"
+        in err(
+            tools.run(
+                "edit_file", {"path": "twice.txt", "old_string": "c", "new_string": "d"}
+            )
+        ).content
+    )
+    ambiguous = err(
+        tools.run(
+            "edit_file",
+            {"path": "twice.txt", "old_string": "a = 1", "new_string": "a = 9"},
+        )
+    )
     assert "occurs 2 times" in ambiguous.content and "lines 1, 3" in ambiguous.content
     assert (project / "twice.txt").read_text() == "a = 1\nb = 2\na = 1\n"  # untouched
 
 
 def test_edit_file_can_replace_every_occurrence(tools, project):
     (project / "twice.txt").write_text("a = 1\nb = 2\na = 1\n")
-    args = {"path": "twice.txt", "old_string": "a = 1", "new_string": "a = 9", "replace_all": True}
+    args = {
+        "path": "twice.txt",
+        "old_string": "a = 1",
+        "new_string": "a = 9",
+        "replace_all": True,
+    }
     assert "all 2 occurrences" in ok(tools.run("edit_file", args)).content
     assert (project / "twice.txt").read_text() == "a = 9\nb = 2\na = 9\n"
 
 
 def test_edit_file_can_delete_text(tools, project):
-    ok(tools.run("edit_file", {"path": "README.md", "old_string": "Hello world\n", "new_string": ""}))
+    ok(
+        tools.run(
+            "edit_file",
+            {"path": "README.md", "old_string": "Hello world\n", "new_string": ""},
+        )
+    )
     assert (project / "README.md").read_text() == "# Demo\n"
 
 
 def test_edit_file_keeps_windows_line_endings(tools, project):
     (project / "win.txt").write_bytes(b"one\r\ntwo\r\nthree\r\n")
-    ok(tools.run("edit_file", {"path": "win.txt", "old_string": "one\ntwo", "new_string": "one\n2"}))
+    ok(
+        tools.run(
+            "edit_file",
+            {"path": "win.txt", "old_string": "one\ntwo", "new_string": "one\n2"},
+        )
+    )
     assert (project / "win.txt").read_bytes() == b"one\r\n2\r\nthree\r\n"
 
 
 @pytest.mark.parametrize(
     "args, message",
     [
-        ({"path": "missing.py", "old_string": "a", "new_string": "b"}, "use write_file"),
+        (
+            {"path": "missing.py", "old_string": "a", "new_string": "b"},
+            "use write_file",
+        ),
         ({"path": "src", "old_string": "a", "new_string": "b"}, "is a folder"),
         ({"path": "logo.png", "old_string": "a", "new_string": "b"}, "binary"),
-        ({"path": "README.md", "old_string": "", "new_string": "b"}, "old_string is empty"),
-        ({"path": "README.md", "old_string": "Demo", "new_string": "Demo"}, "nothing to change"),
-        ({"path": "../outside.txt", "old_string": "a", "new_string": "b"}, "outside the working directory"),
-        ({"path": ".git/config", "old_string": "hello", "new_string": "bye"}, "inside .git"),
+        (
+            {"path": "README.md", "old_string": "", "new_string": "b"},
+            "old_string is empty",
+        ),
+        (
+            {"path": "README.md", "old_string": "Demo", "new_string": "Demo"},
+            "nothing to change",
+        ),
+        (
+            {"path": "../outside.txt", "old_string": "a", "new_string": "b"},
+            "outside the working directory",
+        ),
+        (
+            {"path": ".git/config", "old_string": "hello", "new_string": "bye"},
+            "inside .git",
+        ),
     ],
 )
 def test_edit_file_explains_what_went_wrong(tools, args, message):
@@ -469,31 +586,57 @@ def test_edit_file_explains_what_went_wrong(tools, args, message):
 
 
 def test_write_file_creates_a_file_and_its_folders(tools, user, project):
-    result = ok(tools.run("write_file", {"path": "docs/guide/intro.md", "content": "# Intro\nHi\n"}))
+    result = ok(
+        tools.run(
+            "write_file", {"path": "docs/guide/intro.md", "content": "# Intro\nHi\n"}
+        )
+    )
     assert (project / "docs/guide/intro.md").read_text() == "# Intro\nHi\n"
     assert result.summary == "created docs/guide/intro.md, 2 lines"
-    assert user.seen[0].title == "Create docs/guide/intro.md" and user.seen[0].detail == "# Intro\nHi\n"
+    assert (
+        user.seen[0].title == "Create docs/guide/intro.md"
+        and user.seen[0].detail == "# Intro\nHi\n"
+    )
 
 
-def test_write_file_overwrites_and_shows_the_user_what_would_be_lost(tools, user, project):
-    result = ok(tools.run("write_file", {"path": "README.md", "content": "# Demo\nGoodbye\n"}))
+def test_write_file_overwrites_and_shows_the_user_what_would_be_lost(
+    tools, user, project
+):
+    result = ok(
+        tools.run("write_file", {"path": "README.md", "content": "# Demo\nGoodbye\n"})
+    )
     assert (project / "README.md").read_text() == "# Demo\nGoodbye\n"
     assert result.summary == "overwrote README.md +1 −1"
-    assert user.seen[0].title == "Overwrite README.md" and "-Hello world" in user.seen[0].detail
+    assert (
+        user.seen[0].title == "Overwrite README.md"
+        and "-Hello world" in user.seen[0].detail
+    )
 
 
 @pytest.mark.parametrize(
     "path, message",
-    [("src", "is a folder"), ("logo.png", "binary"), ("../x.txt", "outside"), (".git/hooks/pre-commit", "inside .git")],
+    [
+        ("src", "is a folder"),
+        ("logo.png", "binary"),
+        ("../x.txt", "outside"),
+        (".git/hooks/pre-commit", "inside .git"),
+    ],
 )
 def test_write_file_explains_what_went_wrong(tools, path, message):
-    assert message in err(tools.run("write_file", {"path": path, "content": "x"})).content
+    assert (
+        message in err(tools.run("write_file", {"path": path, "content": "x"})).content
+    )
 
 
-def test_write_file_cannot_escape_through_a_symlinked_folder(tools, project, tmp_path_factory):
+def test_write_file_cannot_escape_through_a_symlinked_folder(
+    tools, project, tmp_path_factory
+):
     elsewhere = tmp_path_factory.mktemp("elsewhere")
     os.symlink(elsewhere, project / "link")
-    assert "outside" in err(tools.run("write_file", {"path": "link/x.txt", "content": "x"})).content
+    assert (
+        "outside"
+        in err(tools.run("write_file", {"path": "link/x.txt", "content": "x"})).content
+    )
     assert not (elsewhere / "x.txt").exists()
 
 
@@ -510,13 +653,20 @@ def test_shell_runs_in_the_working_directory_and_returns_output(tools, user):
     result = ok(tools.run("shell", {"description": WHY, "command": "ls src"}))
     assert result.content == "app\nnotes.txt"
     assert result.summary == "2 lines"
-    assert user.seen[0].title.startswith("Run a shell command") and user.seen[0].detail == "ls src"
+    assert (
+        user.seen[0].title.startswith("Run a shell command")
+        and user.seen[0].detail == "ls src"
+    )
 
 
 @posix_only
 def test_shell_reports_a_failing_command_without_calling_it_a_tool_error(tools):
-    result = ok(tools.run("shell", {"description": WHY, "command": "echo oops >&2; exit 3"}))
-    assert result.content.startswith("oops\n\n[Exit code 3]")  # then, on macOS, a note about the sandbox
+    result = ok(
+        tools.run("shell", {"description": WHY, "command": "echo oops >&2; exit 3"})
+    )
+    assert result.content.startswith(
+        "oops\n\n[Exit code 3]"
+    )  # then, on macOS, a note about the sandbox
     assert result.summary == "exit 3 · 1 line"
 
 
@@ -530,39 +680,63 @@ def test_shell_says_when_there_is_no_output(tools):
 def test_shell_stops_a_command_that_runs_too_long_and_keeps_its_output(tools):
     # `sleep` runs as a child of the shell, so this also checks the whole
     # process group is killed: otherwise the test would hang for 30 seconds.
-    result = err(tools.run("shell", {"description": WHY, "command": "echo started; sleep 30", "timeout": 1}))
+    result = err(
+        tools.run(
+            "shell",
+            {"description": WHY, "command": "echo started; sleep 30", "timeout": 1},
+        )
+    )
     assert result.content.startswith("started")
     assert "still running after 1 seconds" in result.content
 
 
 @posix_only
 def test_shell_commands_get_no_keyboard_input(tools):
-    assert ok(tools.run("shell", {"description": WHY, "command": "cat"})).content == "(no output)"  # returns at once
+    assert (
+        ok(tools.run("shell", {"description": WHY, "command": "cat"})).content
+        == "(no output)"
+    )  # returns at once
 
 
 @posix_only
 def test_shell_keeps_the_end_of_very_long_output(tools, monkeypatch):
     monkeypatch.setattr(shell_module, "MAX_OUTPUT_CHARS", 20)
     result = ok(tools.run("shell", {"description": WHY, "command": "seq 1 100"}))
-    assert "showing the last 20 of" in result.content and result.content.endswith("99\n100")
+    assert "showing the last 20 of" in result.content and result.content.endswith(
+        "99\n100"
+    )
 
 
 @posix_only
 def test_shell_gives_up_early_when_asked_to_stop(tools):
     # A front end that can cancel (the full-screen app's Escape) sets this hook.
     tools.context.should_stop = lambda: True
-    result = err(tools.run("shell", {"description": WHY, "command": "echo started; sleep 30"}))
-    assert result.content.startswith("started") and "Stopped by the user" in result.content
+    result = err(
+        tools.run("shell", {"description": WHY, "command": "echo started; sleep 30"})
+    )
+    assert (
+        result.content.startswith("started") and "Stopped by the user" in result.content
+    )
 
 
 def test_shell_must_be_told_what_the_command_is_for(tools, user):
     missing = err(tools.run("shell", {"command": "true"}))
     assert "missing required argument 'description'" in missing.content
-    assert "'description'" in err(tools.run("shell", {"description": "x", "command": "true"})).content  # too short to mean anything
+    assert (
+        "'description'"
+        in err(tools.run("shell", {"description": "x", "command": "true"})).content
+    )  # too short to mean anything
     assert user.seen == []  # refused before the user is troubled
 
-    ok(tools.run("shell", {"description": "Do nothing, successfully.", "command": "true"}))
-    assert user.seen[0].explanation == "Do nothing, successfully." and user.seen[0].detail == "true"
+    ok(
+        tools.run(
+            "shell", {"description": "Do nothing, successfully.", "command": "true"}
+        )
+    )
+    assert (
+        user.seen[0].explanation == "Do nothing, successfully."
+        and user.seen[0].detail == "true"
+    )
 
 
 def test_only_commands_carry_an_explanation(tools, user):
@@ -577,20 +751,41 @@ def test_tool_calls_are_described_in_plain_english():
     assert said("read_file", path="a.py") == ("Read a.py", "")
     assert said("read_file", path="a.py", offset=40) == ("Read a.py from line 40", "")
     assert said("list_files") == ("List *", "")
-    assert said("list_files", pattern="**/*.py", path="src") == ("List **/*.py in src", "")
+    assert said("list_files", pattern="**/*.py", path="src") == (
+        "List **/*.py in src",
+        "",
+    )
     assert said("search", pattern="def main") == ("Search for 'def main'", "")
-    assert said("edit_file", path="a.py", old_string="x", new_string="y") == ("Edit a.py", "")
+    assert said("edit_file", path="a.py", old_string="x", new_string="y") == (
+        "Edit a.py",
+        "",
+    )
     assert said("write_file", path="a.py", content="x") == ("Write a.py", "")
-    assert said("shell", description="Count the Python files.", command="find . -name '*.py'\n | wc -l") == (
+    assert said(
+        "shell",
+        description="Count the Python files.",
+        command="find . -name '*.py'\n | wc -l",
+    ) == (
         "Count the Python files.",
         "$ find . -name '*.py' | wc -l",
     )
-    assert said("some_new_tool", x=1) == ("some_new_tool(x=1)", "")  # no words for it: the call itself
+    assert said("some_new_tool", x=1) == (
+        "some_new_tool(x=1)",
+        "",
+    )  # no words for it: the call itself
 
 
 def test_shell_refuses_an_empty_command_and_a_silly_timeout(tools, user):
-    assert "command is empty" in err(tools.run("shell", {"description": WHY, "command": "  "})).content
-    assert "less than or equal to 600" in err(tools.run("shell", {"description": WHY, "command": "true", "timeout": 9999})).content
+    assert (
+        "command is empty"
+        in err(tools.run("shell", {"description": WHY, "command": "  "})).content
+    )
+    assert (
+        "less than or equal to 600"
+        in err(
+            tools.run("shell", {"description": WHY, "command": "true", "timeout": 9999})
+        ).content
+    )
     assert user.seen == []
 
 
@@ -598,7 +793,9 @@ def test_shell_refuses_an_empty_command_and_a_silly_timeout(tools, user):
 # The sandbox tests run real commands under macOS's sandbox-exec, and are
 # skipped where it doesn't exist.
 
-sandbox_only = pytest.mark.skipif(not sandbox.available(), reason="needs macOS's sandbox-exec")
+sandbox_only = pytest.mark.skipif(
+    not sandbox.available(), reason="needs macOS's sandbox-exec"
+)
 
 
 @pytest.mark.parametrize(
@@ -612,26 +809,35 @@ sandbox_only = pytest.mark.skipif(not sandbox.available(), reason="needs macOS's
         ("sub/.claude/settings.json", False),  # another agent's hooks, in any folder
     ],
 )
-def test_an_edit_is_contained_unless_it_could_run_by_itself(tools, user, path, contained):
+def test_an_edit_is_contained_unless_it_could_run_by_itself(
+    tools, user, path, contained
+):
     ok(tools.run("write_file", {"path": path, "content": "x"}))
     assert user.seen[0].contained is contained
 
 
-def test_auto_mode_allows_contained_actions_and_asks_about_the_rest(tools, user, project):
+def test_auto_mode_allows_contained_actions_and_asks_about_the_rest(
+    tools, user, project
+):
     tools.permissions.auto = True
     user.decision = Decision.DENY
     ok(tools.run("write_file", {"path": "a.txt", "content": "1"}))
     ok(tools.run("edit_file", {"path": "a.txt", "old_string": "1", "new_string": "2"}))
     assert user.seen == [] and (project / "a.txt").read_text() == "2"
 
-    assert err(tools.run("write_file", {"path": ".envrc", "content": "x"})).content == DECLINED
+    assert (
+        err(tools.run("write_file", {"path": ".envrc", "content": "x"})).content
+        == DECLINED
+    )
     outside = {"description": WHY, "command": "true", "outside_sandbox": True}
     assert err(tools.run("shell", outside)).content == DECLINED
     assert len(user.seen) == 2 and not (project / ".envrc").exists()
 
 
 @posix_only
-def test_auto_mode_asks_about_every_command_where_there_is_no_sandbox(tools, user, monkeypatch):
+def test_auto_mode_asks_about_every_command_where_there_is_no_sandbox(
+    tools, user, monkeypatch
+):
     monkeypatch.setattr(sandbox, "available", lambda: False)
     tools.permissions.auto = True
     ok(tools.run("shell", {"description": WHY, "command": "true"}))
@@ -640,22 +846,40 @@ def test_auto_mode_asks_about_every_command_where_there_is_no_sandbox(tools, use
 
 def test_the_auto_command_switches_the_mode_and_permissions_describes_it(tools):
     agent = Agent(FakeProvider(), "sys", 100, tools)
-    assert "Wren asks before every edit and command" in run_command(agent, "/permissions").text
-    assert run_command(agent, "/auto").text.startswith("Auto mode is on.") and tools.permissions.auto
+    assert (
+        "Wren asks before every edit and command"
+        in run_command(agent, "/permissions").text
+    )
+    assert (
+        run_command(agent, "/auto").text.startswith("Auto mode is on.")
+        and tools.permissions.auto
+    )
     shown = run_command(agent, "/permissions").text
-    assert shown.startswith("Auto mode is on.") and "Wren asks before everything else" in shown
-    assert run_command(agent, "/auto").text.startswith("Auto mode is off") and not tools.permissions.auto
+    assert (
+        shown.startswith("Auto mode is on.")
+        and "Wren asks before everything else" in shown
+    )
+    assert (
+        run_command(agent, "/auto").text.startswith("Auto mode is off")
+        and not tools.permissions.auto
+    )
 
 
 @sandbox_only
 def test_auto_mode_runs_a_sandboxed_command_without_asking(tools, user, project):
     tools.permissions.auto = True
-    result = ok(tools.run("shell", {"description": WHY, "command": "echo hi > out.txt && cat out.txt"}))
+    result = ok(
+        tools.run(
+            "shell", {"description": WHY, "command": "echo hi > out.txt && cat out.txt"}
+        )
+    )
     assert result.content == "hi" and user.seen == []
 
 
 @sandbox_only
-def test_a_sandboxed_command_writes_only_in_the_project(tools, project, tmp_path_factory, monkeypatch):
+def test_a_sandboxed_command_writes_only_in_the_project(
+    tools, project, tmp_path_factory, monkeypatch
+):
     # The project is itself in a temp folder, and commands may write to
     # those, so leave them out: then "elsewhere" really is somewhere else.
     monkeypatch.setattr(sandbox, "temp_dirs", lambda: [])
@@ -663,8 +887,17 @@ def test_a_sandboxed_command_writes_only_in_the_project(tools, project, tmp_path
     ok(tools.run("shell", {"description": WHY, "command": "touch inside.txt"}))
     assert (project / "inside.txt").exists()
 
-    for target in [elsewhere / "x.txt", project / ".git" / "sneaky", project / ".envrc"]:
-        result = ok(tools.run("shell", {"description": WHY, "command": f"touch {shlex.quote(str(target))}"}))
+    for target in [
+        elsewhere / "x.txt",
+        project / ".git" / "sneaky",
+        project / ".envrc",
+    ]:
+        result = ok(
+            tools.run(
+                "shell",
+                {"description": WHY, "command": f"touch {shlex.quote(str(target))}"},
+            )
+        )
         assert "Operation not permitted" in result.content and not target.exists()
         assert shell_module.SANDBOX_NOTE in result.content  # so the model knows why
 
@@ -674,27 +907,55 @@ def test_a_sandboxed_command_has_no_network(tools):
     # This connects to the computer itself, so nothing leaves it either way.
     # Outside the sandbox that's "connection refused"; inside, it isn't allowed at all.
     code = "import socket; socket.create_connection(('127.0.0.1', 9), 1)"
-    result = ok(tools.run("shell", {"description": WHY, "command": f'{shlex.quote(sys.executable)} -c "{code}"'}))
+    result = ok(
+        tools.run(
+            "shell",
+            {
+                "description": WHY,
+                "command": f'{shlex.quote(sys.executable)} -c "{code}"',
+            },
+        )
+    )
     assert "Operation not permitted" in result.content
 
 
 @sandbox_only
-def test_a_sandboxed_command_cannot_read_credentials(tools, tmp_path_factory, monkeypatch):
+def test_a_sandboxed_command_cannot_read_credentials(
+    tools, tmp_path_factory, monkeypatch
+):
     home = tmp_path_factory.mktemp("home")
     (home / ".ssh").mkdir()
     (home / ".ssh" / "id_ed25519").write_text("secret")
     monkeypatch.setenv("HOME", str(home))
-    result = ok(tools.run("shell", {"description": WHY, "command": "cat ~/.ssh/id_ed25519"}))
-    assert "Operation not permitted" in result.content and "secret" not in result.content
+    result = ok(
+        tools.run("shell", {"description": WHY, "command": "cat ~/.ssh/id_ed25519"})
+    )
+    assert (
+        "Operation not permitted" in result.content and "secret" not in result.content
+    )
 
 
 @sandbox_only
-def test_outside_the_sandbox_is_asked_about_even_in_auto_mode(tools, user, tmp_path_factory):
+def test_outside_the_sandbox_is_asked_about_even_in_auto_mode(
+    tools, user, tmp_path_factory
+):
     elsewhere = tmp_path_factory.mktemp("elsewhere")
     tools.permissions.auto = True
-    ok(tools.run("shell", {"description": WHY, "command": f"touch {elsewhere}/x.txt", "outside_sandbox": True}))
+    ok(
+        tools.run(
+            "shell",
+            {
+                "description": WHY,
+                "command": f"touch {elsewhere}/x.txt",
+                "outside_sandbox": True,
+            },
+        )
+    )
     assert (elsewhere / "x.txt").exists()
-    assert user.seen[0].title == "Run a shell command outside the sandbox" and not user.seen[0].contained
+    assert (
+        user.seen[0].title == "Run a shell command outside the sandbox"
+        and not user.seen[0].contained
+    )
 
 
 @sandbox_only
@@ -702,5 +963,9 @@ def test_always_in_the_sandbox_does_not_cover_outside_it(tools, user):
     user.decision = Decision.ALWAYS
     ok(tools.run("shell", {"description": WHY, "command": "true"}))
     user.decision = Decision.DENY
-    err(tools.run("shell", {"description": WHY, "command": "true", "outside_sandbox": True}))
+    err(
+        tools.run(
+            "shell", {"description": WHY, "command": "true", "outside_sandbox": True}
+        )
+    )
     assert [r.scope for r in user.seen] == ["shell:true", "shell-outside:true"]

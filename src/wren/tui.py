@@ -49,7 +49,14 @@ from textual.message import Message as TextualMessage
 from textual.widget import Widget
 from textual.widgets import Markdown, OptionList, Static, TextArea
 
-from wren.agent import Agent, Compacted, CompactionStarted, ToolFinished, ToolStarted, TurnFinished
+from wren.agent import (
+    Agent,
+    Compacted,
+    CompactionStarted,
+    ToolFinished,
+    ToolStarted,
+    TurnFinished,
+)
 from wren.commands import (
     compaction_note,
     default_effort,
@@ -79,7 +86,9 @@ from wren.tools import Decision, PermissionRequest, ToolResult
 from wren.tools.files import diff
 
 # Package data, not a path into docs: the installed app can run in any folder.
-TERMINAL_LOGO = files("wren").joinpath("wren-terminal.txt").read_text(encoding="utf-8").rstrip("\n")
+TERMINAL_LOGO = (
+    files("wren").joinpath("wren-terminal.txt").read_text(encoding="utf-8").rstrip("\n")
+)
 
 MAX_DIFF_LINES = 40  # of a diff or new file, in a permission question or a result
 OUTPUT_TAIL_LINES = 10  # of a command's output, under its tool call
@@ -158,9 +167,18 @@ class ToolCallView(Static):
         else:
             shown = self._line(f"→ {result.summary}", "dim")
             if result.change is not None:  # an edit: show what changed
-                shown = Text("\n").join([shown, change_text(result.change, Path(call.input.get("path", "")).name)])
+                shown = Text("\n").join(
+                    [
+                        shown,
+                        change_text(
+                            result.change, Path(call.input.get("path", "")).name
+                        ),
+                    ]
+                )
             elif call.name == "shell":  # a command: show the end of its output
-                shown = Text("\n").join([shown, Text(_tail(result.content, OUTPUT_TAIL_LINES), style="dim")])
+                shown = Text("\n").join(
+                    [shown, Text(_tail(result.content, OUTPUT_TAIL_LINES), style="dim")]
+                )
         self.update(shown)
 
 
@@ -178,7 +196,9 @@ class PermissionPrompt(Widget, can_focus=True):
         Binding("n", "answer('deny')", "No"),
     ]
 
-    def __init__(self, request: PermissionRequest, answer: concurrent.futures.Future) -> None:
+    def __init__(
+        self, request: PermissionRequest, answer: concurrent.futures.Future
+    ) -> None:
         super().__init__(classes="permission")
         self.request = request
         self.answer = answer
@@ -191,17 +211,43 @@ class PermissionPrompt(Widget, can_focus=True):
             # command can be judged by someone who doesn't read shell. It's
             # labelled as the model's, and the command is right underneath:
             # a description can be wrong, and the command is what runs.
-            yield Static(Text.assemble(("Wren says: ", "bold"), request.explanation), markup=False)
-            yield Static(Text("That is Wren's description. What will actually run is:", style="dim"), markup=False)
+            yield Static(
+                Text.assemble(("Wren says: ", "bold"), request.explanation),
+                markup=False,
+            )
+            yield Static(
+                Text(
+                    "That is Wren's description. What will actually run is:",
+                    style="dim",
+                ),
+                markup=False,
+            )
         if request.change is not None:
-            yield Static(change_text(request.change, request.change.path.name), markup=False, classes="detail")
+            yield Static(
+                change_text(request.change, request.change.path.name),
+                markup=False,
+                classes="detail",
+            )
         else:
-            command = request.explanation != ""  # only commands come with an explanation
-            yield Static(Text(("$ " if command else "") + request.detail), markup=False, classes="detail")
+            command = (
+                request.explanation != ""
+            )  # only commands come with an explanation
+            yield Static(
+                Text(("$ " if command else "") + request.detail),
+                markup=False,
+                classes="detail",
+            )
         choices = Text.assemble(("y", "bold"), " yes   ")
         if request.scope is not None:
-            choices.append_text(Text.assemble(("a", "bold"), f" always allow {request.scope_label} this session   "))
-        choices.append_text(Text.assemble(("n", "bold"), " no   ", ("esc", "bold"), " stop"))
+            choices.append_text(
+                Text.assemble(
+                    ("a", "bold"),
+                    f" always allow {request.scope_label} this session   ",
+                )
+            )
+        choices.append_text(
+            Text.assemble(("n", "bold"), " no   ", ("esc", "bold"), " stop")
+        )
         yield Static(choices, markup=False)
 
     def action_answer(self, choice: str) -> None:
@@ -226,9 +272,15 @@ class Picker(OptionList):
     Space keeps it to this session.
     """
 
-    BINDINGS = [Binding("space", "select_for_session", "Choose for this session only", show=False)]
+    BINDINGS = [
+        Binding(
+            "space", "select_for_session", "Choose for this session only", show=False
+        )
+    ]
 
-    def __init__(self, rows: list[tuple[str, Any]], on_choice, saves: bool = False) -> None:
+    def __init__(
+        self, rows: list[tuple[str, Any]], on_choice, saves: bool = False
+    ) -> None:
         # Text objects, not strings: the labels come from outside (a model
         # id, the first line of an old conversation) and mustn't be read as markup.
         super().__init__(*[Text(label) for label, _ in rows], classes="picker")
@@ -361,13 +413,19 @@ class WrenApp(App):
         self.memory = memory
         self.sessions = sessions
         self.defaults = defaults  # the saved default model and effort; None: nothing is kept between sessions
-        self.notice = notice  # something to say at startup, e.g. which session was resumed
-        self.choose_session = choose_session  # started with --resume: open the session picker first
+        self.notice = (
+            notice  # something to say at startup, e.g. which session was resumed
+        )
+        self.choose_session = (
+            choose_session  # started with --resume: open the session picker first
+        )
         self.busy = False  # True while a turn is running
         # Set (by Escape) to ask the worker thread to stop. A threading.Event
         # is a flag that's safe for one thread to set and another to read.
         self._stop = threading.Event()
-        self._reply: Markdown | None = None  # the assistant message being streamed, if any
+        self._reply: Markdown | None = (
+            None  # the assistant message being streamed, if any
+        )
         self._stream: Any = None  # ...and Textual's helper for appending to it
         self._tool_views: dict[str, ToolCallView] = {}
         self._question: PermissionPrompt | None = None
@@ -399,7 +457,11 @@ class WrenApp(App):
             with Vertical(id="chat"):
                 yield VerticalScroll(id="transcript")
                 yield CommandPanel()
-            yield Prompt(id="prompt", placeholder="Ask Wren something, or /help", show_line_numbers=False)
+            yield Prompt(
+                id="prompt",
+                placeholder="Ask Wren something, or /help",
+                show_line_numbers=False,
+            )
 
     def _footer_rows(self, width: int) -> list[Text]:
         state = AppState(
@@ -450,7 +512,9 @@ class WrenApp(App):
         if self.notice:
             await self.note(self.notice)
             self.notice = ""
-        pending: dict[str, ToolCallView] = {}  # tool calls waiting for the result in the next message
+        pending: dict[
+            str, ToolCallView
+        ] = {}  # tool calls waiting for the result in the next message
         for message in self.agent.messages:
             await self._draw_message(message, pending)
         self._show_status()
@@ -459,19 +523,34 @@ class WrenApp(App):
             self.choose_session = False
             await self.pick_session()
 
-    async def _draw_message(self, message: Message, pending: dict[str, ToolCallView]) -> None:
+    async def _draw_message(
+        self, message: Message, pending: dict[str, ToolCallView]
+    ) -> None:
         if message.role == "user":
             for result in message.tool_results:
                 view = pending.pop(result.tool_use_id, None)
                 if view is not None:
                     # The one-line summaries weren't saved, only what the
                     # model saw. Its first line is the next best thing.
-                    first_line = shorten((result.content.strip().splitlines() or [""])[0], 70)
-                    view.update(view._line(("✗ " if result.is_error else "→ ") + first_line, "red" if result.is_error else "dim"))
+                    first_line = shorten(
+                        (result.content.strip().splitlines() or [""])[0], 70
+                    )
+                    view.update(
+                        view._line(
+                            ("✗ " if result.is_error else "→ ") + first_line,
+                            "red" if result.is_error else "dim",
+                        )
+                    )
             if message.text == COMPACTED_NOTE:
                 await self.note(message.text)
             elif message.text:
-                await self.add(Static(Text.assemble(("› ", "bold"), message.text), markup=False, classes="user"))
+                await self.add(
+                    Static(
+                        Text.assemble(("› ", "bold"), message.text),
+                        markup=False,
+                        classes="user",
+                    )
+                )
         else:
             if message.text:
                 await self.add(Markdown(message.text, classes="assistant"))
@@ -483,7 +562,9 @@ class WrenApp(App):
         # Said up front, every time: these files steer the model, and in a
         # project you've just cloned you didn't write them.
         if self.memory and self.memory.files:
-            names = ", ".join(self.memory.shown(file.path) for file in self.memory.files)
+            names = ", ".join(
+                self.memory.shown(file.path) for file in self.memory.files
+            )
             await self.note(f"Instructions loaded from: {names}  (/memory for details)")
 
     @property
@@ -542,7 +623,11 @@ class WrenApp(App):
             self.notify("Wren is still working. Press Escape to stop it first.")
         else:
             self.prompt.clear()
-            await self.add(Static(Text.assemble(("› ", "bold"), text), markup=False, classes="user"))
+            await self.add(
+                Static(
+                    Text.assemble(("› ", "bold"), text), markup=False, classes="user"
+                )
+            )
             self.to_the_end()  # you've spoken: come back to the present, wherever you'd scrolled to
             self.busy = True
             self._stop.clear()
@@ -552,11 +637,22 @@ class WrenApp(App):
 
     async def run_slash(self, line: str) -> None:
         name = line.split()[0].lower()
-        if self.busy and name in ("/clear", "/compact", "/provider", "/model", "/effort", "/resume"):
-            self.notify("Wren is still working. Press Escape to stop it, or try that when it has finished.")
+        if self.busy and name in (
+            "/clear",
+            "/compact",
+            "/provider",
+            "/model",
+            "/effort",
+            "/resume",
+        ):
+            self.notify(
+                "Wren is still working. Press Escape to stop it, or try that when it has finished."
+            )
             return
         await self.close_panel()  # one command's output at a time
-        result = run_command(self.agent, line, KEYS_HELP, self.memory, self.sessions, self.defaults)
+        result = run_command(
+            self.agent, line, KEYS_HELP, self.memory, self.sessions, self.defaults
+        )
 
         if result.quit:
             self.action_quit_wren()
@@ -591,7 +687,9 @@ class WrenApp(App):
             # the transcript, so there's a record of it where it happened.
             if result.cleared:
                 self.resumed = False  # a new conversation, with a new session file
-                await self._draw_conversation()  # empty now, with memory re-read for the new conversation
+                await (
+                    self._draw_conversation()
+                )  # empty now, with memory re-read for the new conversation
             if result.text:
                 await self.note(result.text, "error" if result.is_error else "output")
         self._show_status()  # /provider, /model NAME, /effort LEVEL and /clear change what it shows
@@ -638,7 +736,11 @@ class WrenApp(App):
     # --- Pickers: choosing a provider, a model, an effort or a saved conversation ----
 
     async def pick_provider(self) -> None:
-        await self._open_picker("/provider", provider_choices(self.agent, self.defaults), self._provider_chosen)
+        await self._open_picker(
+            "/provider",
+            provider_choices(self.agent, self.defaults),
+            self._provider_chosen,
+        )
 
     async def _provider_chosen(self, name: str) -> None:
         text, ok = switch_provider(self.agent, name, user=self.defaults)
@@ -657,8 +759,13 @@ class WrenApp(App):
             await self.note(problem, "error")
             return
         current = self.agent.provider.model
-        rows = [(model + ("   (in use)" if model == current else ""), model) for model in models]
-        await self._open_picker(f"/model · {self.agent.provider.name}", rows, self._model_chosen, saves=True)
+        rows = [
+            (model + ("   (in use)" if model == current else ""), model)
+            for model in models
+        ]
+        await self._open_picker(
+            f"/model · {self.agent.provider.name}", rows, self._model_chosen, saves=True
+        )
 
     async def _model_chosen(self, model: str, remember: bool) -> None:
         text = switch_model(self.agent, model)
@@ -682,8 +789,16 @@ class WrenApp(App):
         usual = default_effort(self.agent)
         means = f": {usual} for this model" if usual else ": let the model decide"
         rows = [(f"default{means}" + ("   (in use)" if current is None else ""), None)]
-        rows += [(level + ("   (in use)" if level == current else ""), level) for level in levels]
-        await self._open_picker(f"/effort · {self.agent.provider.model}", rows, self._effort_chosen, saves=True)
+        rows += [
+            (level + ("   (in use)" if level == current else ""), level)
+            for level in levels
+        ]
+        await self._open_picker(
+            f"/effort · {self.agent.provider.model}",
+            rows,
+            self._effort_chosen,
+            saves=True,
+        )
 
     async def _effort_chosen(self, effort: str | None, remember: bool) -> None:
         text = switch_effort(self.agent, effort)
@@ -693,7 +808,11 @@ class WrenApp(App):
         self._show_status()
 
     async def pick_session(self) -> None:
-        saved = [s for s in self.sessions.saved() if s.id != self.sessions.current_id] if self.sessions else []
+        saved = (
+            [s for s in self.sessions.saved() if s.id != self.sessions.current_id]
+            if self.sessions
+            else []
+        )
         if not saved:
             await self.note("There are no other saved conversations for this folder.")
             return
@@ -709,8 +828,14 @@ class WrenApp(App):
         self.resumed = True
         await self._draw_conversation()
 
-    async def _open_picker(self, title: str, rows: list, on_choice, saves: bool = False) -> None:
-        keys = "↑↓ move · enter set as default · space this session only" if saves else "↑↓ move · enter choose"
+    async def _open_picker(
+        self, title: str, rows: list, on_choice, saves: bool = False
+    ) -> None:
+        keys = (
+            "↑↓ move · enter set as default · space this session only"
+            if saves
+            else "↑↓ move · enter choose"
+        )
         await self.panel.show(title, Picker(rows, on_choice, saves), keys=keys)
 
     @on(OptionList.OptionSelected)
@@ -731,7 +856,9 @@ class WrenApp(App):
         from queueing updates faster than the screen can draw them."""
         try:
             self.call_from_thread(method, *args)
-        except RuntimeError:  # the app has shut down (you quit mid-turn): nothing to draw on
+        except (
+            RuntimeError
+        ):  # the app has shut down (you quit mid-turn): nothing to draw on
             self._stop.set()
 
     def ask_permission(self, request: PermissionRequest) -> Decision:
@@ -747,7 +874,9 @@ class WrenApp(App):
             try:
                 return answer.result(timeout=0.1)
             except concurrent.futures.TimeoutError:
-                if self._stop.is_set():  # Escape at the question: stop the turn, change nothing
+                if (
+                    self._stop.is_set()
+                ):  # Escape at the question: stop the turn, change nothing
                     self._on_app_thread(self.hide_question)
                     return Decision.DENY
 
@@ -803,7 +932,9 @@ class WrenApp(App):
             await self._stream.stop()  # writes anything still queued
         self._reply = self._stream = None
 
-    async def show_question(self, request: PermissionRequest, answer: concurrent.futures.Future) -> None:
+    async def show_question(
+        self, request: PermissionRequest, answer: concurrent.futures.Future
+    ) -> None:
         await self.close_panel()  # a question needs the keyboard, and your attention
         self._question = PermissionPrompt(request, answer)
         await self.ask(self._question)
@@ -821,9 +952,13 @@ class WrenApp(App):
         self._tool_views.clear()
         if error is not None:
             await self.note(f"error: {error}", "error")
-            await self.note("The turn stopped there. What happened before the error is kept in the conversation.")
+            await self.note(
+                "The turn stopped there. What happened before the error is kept in the conversation."
+            )
         elif self._stop.is_set():
-            await self.note("[stopped: anything Wren had already done is kept, and it knows where it stopped]")
+            await self.note(
+                "[stopped: anything Wren had already done is kept, and it knows where it stopped]"
+            )
         self.busy = False
         self.stats.end_turn()
         self._show_status()
@@ -921,7 +1056,9 @@ def change_text(change, name: str) -> Text:
         colour = "green"
         shown = [("+ " + line, colour) for line in lines[:MAX_DIFF_LINES]]
     else:
-        lines = diff(change.before, change.after, name).splitlines()[2:]  # drop the ---/+++ header
+        lines = diff(change.before, change.after, name).splitlines()[
+            2:
+        ]  # drop the ---/+++ header
         shown = [(line, _diff_style(line)) for line in lines[:MAX_DIFF_LINES]]
     text = Text("\n").join(Text(line, style=style) for line, style in shown)
     if len(lines) > MAX_DIFF_LINES:

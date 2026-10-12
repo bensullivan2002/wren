@@ -30,7 +30,15 @@ from wren.footer import (
     parse_git_status,
     tokens,
 )
-from wren.messages import Completed, Message, Prices, TextBlock, TextDelta, ToolUseBlock, Usage
+from wren.messages import (
+    Completed,
+    Message,
+    Prices,
+    TextBlock,
+    TextDelta,
+    ToolUseBlock,
+    Usage,
+)
 from wren.providers.fake import FakeProvider
 from wren.stats import RunStats
 from wren.tools import Permissions, ToolRegistry, default_tools
@@ -50,7 +58,9 @@ class Clock:
 
 
 def completed(usage: Usage, model: str = "demo") -> Completed:
-    return Completed(Message("assistant", [TextBlock("ok")]), "end_turn", usage, model=model)
+    return Completed(
+        Message("assistant", [TextBlock("ok")]), "end_turn", usage, model=model
+    )
 
 
 def call(name: str = "read_file", **arguments) -> ToolUseBlock:
@@ -118,7 +128,10 @@ def test_token_counts_are_short(n, shown):
     assert tokens(n) == shown
 
 
-@pytest.mark.parametrize("seconds, shown", [(0, "0:00"), (7, "0:07"), (59.9, "0:59"), (1390, "23:10"), (3900, "1:05:00")])
+@pytest.mark.parametrize(
+    "seconds, shown",
+    [(0, "0:00"), (7, "0:07"), (59.9, "0:59"), (1390, "23:10"), (3900, "1:05:00")],
+)
 def test_durations_read_like_a_clock(seconds, shown):
     assert clock(seconds) == shown
 
@@ -138,7 +151,9 @@ def test_money_is_shown_in_dollars_until_there_is_a_rate():
 def test_the_spending_row_follows_the_rate():
     clock_, provider = Clock(), FakeProvider()
     stats = RunStats(clock_)
-    stats.record(completed(Usage(1_000_000)), provider)  # $3 at the fake's made-up prices
+    stats.record(
+        completed(Usage(1_000_000)), provider
+    )  # $3 at the fake's made-up prices
     agent = Agent(provider, "sys", 100)
     assert "cost: $3.00" in rows(agent, stats)[2]
     assert "cost: £1.50" in rows(agent, stats, AppState(gbp_per_usd=Decimal("0.5")))[2]
@@ -155,27 +170,46 @@ def test_the_bar_fills_and_changes_colour():
 
 def test_a_price_list_turns_tokens_into_dollars():
     prices = Prices(Decimal(3), Decimal(15), Decimal("0.3"), Decimal("3.75"))
-    assert prices.cost(Usage(1_000_000, 1_000_000, 1_000_000, 1_000_000)) == Decimal("22.05")
+    assert prices.cost(Usage(1_000_000, 1_000_000, 1_000_000, 1_000_000)) == Decimal(
+        "22.05"
+    )
     # Thinking tokens are part of the output tokens, so they add nothing of their own.
-    assert prices.cost(Usage(output_tokens=1_000, thinking_tokens=800)) == Decimal("0.015")
+    assert prices.cost(Usage(output_tokens=1_000, thinking_tokens=800)) == Decimal(
+        "0.015"
+    )
 
 
 def test_a_long_prompt_is_priced_higher_for_the_whole_call():
     long = Prices(Decimal(2), Decimal(10), Decimal("0.2"), Decimal("2.5"))
-    prices = Prices(Decimal(1), Decimal(5), Decimal("0.1"), Decimal("1.25"), long_prompt_over=100_000, long_prompt=long)
+    prices = Prices(
+        Decimal(1),
+        Decimal(5),
+        Decimal("0.1"),
+        Decimal("1.25"),
+        long_prompt_over=100_000,
+        long_prompt=long,
+    )
     # The prompt counts cache reads and writes too: 60k + 30k + 10k is 100k, not over.
     assert prices.cost(Usage(60_000, 1_000, 30_000, 10_000)) == Decimal("0.0805")
     # One more token and every token of the call, output too, is at the long price.
     assert prices.cost(Usage(60_001, 1_000, 30_000, 10_000)) == Decimal("0.161002")
 
     # Documented as dearer, but not by how much: unknown, never guessed.
-    short_only = Prices(Decimal(1), Decimal(5), Decimal("0.1"), Decimal("1.25"), long_prompt_over=100_000)
+    short_only = Prices(
+        Decimal(1),
+        Decimal(5),
+        Decimal("0.1"),
+        Decimal("1.25"),
+        long_prompt_over=100_000,
+    )
     assert short_only.cost(Usage(100_001)) is None
 
 
 def test_a_call_too_long_to_price_is_counted_as_unpriced():
     stats, provider = RunStats(Clock()), FakeProvider()
-    provider.prices = lambda: Prices(Decimal(1), Decimal(5), Decimal(0), Decimal(0), long_prompt_over=1_000)
+    provider.prices = lambda: Prices(
+        Decimal(1), Decimal(5), Decimal(0), Decimal(0), long_prompt_over=1_000
+    )
     stats.record(completed(Usage(1_000)), provider)
     stats.record(completed(Usage(1_001)), provider)
     assert stats.cost == Decimal("0.001") and stats.unpriced_calls == 1
@@ -185,7 +219,9 @@ def test_a_call_too_long_to_price_is_counted_as_unpriced():
 def test_each_provider_prices_its_default_model_from_a_stated_source(name):
     module = importlib.import_module(f"wren.providers.{name}")
     assert DEFAULT_MODELS[name] in module.DOCUMENTED_PRICES
-    assert module.PRICES_SOURCE.startswith("https://") and "2026" in module.PRICES_SOURCE
+    assert (
+        module.PRICES_SOURCE.startswith("https://") and "2026" in module.PRICES_SOURCE
+    )
     # Catches a value typed into the wrong column: on every model, on both
     # pricing pages, a cache read is the cheapest and output the dearest.
     for prices in module.DOCUMENTED_PRICES.values():
@@ -198,7 +234,9 @@ def test_haiku_5_5_costs_more_once_its_prompt_is_over_100k():
 
     haiku = DOCUMENTED_PRICES["claude-haiku-5-5"]
     assert haiku.cost(Usage(100_000)) == Decimal("0.01")  # $0.10 a million
-    assert haiku.cost(Usage(100_001)) == Decimal("0.0500005")  # $0.50 a million, for all of it
+    assert haiku.cost(Usage(100_001)) == Decimal(
+        "0.0500005"
+    )  # $0.50 a million, for all of it
 
 
 # --- Git ----------------------------------------------------------------------------------
@@ -258,7 +296,12 @@ def test_a_turn_is_timed_and_its_steps_counted(tmp_path):
     write = call("write_file", path="a.txt", content="x")
     stats.record(ToolStarted(write), provider)
     assert stats.running_tool is write
-    stats.record(ToolFinished(write, ToolResult("ok", change=FileChange(tmp_path / "a.txt", None, "x"))), provider)
+    stats.record(
+        ToolFinished(
+            write, ToolResult("ok", change=FileChange(tmp_path / "a.txt", None, "x"))
+        ),
+        provider,
+    )
     assert stats.running_tool is None and stats.step == 2  # waiting for the model again
 
     clock_.now += 2
@@ -294,23 +337,35 @@ def test_ending_a_turn_that_never_started_changes_nothing():
 def test_a_no_from_you_is_not_a_tool_error():
     stats, provider = RunStats(Clock()), FakeProvider()
     write = call("write_file", path="a.txt", content="x")
-    stats.record(ToolFinished(write, ToolResult(DECLINED, summary="declined", is_error=True)), provider)
+    stats.record(
+        ToolFinished(write, ToolResult(DECLINED, summary="declined", is_error=True)),
+        provider,
+    )
     assert stats.tool_errors == 0
-    failed = ToolResult("could not write", is_error=True, change=FileChange(write.input["path"], None, "x"))
+    failed = ToolResult(
+        "could not write",
+        is_error=True,
+        change=FileChange(write.input["path"], None, "x"),
+    )
     stats.record(ToolFinished(write, failed), provider)
     assert stats.tool_errors == 1
     assert stats.files_changed == set()  # it failed, so nothing changed
 
 
 def test_spending_is_priced_and_counted_per_minute():
-    clock_, provider = Clock(), FakeProvider()  # made-up prices: $3 in, $15 out, $0.30 cache read
+    clock_, provider = (
+        Clock(),
+        FakeProvider(),
+    )  # made-up prices: $3 in, $15 out, $0.30 cache read
     stats = RunStats(clock_)
     stats.record(completed(Usage(1_000_000, 100_000, 2_000_000)), provider)
     assert stats.cost == Decimal("5.1")
     assert stats.cache_hit() == pytest.approx(2 / 3)
 
     clock_.now += 59
-    assert stats.cost_per_minute() is None  # too early: one reply would look like a fortune a minute
+    assert (
+        stats.cost_per_minute() is None
+    )  # too early: one reply would look like a fortune a minute
     clock_.now += 61
     assert stats.cost_per_minute() == Decimal("2.55")
 
@@ -325,7 +380,10 @@ def test_calls_with_unknown_prices_are_counted_but_not_priced():
     assert stats.cost_per_minute() is None  # "£0.00 a minute" would be untrue
     assert "cost: $? · burn: —" in spending_row(stats)
     agent = Agent(FakeProvider(), "sys", 100)
-    assert "cost: £? · burn: —" in rows(agent, stats, AppState(gbp_per_usd=Decimal("0.75")))[2]
+    assert (
+        "cost: £? · burn: —"
+        in rows(agent, stats, AppState(gbp_per_usd=Decimal("0.75")))[2]
+    )
 
     provider.model = "demo"
     stats.record(completed(Usage(1_000_000)), provider)
@@ -336,7 +394,10 @@ def test_calls_with_unknown_prices_are_counted_but_not_priced():
 def test_compaction_counts_its_cost_even_when_it_fails():
     stats, provider = RunStats(Clock()), FakeProvider()
     stats.record(Compacted(100_000, 5_000, usage=Usage(100_000, 2_000)), provider)
-    stats.record(Compacted(5_000, 5_000, error="the model refused", usage=Usage(5_000, 10)), provider)
+    stats.record(
+        Compacted(5_000, 5_000, error="the model refused", usage=Usage(5_000, 10)),
+        provider,
+    )
     assert stats.compactions == 1
     assert stats.usage == Usage(105_000, 2_010)
 
@@ -348,11 +409,15 @@ def test_compaction_counts_its_cost_even_when_it_fails():
 def test_a_reply_from_another_model_is_noticed():
     stats, provider = RunStats(Clock()), FakeProvider()
     stats.record(completed(Usage(10), model="demo-2026-09-01"), provider)
-    assert stats.answered_by_another(provider) is None  # a dated version of the same model
+    assert (
+        stats.answered_by_another(provider) is None
+    )  # a dated version of the same model
     stats.record(completed(Usage(10), model="something-else"), provider)
     assert stats.answered_by_another(provider) == "something-else"
     provider.model = "demo-fast"
-    assert stats.answered_by_another(provider) is None  # that reply was to a different request
+    assert (
+        stats.answered_by_another(provider) is None
+    )  # that reply was to a different request
 
 
 # --- The rows -------------------------------------------------------------------------------
@@ -376,12 +441,16 @@ def spending_row(stats) -> str:
 def test_the_idle_footer_shows_the_settings_and_the_keys(tmp_path):
     agent = make_agent(tmp_path)
     agent.context_tokens = 42_000
-    state = AppState(git=GitState("[red]x[/]", 2), session_id="20261012-101500-ab12", resumed=True)
+    state = AppState(
+        git=GitState("[red]x[/]", 2), session_id="20261012-101500-ab12", resumed=True
+    )
     shown = rows(agent, RunStats(Clock()), state)
 
     assert len(shown) == 6
     assert shown[0].startswith("model: demo · effort: default · provider: fake")
-    assert "git: [red]x[/] · uncommitted: 2" in shown[0]  # a branch name is text, never markup
+    assert (
+        "git: [red]x[/] · uncommitted: 2" in shown[0]
+    )  # a branch name is text, never markup
     assert "session id: 20261012-101500-ab12 (resumed)" in shown[0]
     assert "context: ▰▰▰▱▱▱▱▱▱▱ 28% · 42k/150k" in shown[1]
     assert "memory files: off" in shown[1]
@@ -391,13 +460,21 @@ def test_the_idle_footer_shows_the_settings_and_the_keys(tmp_path):
 def test_with_no_budget_the_context_row_says_why(tmp_path):
     agent = make_agent(tmp_path)
     agent.context_cap, agent.context_tokens = None, 42_000
-    assert "context: 42k (window not looked up yet)" in rows(agent, RunStats(Clock()))[1]
+    assert (
+        "context: 42k (window not looked up yet)" in rows(agent, RunStats(Clock()))[1]
+    )
     agent.look_up_context_window()
-    assert "context: ▰" in rows(agent, RunStats(Clock()))[1] and "/180k" in rows(agent, RunStats(Clock()))[1]
+    assert (
+        "context: ▰" in rows(agent, RunStats(Clock()))[1]
+        and "/180k" in rows(agent, RunStats(Clock()))[1]
+    )
     agent.provider.window = None
     agent.set_model("demo-fast")
     agent.look_up_context_window()
-    assert "context: 42k (window unknown: never compacted)" in rows(agent, RunStats(Clock()))[1]
+    assert (
+        "context: 42k (window unknown: never compacted)"
+        in rows(agent, RunStats(Clock()))[1]
+    )
     agent.context_cap = 0
     assert "context: 42k (compaction off)" in rows(agent, RunStats(Clock()))[1]
 
@@ -406,7 +483,9 @@ def test_auto_mode_shows_in_the_settings_row_while_it_is_on(tmp_path):
     agent = make_agent(tmp_path)
     assert "auto: on" not in rows(agent, RunStats(Clock()))[0]
     agent.tools.permissions.auto = True
-    assert rows(agent, RunStats(Clock()))[0].startswith("model: demo · effort: default · provider: fake · auto: on")
+    assert rows(agent, RunStats(Clock()))[0].startswith(
+        "model: demo · effort: default · provider: fake · auto: on"
+    )
 
 
 def test_a_narrow_terminal_keeps_every_row_on_one_line(tmp_path):
@@ -420,15 +499,25 @@ def test_a_narrow_terminal_keeps_every_row_on_one_line(tmp_path):
 def test_the_last_row_says_what_wren_is_doing(tmp_path):
     agent, stats, provider = make_agent(tmp_path), RunStats(Clock()), FakeProvider()
     busy = AppState(busy=True)
-    assert "working · esc to stop" in rows(agent, stats, busy)[5]  # busy, but not a turn: /compact
+    assert (
+        "working · esc to stop" in rows(agent, stats, busy)[5]
+    )  # busy, but not a turn: /compact
 
     stats.start_turn()
-    assert "step 1 · waiting for the model · esc to stop" in rows(agent, stats, busy)[5]  # no step limit by default
+    assert (
+        "step 1 · waiting for the model · esc to stop" in rows(agent, stats, busy)[5]
+    )  # no step limit by default
     stats.record(completed(Usage(10)), provider)
     stats.record(ToolStarted(call("read_file", path="a.txt")), provider)
-    assert "step 1 · running read_file(path='a.txt') · esc to stop" in rows(agent, stats, busy)[5]
+    assert (
+        "step 1 · running read_file(path='a.txt') · esc to stop"
+        in rows(agent, stats, busy)[5]
+    )
     agent.max_steps = 25  # with a limit, the footer shows how close it is
-    assert "step 1/25 · running read_file(path='a.txt') · esc to stop" in rows(agent, stats, busy)[5]
+    assert (
+        "step 1/25 · running read_file(path='a.txt') · esc to stop"
+        in rows(agent, stats, busy)[5]
+    )
     assert "stopping…" in rows(agent, stats, AppState(busy=True, stopping=True))[5]
 
 
@@ -437,7 +526,9 @@ def test_tools_are_listed_most_used_first(tmp_path):
     for name in ("shell", "read_file", "read_file", "search", "read_file", "shell"):
         stats.record(ToolStarted(call(name)), provider)
     shown = rows(make_agent(tmp_path), stats)[4]
-    assert shown.startswith("tool calls: 6 · read_file 3 · shell 2 · search 1 │ files changed: 0")
+    assert shown.startswith(
+        "tool calls: 6 · read_file 3 · shell 2 · search 1 │ files changed: 0"
+    )
 
 
 def test_a_reply_from_another_model_is_flagged_in_the_footer(tmp_path):

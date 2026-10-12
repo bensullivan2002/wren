@@ -111,8 +111,15 @@ class ExchangeRate:
     def _load(self) -> Rate | None:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-            rate = Rate(Decimal(data["gbp_per_usd"]), str(data["rate_date"]), str(data["looked_up_on"]))
-        except (*LOOKUP_FAILED, AttributeError):  # missing, unreadable, or not what we wrote
+            rate = Rate(
+                Decimal(data["gbp_per_usd"]),
+                str(data["rate_date"]),
+                str(data["looked_up_on"]),
+            )
+        except (
+            *LOOKUP_FAILED,
+            AttributeError,
+        ):  # missing, unreadable, or not what we wrote
             return None
         return rate if 0 < rate.gbp_per_usd < 10 else None
 
@@ -122,7 +129,9 @@ class ExchangeRate:
         # killed half-way, can't leave a half-written file.
         assert self.rate is not None
         data = {
-            "gbp_per_usd": str(self.rate.gbp_per_usd),  # a string: JSON numbers are floats
+            "gbp_per_usd": str(
+                self.rate.gbp_per_usd
+            ),  # a string: JSON numbers are floats
             "rate_date": self.rate.rate_date,
             "looked_up_on": self.rate.looked_up_on,
             "source": SOURCE,

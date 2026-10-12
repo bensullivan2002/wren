@@ -56,8 +56,16 @@ PROTECTED = (".git", ".envrc", ".vscode", ".idea", ".claude", ".codex")
 # no network a command couldn't send them anywhere, but whatever it prints
 # goes to the model, and into the session file.
 CREDENTIALS = (
-    ".ssh", ".aws", ".gnupg", ".netrc", ".config/gh", ".docker",
-    ".kube", ".pypirc", ".npmrc", "Library/Keychains",
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".netrc",
+    ".config/gh",
+    ".docker",
+    ".kube",
+    ".pypirc",
+    ".npmrc",
+    "Library/Keychains",
 )
 
 
@@ -87,14 +95,20 @@ def _params(root: Path) -> dict[str, str]:
     home = Path.home()
     params = {"ROOT": real(root)}
     params.update({f"TEMP_{i}": real(path) for i, path in enumerate(temp_dirs())})
-    params.update({f"PROTECTED_{i}": real(root / name) for i, name in enumerate(PROTECTED)})
-    params.update({f"SECRET_{i}": real(home / name) for i, name in enumerate(CREDENTIALS)})
+    params.update(
+        {f"PROTECTED_{i}": real(root / name) for i, name in enumerate(PROTECTED)}
+    )
+    params.update(
+        {f"SECRET_{i}": real(home / name) for i, name in enumerate(CREDENTIALS)}
+    )
     return params
 
 
 def _profile(params: dict[str, str]) -> str:
     def paths(prefix: str) -> str:
-        return " ".join(f'(subpath (param "{name}"))' for name in params if name.startswith(prefix))
+        return " ".join(
+            f'(subpath (param "{name}"))' for name in params if name.startswith(prefix)
+        )
 
     return f"""\
 (version 1)

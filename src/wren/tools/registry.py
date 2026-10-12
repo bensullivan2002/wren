@@ -79,7 +79,9 @@ class ToolRegistry:
         """
         tool = self._tools.get(name)
         if tool is None:
-            return _error(f"There is no tool named '{name}'. Available tools: {', '.join(self._tools)}.")
+            return _error(
+                f"There is no tool named '{name}'. Available tools: {', '.join(self._tools)}."
+            )
         try:
             checked = tool.parse(args)
             request = tool.permission(checked, self.context)

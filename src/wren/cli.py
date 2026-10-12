@@ -40,11 +40,19 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         prog="wren",
         description="A small, readable coding agent for your terminal.",
     )
-    parser.add_argument("--provider", choices=PROVIDERS, help="model provider (env: WREN_PROVIDER)")
-    parser.add_argument("--model", help="model name, e.g. claude-opus-5-5 (env: WREN_MODEL)")
-    parser.add_argument("--max-tokens", type=int, help="longest reply allowed (env: WREN_MAX_TOKENS)")
     parser.add_argument(
-        "--max-steps", type=int, help="most model calls in one turn; 0 or unset = no limit (env: WREN_MAX_STEPS)"
+        "--provider", choices=PROVIDERS, help="model provider (env: WREN_PROVIDER)"
+    )
+    parser.add_argument(
+        "--model", help="model name, e.g. claude-opus-5-5 (env: WREN_MODEL)"
+    )
+    parser.add_argument(
+        "--max-tokens", type=int, help="longest reply allowed (env: WREN_MAX_TOKENS)"
+    )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        help="most model calls in one turn; 0 or unset = no limit (env: WREN_MAX_STEPS)",
     )
     parser.add_argument(
         "--effort",
@@ -65,7 +73,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="choose an earlier conversation in this folder to reopen, or reopen the one with this id",
     )
     parser.add_argument(
-        "--plain", action="store_true", help="use the plain line-by-line interface, not the full-screen app"
+        "--plain",
+        action="store_true",
+        help="use the plain line-by-line interface, not the full-screen app",
     )
     parser.add_argument("--version", action="version", version=f"wren {__version__}")
     return parser.parse_args(argv)
@@ -73,7 +83,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    defaults = UserDefaults()  # ~/.wren/settings.json: what was chosen with Enter in the pickers
+    defaults = (
+        UserDefaults()
+    )  # ~/.wren/settings.json: what was chosen with Enter in the pickers
     config = Config.load(
         user=defaults,
         provider=args.provider,
@@ -108,7 +120,12 @@ def main(argv: list[str] | None = None) -> int:
         return build_system_prompt(root, memory=memory.render())
 
     agent = Agent(
-        provider, system_prompt, config.max_tokens, tools, config.max_steps, context_cap=config.context_budget
+        provider,
+        system_prompt,
+        config.max_tokens,
+        tools,
+        config.max_steps,
+        context_cap=config.context_budget,
     )
 
     # From here on, every message is written to a session file as it's added.
@@ -128,7 +145,14 @@ def main(argv: list[str] | None = None) -> int:
     # output is a pipe or a file (`echo hi | wren`, the tests), fall back to
     # the plain REPL, which only needs lines of text.
     if args.plain or not (sys.stdin.isatty() and sys.stdout.isatty()):
-        repl = Repl(agent, memory=memory, sessions=sessions, notice=notice, choose_session=choose_session, defaults=defaults)
+        repl = Repl(
+            agent,
+            memory=memory,
+            sessions=sessions,
+            notice=notice,
+            choose_session=choose_session,
+            defaults=defaults,
+        )
         # The one loop in the wiring: tools need to ask the user, and the
         # front end is the part that talks to the user. Until this line,
         # Permissions has nobody to ask, and so refuses everything.
@@ -140,5 +164,13 @@ def main(argv: list[str] | None = None) -> int:
         from wren.tui import WrenApp
 
         # Wires itself to the same hooks in its __init__.
-        WrenApp(agent, memory, sessions, notice, choose_session, defaults, exchange=ExchangeRate()).run()
+        WrenApp(
+            agent,
+            memory,
+            sessions,
+            notice,
+            choose_session,
+            defaults,
+            exchange=ExchangeRate(),
+        ).run()
     return 0

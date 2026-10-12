@@ -18,9 +18,17 @@ from wren.tools.sandbox import PROTECTED
 # (Reading .gitignore properly would be better; it's on the list for later.)
 IGNORED_DIRS = frozenset(
     {
-        ".git", ".hg", ".svn",
-        "node_modules", ".venv", "venv", "__pycache__",
-        ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox",
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".tox",
     }
 )
 
@@ -33,7 +41,9 @@ def resolve(ctx: ToolContext, path: str) -> Path:
     escape: `../../etc/passwd`, `/etc/passwd`, and a symlink pointing at
     /etc/passwd all end up outside the root and are refused.
     """
-    candidate = (ctx.root / path).resolve()  # if `path` is absolute, root / path == path
+    candidate = (
+        ctx.root / path
+    ).resolve()  # if `path` is absolute, root / path == path
     if not candidate.is_relative_to(ctx.root):
         raise ToolError(
             f"'{path}' is outside the working directory ({ctx.root}). "
@@ -51,7 +61,9 @@ def resolve_for_writing(ctx: ToolContext, path: str) -> Path:
     """
     target = resolve(ctx, path)
     if ".git" in target.relative_to(ctx.root).parts:
-        raise ToolError(f"'{path}' is inside .git, which Wren's tools never write to. Use git commands instead.")
+        raise ToolError(
+            f"'{path}' is inside .git, which Wren's tools never write to. Use git commands instead."
+        )
     return target
 
 
@@ -141,11 +153,15 @@ def read_text(path: Path, name: str) -> tuple[str, str]:
     """Return (text using "\n", the file's own line ending)."""
     raw = path.read_bytes()
     if b"\0" in raw[:8192]:
-        raise ToolError(f"{name} looks like a binary file, so it can't be edited as text.")
+        raise ToolError(
+            f"{name} looks like a binary file, so it can't be edited as text."
+        )
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
-        raise ToolError(f"{name} isn't valid UTF-8 text, so it can't be edited safely.") from None
+        raise ToolError(
+            f"{name} isn't valid UTF-8 text, so it can't be edited safely."
+        ) from None
     newline = "\r\n" if "\r\n" in text else "\n"
     return text.replace("\r\n", "\n"), newline
 
@@ -160,7 +176,11 @@ def diff(old: str, new: str, name: str) -> str:
     """A unified diff, the same format `git diff` prints: lines starting
     with "-" are removed, "+" are added, and the rest is context."""
     lines = difflib.unified_diff(
-        old.splitlines(), new.splitlines(), fromfile=f"a/{name}", tofile=f"b/{name}", lineterm=""
+        old.splitlines(),
+        new.splitlines(),
+        fromfile=f"a/{name}",
+        tofile=f"b/{name}",
+        lineterm="",
     )
     return "\n".join(lines)
 
@@ -176,4 +196,7 @@ def diff_summary(old: str, new: str) -> str:
 
 def numbered(lines: list[str], first: int, max_chars: int = 500) -> str:
     """Lines in read_file's format: a right-aligned number, a tab, the text."""
-    return "\n".join(f"{number:>6}\t{clip(line, max_chars)}" for number, line in enumerate(lines, first))
+    return "\n".join(
+        f"{number:>6}\t{clip(line, max_chars)}"
+        for number, line in enumerate(lines, first)
+    )

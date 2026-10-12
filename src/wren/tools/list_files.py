@@ -20,9 +20,14 @@ class ListFiles(Tool):
         "'src/**/test_*.py' finds test files under src. "
         "Folders such as .git, node_modules and .venv are skipped."
     )
+
     class Input(ToolInput):
-        pattern: str = Field("*", description="Glob pattern, matched against paths relative to `path`.")
-        path: str = Field(".", description="Folder to look in, relative to the working directory.")
+        pattern: str = Field(
+            "*", description="Glob pattern, matched against paths relative to `path`."
+        )
+        path: str = Field(
+            ".", description="Folder to look in, relative to the working directory."
+        )
 
     def run(self, args: Input, ctx: ToolContext) -> ToolResult:
         base = resolve(ctx, args.path)
@@ -30,7 +35,9 @@ class ListFiles(Tool):
         if not base.exists():
             raise ToolError(f"No such folder: {args.path}.")
         if not base.is_dir():
-            raise ToolError(f"{shown(ctx, base)} is a file, not a folder. Use read_file to read it.")
+            raise ToolError(
+                f"{shown(ctx, base)} is a file, not a folder. Use read_file to read it."
+            )
 
         regex = glob_to_regex(pattern)
         # A pattern without a '/' (like '*.py') only looks in the one folder,
@@ -44,13 +51,17 @@ class ListFiles(Tool):
             entries = [(d, True) for d in subfolders] + [(f, False) for f in files]
             for entry, is_folder in entries:
                 if regex.fullmatch((relative_folder / entry).as_posix()):
-                    matches.append(shown(ctx, folder / entry) + ("/" if is_folder else ""))
+                    matches.append(
+                        shown(ctx, folder / entry) + ("/" if is_folder else "")
+                    )
             if not recursive:
                 break
 
         where = shown(ctx, base)
         if not matches:
-            return ToolResult(f"Nothing in {where} matches '{pattern}'.", summary="no matches")
+            return ToolResult(
+                f"Nothing in {where} matches '{pattern}'.", summary="no matches"
+            )
 
         output = "\n".join(matches[:MAX_RESULTS])
         if len(matches) > MAX_RESULTS:

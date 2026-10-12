@@ -25,13 +25,22 @@ class Search(Tool):
         "Good for finding where something is defined or used, e.g. 'def run_turn' or 'class \\w+Provider'. "
         "Binary files, files over 2 MB, and folders such as .git and node_modules are skipped."
     )
+
     class Input(ToolInput):
         pattern: str = Field(description="Regular expression to search for.")
-        path: str = Field(".", description="File or folder to search, relative to the working directory.")
+        path: str = Field(
+            ".",
+            description="File or folder to search, relative to the working directory.",
+        )
         # `str | None` with a default of None is how you say "optional, and
         # there's no sensible value to assume" (unlike `path`, which has one).
-        include: str | None = Field(None, description="Only search files whose name matches this glob, e.g. '*.py'.")
-        ignore_case: bool = Field(False, description="Match regardless of upper or lower case.")
+        include: str | None = Field(
+            None,
+            description="Only search files whose name matches this glob, e.g. '*.py'.",
+        )
+        ignore_case: bool = Field(
+            False, description="Match regardless of upper or lower case."
+        )
 
     def run(self, args: Input, ctx: ToolContext) -> ToolResult:
         try:
@@ -72,8 +81,9 @@ class Search(Tool):
                 f"\n\n[Showing the first {MAX_MATCHES} of {total:,} matching lines. "
                 "Narrow the pattern, path or include to see the rest.]"
             )
-        summary = f"{total:,} {'match' if total == 1 else 'matches'} in {files_with_matches} file" + (
-            "" if files_with_matches == 1 else "s"
+        summary = (
+            f"{total:,} {'match' if total == 1 else 'matches'} in {files_with_matches} file"
+            + ("" if files_with_matches == 1 else "s")
         )
         return ToolResult(output, summary=summary)
 

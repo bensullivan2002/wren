@@ -45,7 +45,9 @@ class ToolResult:
     content: str  # what the model sees
     summary: str = ""  # one short line for the person watching the terminal
     is_error: bool = False
-    change: FileChange | None = None  # set by tools that changed a file, so a UI can show the diff
+    change: FileChange | None = (
+        None  # set by tools that changed a file, so a UI can show the diff
+    )
 
 
 @dataclass
@@ -93,13 +95,17 @@ class Tool:
         """Turn the model's raw JSON arguments into a checked `Input` object,
         with defaults filled in. Raises ToolError listing every problem at once."""
         if not isinstance(args, dict):
-            raise ToolError(f"Tool arguments must be a JSON object, not {type(args).__name__}.")
+            raise ToolError(
+                f"Tool arguments must be a JSON object, not {type(args).__name__}."
+            )
         try:
             return self.Input.model_validate(args)
         except ValidationError as e:
             problems = "; ".join(_describe_problem(error) for error in e.errors())
             accepted = ", ".join(self.Input.model_fields) or "none"
-            raise ToolError(f"Invalid arguments: {problems}. (Accepted arguments: {accepted}.)") from None
+            raise ToolError(
+                f"Invalid arguments: {problems}. (Accepted arguments: {accepted}.)"
+            ) from None
 
     def permission(self, args: Any, ctx: ToolContext) -> PermissionRequest | None:
         """Say what this call is about to change, so the user can be asked first.

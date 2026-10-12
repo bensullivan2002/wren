@@ -38,7 +38,9 @@ DEFAULT_EFFORTS: dict[str, str | None] = {
 DEFAULT_MODEL = DEFAULT_MODELS[DEFAULT_PROVIDER]
 
 
-def default_choice(provider: str, user: UserDefaults | None = None) -> tuple[str, str | None]:
+def default_choice(
+    provider: str, user: UserDefaults | None = None
+) -> tuple[str, str | None]:
     """The (model, effort) a provider starts with when nothing was asked for:
     what you saved, else Wren's own. An effort of None means "the model's own"."""
     saved = user.get(provider) if user is not None else None
@@ -106,20 +108,31 @@ class Config:
         # A default effort belongs to its model. Starting on some other model
         # (a flag, or WREN_MODEL) must not borrow it: that level might not
         # exist there. That model starts at its own default.
-        effort = effort or env.get("WREN_EFFORT") or (default_effort if model == default_model else None)
+        effort = (
+            effort
+            or env.get("WREN_EFFORT")
+            or (default_effort if model == default_model else None)
+        )
         return cls(
             provider=provider,
             model=model,
-            max_tokens=max_tokens or int(env.get("WREN_MAX_TOKENS") or DEFAULT_MAX_TOKENS),
+            max_tokens=max_tokens
+            or int(env.get("WREN_MAX_TOKENS") or DEFAULT_MAX_TOKENS),
             # `is not None`, not `or`, here and for the budget: 0 is a real
             # choice (no step limit; never compact).
             max_steps=(
-                max_steps if max_steps is not None else int(env.get("WREN_MAX_STEPS") or DEFAULT_MAX_STEPS)
+                max_steps
+                if max_steps is not None
+                else int(env.get("WREN_MAX_STEPS") or DEFAULT_MAX_STEPS)
             ),
             effort=effort,
             context_budget=(
                 context_budget
                 if context_budget is not None
-                else (int(env["WREN_CONTEXT_BUDGET"]) if env.get("WREN_CONTEXT_BUDGET") else None)
+                else (
+                    int(env["WREN_CONTEXT_BUDGET"])
+                    if env.get("WREN_CONTEXT_BUDGET")
+                    else None
+                )
             ),
         )

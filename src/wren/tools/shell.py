@@ -107,7 +107,10 @@ class Shell(Tool):
         )
         command: str = Field(description="The command line to run.")
         timeout: int = Field(
-            DEFAULT_TIMEOUT, ge=1, le=MAX_TIMEOUT, description="Seconds to wait before stopping the command."
+            DEFAULT_TIMEOUT,
+            ge=1,
+            le=MAX_TIMEOUT,
+            description="Seconds to wait before stopping the command.",
         )
         outside_sandbox: bool = Field(
             False,
@@ -122,13 +125,24 @@ class Shell(Tool):
             raise ToolError("command is empty.")
         word = command_word(args.command)
         if not sandbox.available():  # nothing to be inside or outside of
-            title, scope, label = "Run a shell command", f"shell:{word}", f"commands starting with `{word}`"
+            title, scope, label = (
+                "Run a shell command",
+                f"shell:{word}",
+                f"commands starting with `{word}`",
+            )
         elif args.outside_sandbox:
             # Its own scope: "always allow `uv`" in the sandbox mustn't cover `uv` outside it.
-            title, scope = "Run a shell command outside the sandbox", f"shell-outside:{word}"
+            title, scope = (
+                "Run a shell command outside the sandbox",
+                f"shell-outside:{word}",
+            )
             label = f"commands starting with `{word}`, outside the sandbox"
         else:
-            title, scope, label = "Run a shell command in the sandbox", f"shell:{word}", f"commands starting with `{word}`"
+            title, scope, label = (
+                "Run a shell command in the sandbox",
+                f"shell:{word}",
+                f"commands starting with `{word}`",
+            )
         return PermissionRequest(
             title=title,
             explanation=args.description.strip(),
@@ -141,7 +155,9 @@ class Shell(Tool):
     def run(self, args: Input, ctx: ToolContext) -> ToolResult:
         sandboxed = _sandboxed(args)
         command = sandbox.command(args.command, ctx.root) if sandboxed else args.command
-        output, exit_code, stopped = _run(command, ctx.root, args.timeout, ctx.should_stop)
+        output, exit_code, stopped = _run(
+            command, ctx.root, args.timeout, ctx.should_stop
+        )
 
         # For a command, the end of the output is usually what matters (the
         # error, the test summary), so when it's too long we keep the tail.
@@ -151,12 +167,20 @@ class Shell(Tool):
                 + output[-MAX_OUTPUT_CHARS:]
             )
         count = len(output.splitlines())
-        size = "no output" if count == 0 else "1 line" if count == 1 else f"{count:,} lines"
+        size = (
+            "no output"
+            if count == 0
+            else "1 line"
+            if count == 1
+            else f"{count:,} lines"
+        )
         content = output.rstrip("\n") or "(no output)"
 
         if stopped == "timeout":
             content += f"\n\n[Stopped: the command was still running after {args.timeout} seconds.]"
-            return ToolResult(content, summary=f"timed out after {args.timeout}s", is_error=True)
+            return ToolResult(
+                content, summary=f"timed out after {args.timeout}s", is_error=True
+            )
         if stopped == "cancelled":
             content += "\n\n[Stopped by the user before it finished. It may have partly completed.]"
             return ToolResult(content, summary="stopped", is_error=True)
@@ -224,12 +248,22 @@ def _run(
                 output, _ = process.communicate(timeout=POLL_SECONDS)
                 return output, process.returncode, None
             except subprocess.TimeoutExpired:
-                stopped = "cancelled" if should_stop() else "timeout" if time.monotonic() >= deadline else None
+                stopped = (
+                    "cancelled"
+                    if should_stop()
+                    else "timeout"
+                    if time.monotonic() >= deadline
+                    else None
+                )
             if stopped:
                 _kill(process, posix)
-                output, _ = process.communicate()  # collect whatever it printed before it was stopped
+                output, _ = (
+                    process.communicate()
+                )  # collect whatever it printed before it was stopped
                 return output, process.returncode, stopped
-    except BaseException:  # Ctrl-C while the command runs: don't leave it running behind us
+    except (
+        BaseException
+    ):  # Ctrl-C while the command runs: don't leave it running behind us
         _kill(process, posix)
         process.wait()
         raise

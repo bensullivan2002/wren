@@ -121,7 +121,15 @@ class Compacted:
     usage: Usage = field(default_factory=Usage)
 
 
-AgentEvent = Union[TextDelta, Completed, ToolStarted, ToolFinished, TurnFinished, CompactionStarted, Compacted]
+AgentEvent = Union[
+    TextDelta,
+    Completed,
+    ToolStarted,
+    ToolFinished,
+    TurnFinished,
+    CompactionStarted,
+    Compacted,
+]
 
 
 class Agent:
@@ -140,7 +148,9 @@ class Agent:
         # point at which a changed memory file can be picked up for free,
         # since a new conversation starts a new cache anyway.
         self._build_system_prompt = system_prompt if callable(system_prompt) else None
-        self.system_prompt: str = system_prompt() if callable(system_prompt) else system_prompt
+        self.system_prompt: str = (
+            system_prompt() if callable(system_prompt) else system_prompt
+        )
         self.max_tokens = max_tokens
         self.tools = tools if tools is not None else ToolRegistry()
         self.max_steps = max_steps  # the most model calls in one turn; 0 = no limit
@@ -161,8 +171,12 @@ class Agent:
         # by the only tokenizer that matters, and it's free.
         self.context_tokens = 0
         self.answered_by = ""  # the model the provider says wrote the latest reply
-        self._models_used: dict[str, str] = {}  # provider name -> the model last used with it
-        self.last_call: Completed | None = None  # the latest model call, for /usage to report on
+        self._models_used: dict[
+            str, str
+        ] = {}  # provider name -> the model last used with it
+        self.last_call: Completed | None = (
+            None  # the latest model call, for /usage to report on
+        )
 
         # Where the current turn has got to, kept on the agent (not in local
         # variables) so that if the turn is cut short we still know what had
@@ -224,7 +238,11 @@ class Agent:
             text that had been streamed before the stop.
         """
         if isinstance(stopped_by, Exception):
-            reason = str(stopped_by).splitlines()[0] if str(stopped_by) else type(stopped_by).__name__
+            reason = (
+                str(stopped_by).splitlines()[0]
+                if str(stopped_by)
+                else type(stopped_by).__name__
+            )
             note = ERROR_NOTE.format(error=reason[:200])
         else:  # KeyboardInterrupt, or the UI closing the turn
             note = INTERRUPTED_NOTE
@@ -249,7 +267,10 @@ class Agent:
             answers = []
             for call in last.tool_uses:
                 unfinished = CUT_SHORT if call.id == running else not_run
-                answers.append(finished.get(call.id) or ToolResultBlock(call.id, unfinished, is_error=True))
+                answers.append(
+                    finished.get(call.id)
+                    or ToolResultBlock(call.id, unfinished, is_error=True)
+                )
             self._add(Message("user", answers))
 
         said = said.rstrip()
@@ -267,7 +288,9 @@ class Agent:
 
             # This request's input, plus the reply it produced, is what the
             # next request will carry.
-            self.context_tokens = completed.usage.sent_tokens + completed.usage.output_tokens
+            self.context_tokens = (
+                completed.usage.sent_tokens + completed.usage.output_tokens
+            )
             self.answered_by = completed.model
             self.last_call = completed
             if self.journal is not None:
@@ -317,7 +340,9 @@ class Agent:
             raise RuntimeError("provider stream ended without a Completed event")
         return completed
 
-    def _run_tools(self, calls: list[ToolUseBlock]) -> Generator[AgentEvent, None, list[ToolResultBlock]]:
+    def _run_tools(
+        self, calls: list[ToolUseBlock]
+    ) -> Generator[AgentEvent, None, list[ToolResultBlock]]:
         # The model may ask for several tools in one reply. We run them one at
         # a time, in order; all the results go back together in one message.
         #
@@ -329,7 +354,9 @@ class Agent:
             yield ToolStarted(call)
             self._running = call.id
             result = self.tools.run(call.name, call.input)
-            self._results.append(ToolResultBlock(call.id, result.content, result.is_error))
+            self._results.append(
+                ToolResultBlock(call.id, result.content, result.is_error)
+            )
             self._running = None
             yield ToolFinished(call, result)
         return self._results
@@ -349,14 +376,20 @@ class Agent:
             window = self.provider.context_window()
         except Exception:
             return  # unknown for now; no automatic compaction until it's known
-        if (self.provider.name, self.provider.model) == model:  # not switched while we asked
+        if (
+            self.provider.name,
+            self.provider.model,
+        ) == model:  # not switched while we asked
             self._window = (model, window)
 
     @property
     def context_window_checked(self) -> bool:
         """Whether the provider has been asked about the current model's
         window (whether or not it knew)."""
-        return self._window is not None and self._window[0] == (self.provider.name, self.provider.model)
+        return self._window is not None and self._window[0] == (
+            self.provider.name,
+            self.provider.model,
+        )
 
     @property
     def context_window(self) -> int | None:
@@ -404,7 +437,11 @@ class Agent:
         swap is the last step, and happens only once we hold a good summary.
         """
         if len(self.messages) < 2:
-            yield Compacted(self.context_tokens, self.context_tokens, error="there's nothing to compact yet")
+            yield Compacted(
+                self.context_tokens,
+                self.context_tokens,
+                error="there's nothing to compact yet",
+            )
             return
         before = self.context_tokens
         yield CompactionStarted(automatic)
@@ -420,7 +457,9 @@ class Agent:
                 max_tokens=self.max_tokens,
             )
             with closing(events):
-                for event in events:  # the summary isn't shown as it streams: it's not a reply
+                for (
+                    event
+                ) in events:  # the summary isn't shown as it streams: it's not a reply
                     if isinstance(event, Completed):
                         completed = event
             if completed is None:
@@ -433,9 +472,13 @@ class Agent:
                 raise RuntimeError("the summary was cut off by the max_tokens limit")
         except Exception as e:
             if completed is not None and self.journal is not None:
-                self.journal.spent(completed.usage, before)  # it cost something even though it failed
+                self.journal.spent(
+                    completed.usage, before
+                )  # it cost something even though it failed
             spent = completed.usage if completed is not None else Usage()
-            yield Compacted(before, before, error=str(e) or type(e).__name__, usage=spent)
+            yield Compacted(
+                before, before, error=str(e) or type(e).__name__, usage=spent
+            )
             return
 
         # Only the summary's text is kept. Any reasoning that came with it
@@ -452,7 +495,12 @@ class Agent:
 
     # --- Sessions and models -----------------------------------------------------
 
-    def restore(self, messages: list[Message], usage: Usage | None = None, context_tokens: int | None = None) -> None:
+    def restore(
+        self,
+        messages: list[Message],
+        usage: Usage | None = None,
+        context_tokens: int | None = None,
+    ) -> None:
         """Take up a conversation read back from disk.
 
         A saved conversation can stop anywhere: Wren may have been closed,
@@ -469,7 +517,9 @@ class Agent:
         problems = history_problems(self.messages)
         if problems:
             self.messages[:] = previous
-            raise ValueError("the saved conversation is not usable: " + "; ".join(problems))
+            raise ValueError(
+                "the saved conversation is not usable: " + "; ".join(problems)
+            )
         # The totals and the size as they were when it was saved, if the
         # session recorded them. If not (an older file), start the totals at
         # zero and guess the size at about four characters to a token; the

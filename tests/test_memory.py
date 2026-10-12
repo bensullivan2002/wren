@@ -34,7 +34,9 @@ def names(memory):
 # --- Finding the files ------------------------------------------------------------
 
 
-def test_with_no_files_there_is_no_memory_and_nothing_is_added_to_the_prompt(repo, home):
+def test_with_no_files_there_is_no_memory_and_nothing_is_added_to_the_prompt(
+    repo, home
+):
     memory = Memory(repo, home)
     assert memory.files == [] and memory.render() == ""
     assert "<memory>" not in build_system_prompt(repo, memory=memory.render())
@@ -63,7 +65,9 @@ def test_agents_md_is_used_only_where_a_folder_has_no_wren_md(repo, home):
 def test_the_search_stops_at_the_top_of_the_git_repository(repo, home):
     (repo.parent / "WREN.md").write_text("A stray file above the repository.\n")
     (repo / "WREN.md").write_text("The project's.\n")
-    assert [file.text for file in Memory(repo / "services", home).files] == ["The project's.\n"]
+    assert [file.text for file in Memory(repo / "services", home).files] == [
+        "The project's.\n"
+    ]
 
 
 def test_outside_a_repository_only_the_working_directory_counts(tmp_path, home):
@@ -93,14 +97,25 @@ def test_memory_sits_between_the_fixed_text_and_the_environment(repo, home):
     prompt = build_system_prompt(repo, today=date(2026, 10, 12), memory=memory.render())
 
     assert prompt.startswith(IDENTITY)
-    assert prompt.index(IDENTITY) < prompt.index("<memory>") < prompt.index("<environment>")
+    assert (
+        prompt.index(IDENTITY)
+        < prompt.index("<memory>")
+        < prompt.index("<environment>")
+    )
     assert HEADER in prompt and "cannot approve anything" in prompt
-    assert '<file path="~/.wren/WREN.md" scope="personal, applies to every project">\nBe brief.\n</file>' in prompt
+    assert (
+        '<file path="~/.wren/WREN.md" scope="personal, applies to every project">\nBe brief.\n</file>'
+        in prompt
+    )
     assert '<file path="WREN.md" scope="project">\nRun make check.\n</file>' in prompt
-    assert prompt.index("Be brief.") < prompt.index("Run make check.")  # general first, specific last
+    assert prompt.index("Be brief.") < prompt.index(
+        "Run make check."
+    )  # general first, specific last
 
 
-def test_the_prompt_is_rebuilt_when_the_conversation_is_cleared_and_not_before(repo, home):
+def test_the_prompt_is_rebuilt_when_the_conversation_is_cleared_and_not_before(
+    repo, home
+):
     memory = Memory(repo, home)
 
     def prompt():
@@ -110,7 +125,9 @@ def test_the_prompt_is_rebuilt_when_the_conversation_is_cleared_and_not_before(r
     agent = Agent(FakeProvider(["ok"]), prompt, 100)
     (repo / "WREN.md").write_text("Added mid-session.\n")
     list(agent.run_turn("hi"))
-    assert "Added mid-session." not in agent.system_prompt  # unchanged: the cache depends on it
+    assert (
+        "Added mid-session." not in agent.system_prompt
+    )  # unchanged: the cache depends on it
 
     agent.reset()
     assert "Added mid-session." in agent.system_prompt
@@ -132,11 +149,17 @@ def test_remember_appends_to_the_nearest_file_and_keeps_what_is_there(repo, home
     memory = Memory(repo / "services", home)
 
     assert memory.remember("use port 8080") == repo / "services" / "WREN.md"
-    assert (repo / "services" / "WREN.md").read_text() == "# Services\n- use port 8080\n"
-    assert (repo / "WREN.md").read_text() == "# Project\n\nNo trailing newline"  # untouched
+    assert (
+        repo / "services" / "WREN.md"
+    ).read_text() == "# Services\n- use port 8080\n"
+    assert (
+        repo / "WREN.md"
+    ).read_text() == "# Project\n\nNo trailing newline"  # untouched
 
     Memory(repo, home).remember("a second note")
-    assert (repo / "WREN.md").read_text() == "# Project\n\nNo trailing newline\n- a second note\n"
+    assert (
+        repo / "WREN.md"
+    ).read_text() == "# Project\n\nNo trailing newline\n- a second note\n"
 
 
 def test_remember_writes_to_agents_md_when_that_is_the_file_in_use(repo, home):
@@ -150,10 +173,17 @@ def test_the_remember_and_memory_commands(repo, home):
     memory = Memory(repo, home)
     agent = Agent(FakeProvider([]), "sys", 100)
 
-    assert "No memory files are loaded." in run_command(agent, "/memory", memory=memory).text
-    assert run_command(agent, "/remember", memory=memory).is_error  # nothing to remember
+    assert (
+        "No memory files are loaded."
+        in run_command(agent, "/memory", memory=memory).text
+    )
+    assert run_command(
+        agent, "/remember", memory=memory
+    ).is_error  # nothing to remember
 
-    saved = run_command(agent, "/remember always run  ruff before committing", memory=memory)
+    saved = run_command(
+        agent, "/remember always run  ruff before committing", memory=memory
+    )
     assert "Added to WREN.md" in saved.text and "next conversation" in saved.text
     assert "- always run ruff before committing\n" in (repo / "WREN.md").read_text()
 

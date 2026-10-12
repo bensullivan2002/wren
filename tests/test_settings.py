@@ -3,7 +3,12 @@
 import json
 
 from wren.agent import Agent
-from wren.commands import provider_choices, remember_effort, remember_model, switch_provider
+from wren.commands import (
+    provider_choices,
+    remember_effort,
+    remember_model,
+    switch_provider,
+)
 from wren.providers.fake import FakeProvider
 from wren.settings import UserDefaults
 from wren.tools import Permissions, ToolRegistry, default_tools
@@ -17,25 +22,45 @@ def test_nothing_is_saved_until_something_is(tmp_path):
 def test_a_default_is_kept_per_provider_and_survives_a_new_object(tmp_path):
     path = tmp_path / "sub" / "settings.json"  # the folder doesn't exist yet
     UserDefaults(path).save("anthropic", "claude-opus-5-5", "xhigh")
-    UserDefaults(path).save("openai", "gpt-6.1-sol", None)  # None: the model's own effort
+    UserDefaults(path).save(
+        "openai", "gpt-6.1-sol", None
+    )  # None: the model's own effort
 
     again = UserDefaults(path)
     assert again.get("anthropic") == ("claude-opus-5-5", "xhigh")
     assert again.get("openai") == ("gpt-6.1-sol", None)
-    assert not path.with_name("settings.json.tmp").exists()  # the side file was renamed into place
+    assert not path.with_name(
+        "settings.json.tmp"
+    ).exists()  # the side file was renamed into place
 
 
 def test_saving_one_provider_leaves_everything_else_in_the_file_alone(tmp_path):
     path = tmp_path / "settings.json"
-    path.write_text(json.dumps({"something": "else", "defaults": {"openai": {"model": "m", "effort": "low"}}}))
+    path.write_text(
+        json.dumps(
+            {
+                "something": "else",
+                "defaults": {"openai": {"model": "m", "effort": "low"}},
+            }
+        )
+    )
     UserDefaults(path).save("anthropic", "a", "high")
     data = json.loads(path.read_text())
-    assert data["something"] == "else" and data["defaults"]["openai"] == {"model": "m", "effort": "low"}
+    assert data["something"] == "else" and data["defaults"]["openai"] == {
+        "model": "m",
+        "effort": "low",
+    }
 
 
 def test_a_damaged_or_odd_file_means_nothing_saved_and_is_replaced_on_save(tmp_path):
     path = tmp_path / "settings.json"
-    for text in ("{not json", "[]", '{"defaults": 3}', '{"defaults": {"anthropic": "x"}}', '{"defaults": {"anthropic": {"effort": "low"}}}'):
+    for text in (
+        "{not json",
+        "[]",
+        '{"defaults": 3}',
+        '{"defaults": {"anthropic": "x"}}',
+        '{"defaults": {"anthropic": {"effort": "low"}}}',
+    ):
         path.write_text(text)
         assert UserDefaults(path).get("anthropic") is None
     UserDefaults(path).save("anthropic", "a", None)
@@ -87,12 +112,16 @@ def test_switching_provider_starts_on_the_saved_default_pair(tmp_path, monkeypat
     user.save("anthropic", "claude-sonnet-5-5", "low")
     agent = an_agent(tmp_path)
 
-    assert any("claude-sonnet-5-5" in label for label, _ in provider_choices(agent, user))
+    assert any(
+        "claude-sonnet-5-5" in label for label, _ in provider_choices(agent, user)
+    )
     switch_provider(agent, "anthropic", user=user)
     assert (agent.provider.model, agent.provider.effort) == ("claude-sonnet-5-5", "low")
 
 
-def test_switching_provider_without_saved_defaults_uses_wrens_own(tmp_path, monkeypatch):
+def test_switching_provider_without_saved_defaults_uses_wrens_own(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-not-real")
     agent = an_agent(tmp_path)
     switch_provider(agent, "anthropic")

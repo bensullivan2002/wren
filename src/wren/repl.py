@@ -24,7 +24,14 @@ from contextlib import closing
 from typing import Any, Callable, TextIO
 
 from wren import __version__
-from wren.agent import Agent, Compacted, CompactionStarted, ToolFinished, ToolStarted, TurnFinished
+from wren.agent import (
+    Agent,
+    Compacted,
+    CompactionStarted,
+    ToolFinished,
+    ToolStarted,
+    TurnFinished,
+)
 from wren.commands import (
     compaction_note,
     default_effort,
@@ -60,7 +67,14 @@ def _style(code: str) -> Callable[[str], str]:
     return lambda s: f"\033[{code}m{s}\033[0m" if _COLOR else s
 
 
-dim, bold, red, green, cyan, yellow = _style("2"), _style("1"), _style("31"), _style("32"), _style("36"), _style("33")
+dim, bold, red, green, cyan, yellow = (
+    _style("2"),
+    _style("1"),
+    _style("31"),
+    _style("32"),
+    _style("36"),
+    _style("33"),
+)
 
 # Inside an input() prompt, escape codes must be wrapped in \001...\002 so
 # readline knows they take up no space on screen. Without that, long lines
@@ -95,8 +109,12 @@ class Repl:
         # Read, never written: plain mode has no picker, so nothing here
         # makes a choice that should outlive the session.
         self.defaults = defaults
-        self.notice = notice  # something to say at startup, e.g. which session was resumed
-        self.choose_session = choose_session  # started with --resume: begin by listing saved sessions
+        self.notice = (
+            notice  # something to say at startup, e.g. which session was resumed
+        )
+        self.choose_session = (
+            choose_session  # started with --resume: begin by listing saved sessions
+        )
         self.out = out
         self._mid_line = False  # True when streamed text didn't end with a newline
 
@@ -106,12 +124,16 @@ class Repl:
     def run(self) -> None:
         provider, tools = self.agent.provider, self.agent.tools
         effort = f" ({provider.effort} effort)" if provider.effort else ""
-        self.say(f"{bold('wren')} {__version__} {dim(f'· {provider.name} · {provider.model}{effort} · {len(tools)} tools')}")
+        self.say(
+            f"{bold('wren')} {__version__} {dim(f'· {provider.name} · {provider.model}{effort} · {len(tools)} tools')}"
+        )
         self.say(dim("Type a message, /help for commands, Ctrl-D to quit."))
         if self.memory and self.memory.files:
             # Said up front, every time: these files steer the model, and in
             # a project you've just cloned you didn't write them.
-            names = ", ".join(self.memory.shown(file.path) for file in self.memory.files)
+            names = ", ".join(
+                self.memory.shown(file.path) for file in self.memory.files
+            )
             self.say(dim(f"Instructions loaded from: {names}  (/memory for details)"))
         if self.notice:
             self.say(dim(self.notice))
@@ -147,11 +169,19 @@ class Repl:
                     self.show(event)
         except KeyboardInterrupt:
             self._end_line()
-            self.say(dim("[interrupted: anything Wren had already done is kept, and it knows where it stopped]"))
+            self.say(
+                dim(
+                    "[interrupted: anything Wren had already done is kept, and it knows where it stopped]"
+                )
+            )
         except Exception as e:  # network trouble, bad API key, etc.
             self._end_line()
             self.say(red(f"error: {e}"))
-            self.say(dim("The turn stopped there. What happened before the error is kept in the conversation."))
+            self.say(
+                dim(
+                    "The turn stopped there. What happened before the error is kept in the conversation."
+                )
+            )
 
     def show(self, event: Any) -> None:
         if isinstance(event, TextDelta):
@@ -167,7 +197,9 @@ class Repl:
             # Printed without a newline, so the result can finish the line
             # (unless a permission prompt comes in between).
             headline, detail = plain_call(event.call)
-            self.say(cyan("  ▸ ") + headline + (dim(f"  {detail}") if detail else ""), end="")
+            self.say(
+                cyan("  ▸ ") + headline + (dim(f"  {detail}") if detail else ""), end=""
+            )
             self._mid_line = True
 
         elif isinstance(event, ToolFinished):
@@ -181,11 +213,17 @@ class Repl:
         elif isinstance(event, TurnFinished):
             self._end_line()
             if event.hit_step_limit:
-                self.say(red(f"[stopped after {event.steps} model calls, the limit for one turn: say 'continue' to carry on]"))
+                self.say(
+                    red(
+                        f"[stopped after {event.steps} model calls, the limit for one turn: say 'continue' to carry on]"
+                    )
+                )
             u = event.usage
             cached = f" ({u.cache_read_tokens:,} cached)" if u.cache_read_tokens else ""
             calls = f" · {event.steps} model calls" if event.steps > 1 else ""
-            self.say(dim(f"↳ {u.sent_tokens:,} in{cached} · {u.output_tokens:,} out{calls}"))
+            self.say(
+                dim(f"↳ {u.sent_tokens:,} in{cached} · {u.output_tokens:,} out{calls}")
+            )
 
         elif isinstance(event, CompactionStarted):
             self._end_line()
@@ -220,7 +258,9 @@ class Repl:
         for line in lines[:MAX_DETAIL_LINES]:
             self.say("    " + dim("│ ") + _colour_diff_line(line))
         if len(lines) > MAX_DETAIL_LINES:
-            self.say("    " + dim(f"│ … and {len(lines) - MAX_DETAIL_LINES:,} more lines"))
+            self.say(
+                "    " + dim(f"│ … and {len(lines) - MAX_DETAIL_LINES:,} more lines")
+            )
 
         choices = "[y]es / [n]o"
         if request.scope is not None:
@@ -238,13 +278,20 @@ class Repl:
                 return Decision.DENY
             if answer in ("a", "always") and request.scope is not None:
                 return Decision.ALWAYS
-            self.say(dim("    Please answer " + ("y, n or a." if request.scope is not None else "y or n.")))
+            self.say(
+                dim(
+                    "    Please answer "
+                    + ("y, n or a." if request.scope is not None else "y or n.")
+                )
+            )
 
     # --- Slash commands -----------------------------------------------------
 
     def command(self, line: str) -> bool:
         """Run a slash command. Returns False when the REPL should exit."""
-        result = run_command(self.agent, line, KEYS_HELP, self.memory, self.sessions, self.defaults)
+        result = run_command(
+            self.agent, line, KEYS_HELP, self.memory, self.sessions, self.defaults
+        )
         if result.pick_provider:
             for label, _ in provider_choices(self.agent, self.defaults):
                 self.say(f"  {label}")
@@ -264,7 +311,6 @@ class Repl:
         if result.text:
             self.say(red(result.text) if result.is_error else result.text)
         return not result.quit
-
 
     # There's no picker in plain mode: list the choices, and say how to pick one.
 
@@ -289,18 +335,30 @@ class Repl:
         usual = default_effort(self.agent)
         for level in ["default", *levels]:
             in_use = level == current or (level == "default" and current is None)
-            means = f" (which is {usual} for this model)" if level == "default" and usual else ""
+            means = (
+                f" (which is {usual} for this model)"
+                if level == "default" and usual
+                else ""
+            )
             self.say(f"  {level}{means}" + (dim("  (in use)") if in_use else ""))
         self.say(dim("Switch with /effort LEVEL"))
 
     def list_sessions(self) -> None:
-        saved = [s for s in self.sessions.saved() if s.id != self.sessions.current_id] if self.sessions else []
+        saved = (
+            [s for s in self.sessions.saved() if s.id != self.sessions.current_id]
+            if self.sessions
+            else []
+        )
         if not saved:
             self.say(dim("There are no other saved conversations for this folder."))
             return
         for session in saved[:20]:
             self.say("  " + session_label(session))
-        self.say(dim("Resume one with /resume ID (the first few characters of the id will do)"))
+        self.say(
+            dim(
+                "Resume one with /resume ID (the first few characters of the id will do)"
+            )
+        )
 
 
 def _colour_diff_line(line: str) -> str:

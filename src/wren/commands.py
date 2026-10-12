@@ -22,7 +22,13 @@ from wren.config import API_KEYS, COMPACTION_MARGIN, default_choice
 from wren.memory import Memory
 from wren.settings import UserDefaults
 from wren.sessions import SavedSession, SessionError, SessionStore
-from wren.messages import Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock
+from wren.messages import (
+    Message,
+    ReasoningBlock,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+)
 from wren.providers import PROVIDERS, make_provider
 from wren.tools import ToolError
 from wren.tools.sandbox import PROTECTED
@@ -57,7 +63,9 @@ class CommandResult:
     # Shown for reference, not part of the conversation: a front end with
     # somewhere better than the transcript to put it should use that.
     panel: bool = False
-    pick_provider: bool = False  # the front end should offer the providers to choose from
+    pick_provider: bool = (
+        False  # the front end should offer the providers to choose from
+    )
     pick_model: bool = False  # ...or the provider's models
     pick_effort: bool = False  # ...or the effort levels the current model takes
     pick_session: bool = False  # ...or this folder's saved sessions
@@ -92,19 +100,28 @@ def run_command(
     if name == "/effort":
         if not args:
             return CommandResult(pick_effort=True)
-        return CommandResult(switch_effort(agent, None if args[0].lower() == "default" else args[0].lower()))
+        return CommandResult(
+            switch_effort(
+                agent, None if args[0].lower() == "default" else args[0].lower()
+            )
+        )
     if name == "/resume":
         if sessions is None:
             return CommandResult("Sessions aren't being saved.", is_error=True)
         if not args:
             return CommandResult(pick_session=True)
         try:
-            return CommandResult(resume_session(agent, sessions, sessions.find(args[0])), resumed=True)
+            return CommandResult(
+                resume_session(agent, sessions, sessions.find(args[0])), resumed=True
+            )
         except (SessionError, ValueError) as e:
             return CommandResult(f"couldn't resume: {e}", is_error=True)
 
     if name == "/memory":
-        return CommandResult(memory.describe() if memory else "Memory files are switched off.", panel=True)
+        return CommandResult(
+            memory.describe() if memory else "Memory files are switched off.",
+            panel=True,
+        )
     if name == "/remember":
         return _remember(memory, line.partition(" ")[2].strip())
 
@@ -145,7 +162,14 @@ def _tools(agent: Agent, name: str | None) -> CommandResult:
         return CommandResult(f"no tool named {name}", is_error=True)
     spec = tool.spec()
     return CommandResult(
-        json.dumps({"name": spec.name, "description": spec.description, "input_schema": spec.input_schema}, indent=2),
+        json.dumps(
+            {
+                "name": spec.name,
+                "description": spec.description,
+                "input_schema": spec.input_schema,
+            },
+            indent=2,
+        ),
         panel=True,
     )
 
@@ -159,7 +183,9 @@ def missing_key(provider_name: str) -> str | None:
     return key[0] if key is not None and not os.environ.get(key[0]) else None
 
 
-def provider_choices(agent: Agent, user: UserDefaults | None = None) -> list[tuple[str, str]]:
+def provider_choices(
+    agent: Agent, user: UserDefaults | None = None
+) -> list[tuple[str, str]]:
     """Each provider, with a note on where it stands: (label, name)."""
     rows = []
     for name in PROVIDERS:
@@ -193,7 +219,10 @@ def switch_provider(
         return f"Already using {name}.", True
     variable = missing_key(name)
     if variable:
-        return f"{name} needs an API key: set {variable} in your shell and start Wren again.", False
+        return (
+            f"{name} needs an API key: set {variable} in your shell and start Wren again.",
+            False,
+        )
     default_model, default_level = default_choice(name, user)
     if model is None:
         model = agent.model_last_used_with(name) or default_model
@@ -286,9 +315,13 @@ def effort_name(agent: Agent, explain: bool = False) -> str:
         return "the model's default"
     default = default_effort(agent)
     if default is None:
-        return f"the model's default (Wren doesn't know what that is for {provider.model})"
+        return (
+            f"the model's default (Wren doesn't know what that is for {provider.model})"
+        )
     source = getattr(provider, "default_effort_source", "")
-    return f"the model's default, which is {default} for {provider.model}" + (f"  ({source})" if source else "")
+    return f"the model's default, which is {default} for {provider.model}" + (
+        f"  ({source})" if source else ""
+    )
 
 
 def default_effort(agent: Agent) -> str | None:
@@ -308,7 +341,11 @@ def _effort_evidence(agent: Agent) -> list[str]:
     name = agent.provider.name
     if call is None:
         return ["Last request: (none yet)"]
-    sent = f"effort {call.effort_sent}" if call.effort_sent else "no effort setting, so the model's default applied"
+    sent = (
+        f"effort {call.effort_sent}"
+        if call.effort_sent
+        else "no effort setting, so the model's default applied"
+    )
     reported = (
         f"{call.effort_reported}  (as reported by {name})"
         if call.effort_reported is not None
@@ -328,7 +365,10 @@ def effort_list(agent: Agent) -> tuple[list[str], str]:
     try:
         levels = agent.provider.efforts()
     except Exception as e:  # no network, a bad key, a model the API doesn't know...
-        return [], f"couldn't find out which effort levels {agent.provider.model} takes: {e}. You can still set one: /effort LEVEL"
+        return (
+            [],
+            f"couldn't find out which effort levels {agent.provider.model} takes: {e}. You can still set one: /effort LEVEL",
+        )
     if not levels:
         return [], (
             f"{agent.provider.model} has no separate effort setting. "
@@ -342,7 +382,10 @@ def model_list(agent: Agent) -> tuple[list[str], str]:
     try:
         return agent.provider.models(), ""
     except Exception as e:  # no network, a bad key...
-        return [], f"couldn't list the models: {e}. You can still switch by name: /model NAME"
+        return (
+            [],
+            f"couldn't list the models: {e}. You can still switch by name: /model NAME",
+        )
 
 
 def resume_session(agent: Agent, sessions: SessionStore, session: SavedSession) -> str:
@@ -367,11 +410,17 @@ def resume_session(agent: Agent, sessions: SessionStore, session: SavedSession) 
         # Carry on with the model and effort it was using.
         if (session.model, session.effort) != (provider.model, provider.effort):
             provider.model, provider.effort = session.model, session.effort
-            sessions.provider, sessions.model, sessions.effort = provider.name, session.model, session.effort
+            sessions.provider, sessions.model, sessions.effort = (
+                provider.name,
+                session.model,
+                session.effort,
+            )
             note += f" Using {session.model}{effort}, as it was."
     elif session.model:
         # It was with a different provider. Go back to that one if we can.
-        _, switched = switch_provider(agent, session.provider, session.model, session.effort)
+        _, switched = switch_provider(
+            agent, session.provider, session.model, session.effort
+        )
         if switched:
             note += f" Back on {session.provider}, using {session.model}{effort}, as it was."
         else:
@@ -397,7 +446,10 @@ def _remember(memory: Memory | None, note: str) -> CommandResult:
     if memory is None:
         return CommandResult("Memory files are switched off.", is_error=True)
     if not note:
-        return CommandResult("Say what to remember: /remember run the tests with make check", is_error=True)
+        return CommandResult(
+            "Say what to remember: /remember run the tests with make check",
+            is_error=True,
+        )
     try:
         path = memory.remember(note)
     except (OSError, ToolError) as e:
@@ -430,7 +482,9 @@ def _usage(agent: Agent) -> str:
 def context_meter(agent: Agent) -> str:
     """How big the conversation is, against the budget: "12,400 tokens, 8% of 150,000"."""
     size = f"{agent.context_tokens:,} tokens"
-    budget = agent.context_budget  # read once: a worker may look up the window meanwhile
+    budget = (
+        agent.context_budget
+    )  # read once: a worker may look up the window meanwhile
     if not budget:
         return size
     return f"{size}, {budget_used(agent, budget)} of the {budget:,} budget"
@@ -452,7 +506,9 @@ def _budget_explained(agent: Agent) -> list[str]:
     budget, window, cap = agent.context_budget, agent.context_window, agent.context_cap
     source = getattr(agent.provider, "context_window_source", "")
     if window:
-        shown = f"Context window: {window:,} tokens" + (f"  ({source})" if source else "")
+        shown = f"Context window: {window:,} tokens" + (
+            f"  ({source})" if source else ""
+        )
     elif agent.context_window_checked:
         shown = f"Context window: not known for {agent.provider.model}"
     else:
@@ -499,7 +555,9 @@ def _auto(agent: Agent) -> str:
 
 def _auto_rules() -> str:
     """What auto mode allows, in words. Shared by /auto and /permissions."""
-    protected = ", ".join(name for name in PROTECTED if name != ".git")  # Wren never writes .git at all
+    protected = ", ".join(
+        name for name in PROTECTED if name != ".git"
+    )  # Wren never writes .git at all
     if not sandbox_available():
         return (
             "Edits to files in this project go ahead without asking. There's no sandbox on this system, "
@@ -538,10 +596,14 @@ def _describe(message: Message) -> str:
         if isinstance(block, TextBlock):
             parts.append(block.text)
         elif isinstance(block, ToolUseBlock):
-            parts.append(f"<tool_use id={block.id} {block.name} {json.dumps(block.input)}>")
+            parts.append(
+                f"<tool_use id={block.id} {block.name} {json.dumps(block.input)}>"
+            )
         elif isinstance(block, ToolResultBlock):
             error = " error" if block.is_error else ""
-            parts.append(f"<tool_result for={block.tool_use_id}{error}> {shorten(block.content, 300)!r}")
+            parts.append(
+                f"<tool_result for={block.tool_use_id}{error}> {shorten(block.content, 300)!r}"
+            )
         elif isinstance(block, ReasoningBlock):
             parts.append("<reasoning: kept to send back to the model, not readable>")
     return "\n".join(parts)
@@ -563,7 +625,9 @@ def plain_call(call: ToolUseBlock) -> tuple[str, str]:
     path, pattern = args.get("path"), args.get("pattern")
     if call.name == "shell" and isinstance(args.get("command"), str):
         said = args.get("description")
-        headline = shorten(" ".join(str(said).split()), 110) if said else "Run a command"
+        headline = (
+            shorten(" ".join(str(said).split()), 110) if said else "Run a command"
+        )
         return headline, "$ " + shorten(" ".join(args["command"].split()), 200)
     if call.name == "read_file" and path:
         start = args.get("offset")
@@ -571,7 +635,9 @@ def plain_call(call: ToolUseBlock) -> tuple[str, str]:
     if call.name == "list_files":
         return f"List {pattern or '*'}" + (f" in {path}" if path else ""), ""
     if call.name == "search" and pattern:
-        return f"Search for {shorten(repr(pattern), 60)}" + (f" in {path}" if path else ""), ""
+        return f"Search for {shorten(repr(pattern), 60)}" + (
+            f" in {path}" if path else ""
+        ), ""
     if call.name == "edit_file" and path:
         return f"Edit {path}", ""
     if call.name == "write_file" and path:
@@ -581,7 +647,9 @@ def plain_call(call: ToolUseBlock) -> tuple[str, str]:
 
 def format_call(call: ToolUseBlock) -> str:
     """A tool call written like a Python call: read_file(path='app.py')."""
-    args = ", ".join(f"{key}={shorten(repr(value), 60)}" for key, value in call.input.items())
+    args = ", ".join(
+        f"{key}={shorten(repr(value), 60)}" for key, value in call.input.items()
+    )
     return f"{call.name}({args})"
 
 
