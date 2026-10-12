@@ -11,6 +11,8 @@ import pytest
 from pydantic import Field
 
 from wren.agent import Agent
+from wren.commands import plain_call, run_command
+from wren.messages import ToolUseBlock
 from wren.providers.fake import FakeProvider
 from wren.tools import (
     Decision,
@@ -21,15 +23,13 @@ from wren.tools import (
     ToolRegistry,
     ToolResult,
     default_tools,
+    sandbox,
 )
 from wren.tools import list_files as list_files_module
-from wren.tools import sandbox
 from wren.tools import search as search_module
 from wren.tools import shell as shell_module
 from wren.tools.files import glob_to_regex
 from wren.tools.registry import DECLINED
-from wren.commands import plain_call, run_command
-from wren.messages import ToolUseBlock
 from wren.tools.shell import command_word
 
 
@@ -882,7 +882,7 @@ def test_a_sandboxed_command_writes_only_in_the_project(
 ):
     # The project is itself in a temp folder, and commands may write to
     # those, so leave them out: then "elsewhere" really is somewhere else.
-    monkeypatch.setattr(sandbox, "temp_dirs", lambda: [])
+    monkeypatch.setattr(sandbox, "temp_dirs", list)
     elsewhere = tmp_path_factory.mktemp("elsewhere")
     ok(tools.run("shell", {"description": WHY, "command": "touch inside.txt"}))
     assert (project / "inside.txt").exists()

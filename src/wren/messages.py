@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 Role = Literal["user", "assistant"]
 
@@ -75,7 +75,7 @@ class ReasoningBlock:
     data: dict[str, Any]
 
 
-Block = Union[TextBlock, ToolUseBlock, ToolResultBlock, ReasoningBlock]
+Block = TextBlock | ToolUseBlock | ToolResultBlock | ReasoningBlock
 
 
 # --- Messages -------------------------------------------------------------
@@ -277,4 +277,4 @@ class Completed:
     effort_reported: str | None = None
 
 
-StreamEvent = Union[TextDelta, Completed]
+StreamEvent = TextDelta | Completed

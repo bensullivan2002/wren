@@ -9,9 +9,9 @@ from types import SimpleNamespace
 from anthropic.types import Message as ApiMessage
 
 from wren.messages import (
-    ReasoningBlock,
     Completed,
     Message,
+    ReasoningBlock,
     TextBlock,
     TextDelta,
     ToolResultBlock,

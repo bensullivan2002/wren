@@ -17,10 +17,10 @@ import pytest
 from textual.widgets import Markdown, Static
 
 from wren.agent import INTERRUPTED_NOTE, Agent
+from wren.config import Config
 from wren.exchange import ExchangeRate
 from wren.memory import Memory
 from wren.messages import Message, TextBlock, ToolUseBlock, history_problems
-from wren.config import Config
 from wren.providers.fake import FakeProvider
 from wren.sessions import SessionStore
 from wren.settings import UserDefaults
@@ -234,7 +234,7 @@ async def test_a_24_row_terminal_fits_a_full_prompt_above_the_footer(tmp_path):
 async def test_existing_history_opens_with_the_same_pinned_logo(tmp_path):
     app = make_app(tmp_path, ["An earlier answer"])
     list(app.agent.run_turn("An earlier question"))
-    async with app.run_test(size=(80, 30)) as pilot:  # tall enough for the full bird
+    async with app.run_test(size=(80, 30)):  # tall enough for the full bird
         assert str(app.query_one("#logo", Static).content) == TERMINAL_LOGO
         assert not app.transcript.query("#logo")
         assert "An earlier answer" in screen_text(app)

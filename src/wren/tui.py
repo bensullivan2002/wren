@@ -37,12 +37,12 @@ import threading
 from contextlib import closing
 from importlib.resources import files
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from rich.text import Text
 from textual import events, on, work
 from textual.app import App, ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.containers import Vertical, VerticalScroll
 from textual.geometry import Size
 from textual.message import Message as TextualMessage
@@ -61,8 +61,8 @@ from wren.commands import (
     compaction_note,
     default_effort,
     effort_list,
-    plain_call,
     model_list,
+    plain_call,
     provider_choices,
     remember_effort,
     remember_model,
@@ -190,7 +190,7 @@ class PermissionPrompt(Widget, can_focus=True):
     a key press goes to whichever widget has the focus.
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("y", "answer('allow')", "Yes"),
         Binding("a", "answer('always')", "Always"),
         Binding("n", "answer('deny')", "No"),
@@ -272,7 +272,7 @@ class Picker(OptionList):
     Space keeps it to this session.
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding(
             "space", "select_for_session", "Choose for this session only", show=False
         )
@@ -390,7 +390,7 @@ class WrenApp(App):
     .picker { height: auto; border: none; padding: 0; background: transparent; }
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("escape", "stop", "Stop Wren", priority=True),
         Binding("ctrl+d", "quit", "Quit"),
     ]
@@ -715,7 +715,7 @@ class WrenApp(App):
                     if self._stop.is_set():
                         break
                     self._on_app_thread(self.show_event, event)
-        except Exception as e:  # network trouble, a bad API key...
+        except Exception as e:  # noqa: BLE001 - network trouble, a bad API key...
             error = e
         self._on_app_thread(self.turn_ended, error)
 
@@ -729,7 +729,7 @@ class WrenApp(App):
                     if self._stop.is_set():
                         break
                     self._on_app_thread(self.show_event, event)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - shown to you, as for a turn
             error = e
         self._on_app_thread(self.turn_ended, error)
 
@@ -1025,7 +1025,7 @@ class WrenApp(App):
     def look_up_rate(self) -> None:
         """Fetch the day's exchange rate. ON A WORKER THREAD: it's a network
         call. The footer reads the new rate at its next redraw."""
-        assert self.exchange is not None
+        assert self.exchange is not None  # noqa: S101 - only started when there is one
         self.exchange.look_up()
 
     def _maybe_look_up_window(self) -> None:

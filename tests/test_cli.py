@@ -9,8 +9,8 @@ from datetime import date
 from pathlib import Path
 
 from wren.config import API_KEYS, DEFAULT_MODEL, Config
-from wren.settings import UserDefaults
 from wren.prompts import build_system_prompt
+from wren.settings import UserDefaults
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 EMPTY_HOME = Path(tempfile.mkdtemp(prefix="wren-test-home-"))
@@ -46,6 +46,7 @@ def wren(*args, stdin="", cwd=None, env_extra=None):
         env=env,
         cwd=cwd,
         timeout=30,
+        check=False,  # the tests check the exit code themselves
     )
 
 

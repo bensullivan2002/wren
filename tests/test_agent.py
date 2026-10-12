@@ -10,7 +10,6 @@ from wren.agent import (
     Compacted,
     CompactionStarted,
     ToolFinished,
-    ToolStarted,
     TurnFinished,
 )
 from wren.messages import (
@@ -370,15 +369,15 @@ def test_a_reply_that_is_only_reasoning_gets_a_placeholder_after_it():
 
 
 def test_the_agent_tracks_how_big_the_conversation_is():
-    agent, provider = make_agent(["one"])
+    agent, _provider = make_agent(["one"])
     assert agent.context_tokens == 0
     events = run(agent, "hi")
-    used = [e for e in events if isinstance(e, Completed)][0].usage
+    used = next(e for e in events if isinstance(e, Completed)).usage
     assert agent.context_tokens == used.sent_tokens + used.output_tokens > 0
 
 
 def test_compact_replaces_the_history_with_the_models_summary():
-    agent, provider = make_agent(
+    agent, _provider = make_agent(
         ["first reply", "second reply", "## What the user wants\nA summary."]
     )
     run(agent, "one")
@@ -416,7 +415,7 @@ def test_the_summary_request_reuses_the_same_prefix_so_it_can_be_cached():
 
 
 def test_compaction_happens_by_itself_between_turns_once_over_budget():
-    agent, provider = make_agent(["a reply", "the summary", "an answer"])
+    agent, _provider = make_agent(["a reply", "the summary", "an answer"])
     agent.context_cap = 10  # tiny, so one turn is enough to pass it
     run(agent, "one")
     events = run(agent, "two")
@@ -445,7 +444,7 @@ def test_a_cap_of_zero_means_no_automatic_compaction():
 
 
 def test_the_budget_is_the_window_less_room_for_a_reply_and_a_margin():
-    agent, provider = make_agent(["a"])  # max_tokens is 100
+    agent, _provider = make_agent(["a"])  # max_tokens is 100
     assert (
         agent.context_window is None and agent.context_budget == 0
     )  # not looked up yet
@@ -455,7 +454,7 @@ def test_the_budget_is_the_window_less_room_for_a_reply_and_a_margin():
 
 
 def test_the_cap_can_only_lower_the_budget():
-    agent, provider = make_agent(["a"])
+    agent, _provider = make_agent(["a"])
     run(agent, "one")
     agent.context_cap = 50_000
     assert agent.context_budget == 50_000
@@ -485,7 +484,7 @@ def test_compaction_happens_once_the_conversation_nears_the_window():
 
 
 def test_a_change_of_model_drops_the_old_window_until_the_new_one_is_looked_up():
-    agent, provider = make_agent(["a", "b"])
+    agent, _provider = make_agent(["a", "b"])
     run(agent, "one")
     agent.set_model("demo-large")  # the fake's model with no known window
     assert not agent.context_window_checked and agent.context_budget == 0
@@ -533,7 +532,7 @@ def test_an_answer_that_arrives_after_the_model_changed_is_not_kept():
     ],
 )
 def test_a_failed_compaction_leaves_the_history_exactly_as_it_was(bad_summary, problem):
-    agent, provider = make_agent(["a reply"] + ([bad_summary] if bad_summary else []))
+    agent, _provider = make_agent(["a reply"] + ([bad_summary] if bad_summary else []))
     run(agent, "one")
     before = list(agent.messages)
     result = list(agent.compact())[-1]
@@ -543,7 +542,7 @@ def test_a_failed_compaction_leaves_the_history_exactly_as_it_was(bad_summary, p
 
 
 def test_a_failed_automatic_compaction_does_not_stop_the_turn():
-    agent, provider = make_agent(
+    agent, _provider = make_agent(
         ["a reply", Message("assistant", [TextBlock(" ")]), "an answer"]
     )
     agent.context_cap = 10
@@ -554,7 +553,7 @@ def test_a_failed_automatic_compaction_does_not_stop_the_turn():
 
 
 def test_abandoning_a_compaction_changes_nothing():
-    agent, provider = make_agent(["a reply", "a summary"])
+    agent, _provider = make_agent(["a reply", "a summary"])
     run(agent, "one")
     with closing(agent.compact()) as events:
         next(events)  # CompactionStarted, then walk away
@@ -563,7 +562,7 @@ def test_abandoning_a_compaction_changes_nothing():
 
 def test_there_must_be_something_to_compact():
     agent, _ = make_agent([])
-    assert "nothing to compact" in list(agent.compact())[0].error
+    assert "nothing to compact" in next(iter(agent.compact())).error
 
 
 def test_compaction_drops_reasoning_and_counts_its_own_cost():

@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import time
 from collections import Counter
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from wren.agent import Compacted, ToolFinished, ToolStarted
 from wren.messages import Completed, Prices, TextDelta, ToolUseBlock, Usage
@@ -207,5 +208,5 @@ def prices_of(provider: Provider) -> Prices | None:
     know them, or has no way to say (a provider written before prices were)."""
     try:
         return provider.prices()
-    except Exception:
+    except Exception:  # noqa: BLE001 - the footer shows £? rather than fail
         return None

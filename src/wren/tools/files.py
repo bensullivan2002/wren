@@ -7,8 +7,8 @@ from __future__ import annotations
 import difflib
 import os
 import re
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from wren.tools.base import ToolContext, ToolError
 from wren.tools.sandbox import PROTECTED

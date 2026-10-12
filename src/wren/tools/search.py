@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import fnmatch
 import re
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from pydantic import Field
 
@@ -46,7 +46,7 @@ class Search(Tool):
         try:
             regex = re.compile(args.pattern, re.IGNORECASE if args.ignore_case else 0)
         except re.error as e:
-            raise ToolError(f"Invalid regular expression {args.pattern!r}: {e}.")
+            raise ToolError(f"Invalid regular expression {args.pattern!r}: {e}.") from e
 
         base = resolve(ctx, args.path)
         if not base.exists():

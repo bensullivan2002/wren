@@ -24,11 +24,11 @@ import json
 import os
 import tempfile
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-from typing import Callable
 
 RATE_URL = "https://api.frankfurter.dev/v1/latest?base=USD&symbols=GBP"
 SOURCE = "European Central Bank reference rate, via frankfurter.dev"
@@ -52,7 +52,7 @@ def fetch_rate() -> tuple[Decimal, str]:
     """Ask Frankfurter for the rate: pounds per dollar, and the date it's for.
     Blocks for up to TIMEOUT seconds, and raises one of LOOKUP_FAILED."""
     request = urllib.request.Request(RATE_URL, headers={"User-Agent": "wren"})
-    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # noqa: S310 - a fixed https URL
         data = json.load(response)
     # str() first: Decimal(0.75555), from a float, would carry the float's
     # binary error along (0.755549999...).
@@ -127,7 +127,7 @@ class ExchangeRate:
         # Write to a temporary file, then rename it over the old one. A
         # rename is all-or-nothing, so two Wrens starting at once, or one
         # killed half-way, can't leave a half-written file.
-        assert self.rate is not None
+        assert self.rate is not None  # noqa: S101 - only called once a rate is set
         data = {
             "gbp_per_usd": str(
                 self.rate.gbp_per_usd

@@ -29,8 +29,8 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Iterator, Sequence
 from decimal import Decimal
-from typing import Iterator, Sequence
 
 from wren.messages import (
     Completed,

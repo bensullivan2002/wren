@@ -20,8 +20,6 @@ from datetime import datetime
 from wren.agent import Agent, Compacted
 from wren.config import API_KEYS, COMPACTION_MARGIN, default_choice
 from wren.memory import Memory
-from wren.settings import UserDefaults
-from wren.sessions import SavedSession, SessionError, SessionStore
 from wren.messages import (
     Message,
     ReasoningBlock,
@@ -30,6 +28,8 @@ from wren.messages import (
     ToolUseBlock,
 )
 from wren.providers import PROVIDERS, make_provider
+from wren.sessions import SavedSession, SessionError, SessionStore
+from wren.settings import UserDefaults
 from wren.tools import ToolError
 from wren.tools.sandbox import PROTECTED
 from wren.tools.sandbox import available as sandbox_available
@@ -230,7 +230,7 @@ def switch_provider(
             effort = default_level
     try:
         provider = make_provider(name, model, effort)
-    except Exception as e:  # the SDK refused to start, for whatever reason
+    except Exception as e:  # noqa: BLE001 - the SDK refused to start, for whatever reason
         return f"couldn't start {name}: {e}", False
     agent.set_provider(provider)
     note = f"Now using {name}, with {provider.model}."
@@ -327,7 +327,7 @@ def effort_name(agent: Agent, explain: bool = False) -> str:
 def default_effort(agent: Agent) -> str | None:
     try:
         return agent.provider.default_effort()
-    except Exception:
+    except Exception:  # noqa: BLE001 - no network, a bad key...: shown as unknown
         return None
 
 
@@ -354,8 +354,10 @@ def _effort_evidence(agent: Agent) -> list[str]:
     return [
         f"Last request was sent with: {sent}  (Wren's record)",
         f"Effort in the last reply: {reported}",
-        f"Thinking in the last reply: {call.usage.thinking_tokens:,} of {call.usage.output_tokens:,} output tokens"
-        f"  (as reported by {name}; more effort usually means more)",
+        (
+            f"Thinking in the last reply: {call.usage.thinking_tokens:,} of {call.usage.output_tokens:,} output tokens"
+            f"  (as reported by {name}; more effort usually means more)"
+        ),
     ]
 
 
@@ -364,7 +366,7 @@ def effort_list(agent: Agent) -> tuple[list[str], str]:
     takes none, or they couldn't be fetched."""
     try:
         levels = agent.provider.efforts()
-    except Exception as e:  # no network, a bad key, a model the API doesn't know...
+    except Exception as e:  # noqa: BLE001 - no network, a bad key, a model the API doesn't know...
         return (
             [],
             f"couldn't find out which effort levels {agent.provider.model} takes: {e}. You can still set one: /effort LEVEL",
@@ -381,7 +383,7 @@ def model_list(agent: Agent) -> tuple[list[str], str]:
     """The provider's models, and a problem to report if they couldn't be fetched."""
     try:
         return agent.provider.models(), ""
-    except Exception as e:  # no network, a bad key...
+    except Exception as e:  # noqa: BLE001 - no network, a bad key...
         return (
             [],
             f"couldn't list the models: {e}. You can still switch by name: /model NAME",

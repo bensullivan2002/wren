@@ -8,8 +8,9 @@ code, means they can be unit-tested without an API key.
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 from decimal import Decimal
-from typing import Any, Iterator, Sequence
+from typing import Any
 
 import anthropic
 

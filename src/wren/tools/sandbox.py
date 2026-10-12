@@ -85,7 +85,7 @@ def command(line: str, root: Path) -> list[str]:
 def temp_dirs() -> list[str]:
     """The temporary folders commands may write to. Compilers, test runners
     and package tools all expect to."""
-    return [tempfile.gettempdir(), "/tmp"]
+    return [tempfile.gettempdir(), "/tmp"]  # noqa: S108 - tools write there, so commands may
 
 
 def _params(root: Path) -> dict[str, str]:

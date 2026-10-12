@@ -46,7 +46,7 @@ import shlex
 import signal
 import subprocess
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from pydantic import Field
 
@@ -225,7 +225,7 @@ def _run(
     Returns (output, exit code, why it was stopped early: "timeout",
     "cancelled", or None if it finished)."""
     posix = os.name == "posix"
-    process = subprocess.Popen(
+    process = subprocess.Popen(  # noqa: S603 - running the command is the point; you approved it
         command,
         shell=isinstance(command, str),
         cwd=cwd,

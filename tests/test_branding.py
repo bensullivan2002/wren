@@ -4,12 +4,12 @@ These are asset integrity tests, not claims about aesthetic quality. They
 use only the standard library and never regenerate files during a test.
 """
 
-from importlib.resources import files
-from pathlib import Path
 import runpy
 import struct
 import xml.etree.ElementTree as ET
 import zlib
+from importlib.resources import files
+from pathlib import Path
 
 import pytest
 
@@ -120,7 +120,7 @@ def test_ascii_is_a_proportion_correct_fallback():
     data = (ASSETS / "wren-ascii.txt").read_bytes()
     rows = data.decode("ascii").splitlines()
     assert len(rows) == 14  # empty top/bottom border rows are omitted
-    for expected, row in zip(PIXELS[1:-1], rows):
+    for expected, row in zip(PIXELS[1:-1], rows, strict=True):
         assert len(row) <= 32
         assert row.ljust(32) == "".join(
             "##" if cell == "#" else "  " for cell in expected

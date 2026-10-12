@@ -12,7 +12,8 @@ checker").
 
 from __future__ import annotations
 
-from typing import Iterator, Protocol, Sequence
+from collections.abc import Iterator, Sequence
+from typing import Protocol
 
 from wren.messages import Message, Prices, StreamEvent, ToolSpec
 

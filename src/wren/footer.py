@@ -371,7 +371,7 @@ def git_state(root: Path) -> GitState | None:
     """
     try:
         result = subprocess.run(
-            [
+            [  # noqa: S607 - git from the PATH, as in your terminal
                 "git",
                 "-c",
                 "core.fsmonitor=false",
@@ -386,6 +386,7 @@ def git_state(root: Path) -> GitState | None:
             errors="replace",
             timeout=5,
             env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+            check=False,  # a failure is read from returncode below
         )
     except (OSError, subprocess.SubprocessError):  # no git, or it took too long
         return None

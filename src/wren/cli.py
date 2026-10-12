@@ -24,8 +24,8 @@ from pathlib import Path
 
 from wren import __version__
 from wren.agent import Agent
-from wren.config import API_KEYS, Config
 from wren.commands import resume_session
+from wren.config import API_KEYS, Config
 from wren.memory import Memory
 from wren.prompts import build_system_prompt
 from wren.providers import PROVIDERS, make_provider

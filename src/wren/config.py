@@ -16,8 +16,8 @@ profile); your saved default (settings.py) is what you last chose to keep.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 from wren.settings import UserDefaults
 

@@ -33,9 +33,9 @@ driving it (a front end) decides how to show them.
 from __future__ import annotations
 
 import itertools
+from collections.abc import Callable, Generator, Iterator
 from contextlib import closing
 from dataclasses import dataclass, field
-from typing import Callable, Generator, Iterator, Union
 
 from wren.config import COMPACTION_MARGIN, DEFAULT_MAX_STEPS
 from wren.messages import (
@@ -121,15 +121,15 @@ class Compacted:
     usage: Usage = field(default_factory=Usage)
 
 
-AgentEvent = Union[
-    TextDelta,
-    Completed,
-    ToolStarted,
-    ToolFinished,
-    TurnFinished,
-    CompactionStarted,
-    Compacted,
-]
+AgentEvent = (
+    TextDelta
+    | Completed
+    | ToolStarted
+    | ToolFinished
+    | TurnFinished
+    | CompactionStarted
+    | Compacted
+)
 
 
 class Agent:
@@ -374,7 +374,7 @@ class Agent:
             return
         try:
             window = self.provider.context_window()
-        except Exception:
+        except Exception:  # noqa: BLE001 - any failure leaves the window unknown
             return  # unknown for now; no automatic compaction until it's known
         if (
             self.provider.name,
@@ -470,7 +470,7 @@ class Agent:
                 raise RuntimeError("the model didn't write a summary")
             if completed.stop_reason == "max_tokens":
                 raise RuntimeError("the summary was cut off by the max_tokens limit")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - compaction fails safe (D47)
             if completed is not None and self.journal is not None:
                 self.journal.spent(
                     completed.usage, before

@@ -709,3 +709,66 @@ Auto mode switches on and off mid-conversation, but the system prompt and the to
 
 `/auto` switches auto mode on or off, in both front ends. The app's footer shows `auto: on` in yellow, and `/permissions` describes what auto mode allows. Like "always" answers (D23), it's forgotten on exit and isn't restored with a session.
 *Not chosen, for now:* a `--auto` flag or `WREN_AUTO` (you want one, as a separate piece of work: [issue #9](https://github.com/bensullivan2002/wren/issues/9)). A saved default (a setting that removes questions in every project, including repositories you've only just cloned).
+
+### D108. CI on GitHub Actions: lint, a dependency audit, and the tests on Linux and macOS
+*[Issue #11](https://github.com/bensullivan2002/wren/issues/11) · you (the checks and the matrix) · design (the details)*
+
+`.github/workflows/ci.yml` runs on every pull request, every push to `main`, weekly, and on demand. Its jobs: lint and format (the pre-commit hooks, D112), a dependency audit (D111), and the tests on Ubuntu and macOS, each with Python 3.10 and 3.14. It installs from `uv.lock` (`--locked` fails if the lock is out of date), so CI tests the versions you develop against.
+*Why macOS:* the sandbox's tests (step 9) skip anywhere else. *Why two Pythons:* the oldest Wren supports catches newer syntax slipping in, and the newest catches deprecations; the ones between rarely fail alone. Runs are free for a public repository, macOS included.
+*Design details:* the token is read-only. Actions are pinned to a commit, with the release in a comment, because a tag can be moved to other code. A newer push cancels the run it replaces. Jobs time out after 10 or 15 minutes (a hung UI test would otherwise hold a runner for six hours), and `faulthandler_timeout` prints where a hang is.
+*Not chosen:* every Python from 3.10 to 3.14 (ten test jobs for little more). Linux only (the sandbox untested). tox or nox (a second way to describe environments, when uv has one).
+*Unknown until the first run:* whether GitHub's macOS runners allow `sandbox-exec`.
+
+### D109. Ruff lints and formats, at its defaults; the code was reformatted once
+*Issue #11 · you*
+
+Ruff's formatter (Black's style, 88 columns) and its default lint rules, plus bugbear (`B`, likely bugs) and bandit (`S`, security). Ruff's version is pinned in `.pre-commit-config.yaml`. The reformat changed 40 Python files and is a commit of its own, listed in `.git-blame-ignore-revs`, so blame shows the change behind a line rather than the reformat.
+*Why:* one fast tool in place of Black, isort, flake8 and bandit. 88 columns is the common default, and short lines read better on a phone.
+*Not chosen:* 120 columns (closer to how the code was written: 29 files reformatted rather than 40). Linting without a format check (no churn, but nothing keeps the style consistent).
+*Cost:* a large one-off diff. Merge with a merge commit, as usual: a squash or rebase changes the hash the ignore file names. Ruff's default rules change between versions, so upgrading it (`pre-commit autoupdate`) can bring new findings.
+
+### D110. Lint findings are fixed, or ignored on their line with a reason
+*Issue #11 · you (the rule) · design (each case)*
+
+Ruff found 102. Ruff fixed 41 itself (import order, and `typing` imports that now live in `collections.abc`). With its more cautious fixes, 28 unpacked-but-unused test variables became `_name` and 2 `[...][0]` became `next(...)`. 14 were fixed by hand: `raise ... from e`, `zip(..., strict=True)`, `ClassVar` on Textual's `BINDINGS`, `X | Y` for `Union[X, Y]`, an explicit `check=False`. The other 17 are deliberate, and say why with `# noqa: CODE - reason`:
+- 11 broad `except Exception`, each at a boundary where any failure must be reported rather than crash Wren: a provider's SDK, a worker thread, a tool (D18).
+- The shell tool running its command (its job, and you approved it), `/tmp` among the sandbox's writable folders (D103), the exchange rate's fixed https URL, `git` found on the PATH, and two asserts that state an invariant.
+
+Tests and the logo generator are exempt from bandit's rules: they assert, run commands and use fixed paths on purpose.
+*Not chosen:* switching rules off project-wide (new code would go unchecked). Narrowing the broad catches (an SDK's exceptions aren't a closed list).
+
+### D111. Security: bandit's rules, a dependency audit, and Dependabot
+*Issue #11 · you (what) · design (how)*
+
+- Ruff's `S` rules (bandit's checks) on `src/` (D109, D110).
+- `pip-audit` checks every package in `uv.lock`, dev tools included, against PyPI's records of known vulnerabilities. It runs with CI, and weekly so that a newly published one shows up in a quiet week.
+- Dependabot opens a weekly pull request for the Python packages and another for the actions. It waits a week after a release before proposing it, since a hijacked release is usually pulled within days.
+
+*Repository settings, not files (yours to switch on, free on a public repository):* CodeQL's default setup, secret scanning with push protection, Dependabot alerts and security updates.
+*Not chosen:* the standalone `bandit` (ruff's `S` rules are the same checks, without a second tool). The hook versions in `.pre-commit-config.yaml` aren't left to Dependabot: `pre-commit autoupdate` updates them, deliberately (D109's cost).
+
+### D112. pre-commit runs the quick checks on each commit; CI runs the same list
+*Issue #11 · you*
+
+`.pre-commit-config.yaml` lists ruff (lint with fixes, then format) and some hygiene checks: trailing whitespace, a final newline, valid YAML and TOML, leftover merge-conflict markers, files over 500 kB. After `pre-commit install` they run on the files in each commit, and CI's lint job runs them on every file. It's one list, so your machine and CI can't disagree.
+*No tests in the hook:* a hook should take a second or two, or it gets skipped (`--no-verify`). The tests run in CI.
+*Not chosen:* pre-commit.ci (a hosted service that pushes fixes to pull requests: an outside app with write access). A hand-written git hook (no pinned versions, nothing shared with CI).
+
+### D113. Ruff leaves Markdown alone
+*Issue #11 · design*
+
+Ruff 0.17 also formats Python code blocks inside Markdown, and wanted to rewrite the snippets throughout `docs/`. `extend-exclude = ["*.md"]` stops it.
+*Why:* the snippets are laid out by hand for reading (aligned comments, short calls, `...` for what's left out), and each journal entry records its step as it was. Reformatted, they were longer and no clearer.
+*Not chosen:* formatting them (consistent with the code, but it rewrites finished entries).
+*Cost:* a snippet's style can differ from the code's. That was already true, since snippets are excerpts.
+
+### D114. Locally, run the tests for what changed; CI runs them all
+*Issue #11 · you*
+
+A session runs the tests for the code it changed (the matching `tests/test_<module>.py`, or `-k`) and leaves the full suite to CI, checking `gh pr checks` before merging. It saves the time, and the tokens, of running and reading the whole suite each time. CI catches what a narrow run misses, as long as nothing merges with CI failing: making CI a required check on `main` (a repository setting) enforces that.
+*Not chosen:* `pytest-testmon`, which records which tests run which code and picks the tests itself (automatic, but another dependency and a data file, and it misses what it can't trace, such as a file a test reads).
+
+### D115. Type checking will use basedpyright, as its own piece of work
+*Issue #11 · you*
+
+Not part of this step: how much code it would ask to change hasn't been measured. When it comes, it's another CI job, and probably a hook.

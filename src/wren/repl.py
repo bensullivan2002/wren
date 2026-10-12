@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Callable
 from contextlib import closing
-from typing import Any, Callable, TextIO
+from typing import Any, TextIO
 
 from wren import __version__
 from wren.agent import (
@@ -36,16 +37,16 @@ from wren.commands import (
     compaction_note,
     default_effort,
     effort_list,
-    plain_call,
     model_list,
+    plain_call,
     provider_choices,
     run_command,
     session_label,
 )
 from wren.memory import Memory
+from wren.messages import Completed, TextDelta
 from wren.sessions import SessionStore
 from wren.settings import UserDefaults
-from wren.messages import Completed, TextDelta
 from wren.tools import Decision, PermissionRequest
 
 try:
@@ -174,7 +175,7 @@ class Repl:
                     "[interrupted: anything Wren had already done is kept, and it knows where it stopped]"
                 )
             )
-        except Exception as e:  # network trouble, bad API key, etc.
+        except Exception as e:  # noqa: BLE001 - network trouble, bad API key, etc.
             self._end_line()
             self.say(red(f"error: {e}"))
             self.say(

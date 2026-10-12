@@ -1,0 +1,9 @@
+# Commits that only reformatted code, which `git blame` should look past to
+# the change that last meant something. GitHub's blame view reads this file by
+# itself; for `git blame` on your machine, run once:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# The hashes survive only if their branch is merged with a merge commit, not
+# squashed or rebased.
+
+# Format the code with ruff (issue #11, D109)
+1fb36fa3d76e852584bc42b617035c804663ad4b

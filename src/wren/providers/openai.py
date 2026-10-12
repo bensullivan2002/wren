@@ -39,8 +39,9 @@ other part of Wren, which assumes the history lives in `agent.messages`.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator, Sequence
 from decimal import Decimal
-from typing import Any, Iterator, Sequence
+from typing import Any
 
 import openai
 

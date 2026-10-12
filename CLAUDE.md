@@ -15,12 +15,15 @@ Wren is a coding-agent harness for the terminal, built step by step by Claude wi
   - `README.md`: status line, commands, tools, config, roadmap, file tree.
 - **Code is written to be read.** Module docstrings explain why the module exists; comments teach the non-obvious. Prefer clarity to cleverness.
 - **Tests:** `pytest`, using `FakeProvider`, so no network or API key is needed. Agent tests must leave `history_problems(agent.messages) == []`.
+- **Run only the tests for what you changed; CI runs them all** (D114). Locally, run the matching `tests/test_<module>.py`, or `-k`, not the whole suite. CI runs the full suite on every pull request, on Linux and macOS. Before merging, check it passed with `gh pr checks`, and fix anything it finds first. The lint and format checks (`pre-commit run --all-files`) are quick: run them before each commit if the hook isn't installed.
 - **One commit per step**, on that step's own branch, merged into `main`, unless Ben asks otherwise.
 - **All new work happens in a new git worktree, never in the main checkout.** This keeps parallel sessions and pieces of work from conflicting. Start each one from an up-to-date `main` with `git worktree add .claude/worktrees/<name> -b <branch> main`, and make every edit, test run and commit there. A new worktree has no `.venv` (it's gitignored), so create one there with the commands below; the main checkout's `.venv/bin/wren` runs the main checkout's code. Once the branch is merged, remove it with `git worktree remove .claude/worktrees/<name>`.
 
 ## Status
 
 Steps 1 to 9 are done (see the roadmap in README.md). Steps 8 and 9 were unplanned additions: an OpenAI provider (D69), then auto mode with a macOS sandbox for commands (D100–D107). Extensions moved to step 10.
+
+**CI is in place (issue #11, D108–D115):** ruff lint and format, pre-commit, `pip-audit`, Dependabot, and the tests on Linux and macOS. Merge branches with a merge commit, never squash: `.git-blame-ignore-revs` names the reformat commit by its hash. Type checking is still to come: Ben wants **basedpyright** (D115), as its own piece of work.
 
 **Auto mode (step 9) is untried with a real model.** Ask Ben how a real model copes with `outside_sandbox` (journal 09, "Things to try" 7). He confirmed the sandbox stays on in normal mode too (D101). A `--auto` flag is wanted, as its own piece of work: issue #9.
 
@@ -69,7 +72,9 @@ Carried over, for whenever they fit (see "Known limits" in journals 03 and 04):
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest
+.venv/bin/pytest tests/test_tools.py   # the tests for what you changed (CI runs them all)
+.venv/bin/pre-commit run --all-files   # lint and format (ruff), as CI does
+gh pr checks                           # did CI pass on this branch's pull request?
 .venv/bin/wren --provider fake      # the app, offline: ls / read / search / write / edit / run
 .venv/bin/wren --provider fake --plain   # the plain REPL
 ```

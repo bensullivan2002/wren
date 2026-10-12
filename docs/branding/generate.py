@@ -12,9 +12,9 @@ This is a design tool, not part of the CLI or its runtime dependencies.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import struct
 import zlib
+from pathlib import Path
 from xml.sax.saxutils import escape
 
 HERE = Path(__file__).resolve().parent
@@ -60,8 +60,10 @@ BIRD = (
 LETTERS = (
     "M4 0 L14 36 L24 13 L34 36 L44 0",  # w
     "M62 36 V0 M62 14 C62 3 70 -1 80 0",  # r
-    "M92 18 H124 C124 6 118 0 108 0 C97 0 90 7 90 18 "
-    "C90 30 97 36 108 36 C115 36 120 33 124 29",  # e
+    (
+        "M92 18 H124 C124 6 118 0 108 0 C97 0 90 7 90 18 "
+        "C90 30 97 36 108 36 C115 36 120 33 124 29"
+    ),  # e
     "M142 36 V0 M142 14 C142 -5 176 -5 176 14 V36",  # n
 )
 
@@ -113,7 +115,7 @@ def terminal() -> str:
         "\n".join(
             "".join(
                 blocks[top == "#", bottom == "#"]
-                for top, bottom in zip(PIXELS[y], PIXELS[y + 1])
+                for top, bottom in zip(PIXELS[y], PIXELS[y + 1], strict=True)
             ).rstrip()
             for y in range(0, 16, 2)
         )
