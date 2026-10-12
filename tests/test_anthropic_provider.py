@@ -16,7 +16,7 @@ from wren.messages import (
     ToolSpec,
     ToolUseBlock,
 )
-from wren.providers.anthropic import AnthropicProvider, from_api_message, to_api_messages
+from wren.providers.anthropic import EFFORT_LEVELS, AnthropicProvider, from_api_message, to_api_messages
 
 
 def api_message(content, stop_reason="end_turn"):
@@ -179,6 +179,38 @@ def test_requests_ask_for_caching_and_cached_tokens_are_counted():
     assert client.requests[0]["cache_control"] == {"type": "ephemeral"}
     assert (done.usage.cache_read_tokens, done.usage.cache_write_tokens) == (900, 40)
     assert done.usage.sent_tokens == 12 + 900 + 40
+
+
+def test_effort_is_sent_only_when_one_is_set():
+    client = FakeClient([], api_message([{"type": "text", "text": "Hi"}]))
+    provider = AnthropicProvider("m", client=client)
+    list(provider.stream(system="", messages=[Message.user("hi")], max_tokens=5))
+    assert "output_config" not in client.requests[0]  # unset: the model's own default applies
+
+    provider.effort = "xhigh"
+    list(provider.stream(system="", messages=[Message.user("hi")], max_tokens=5))
+    assert client.requests[1]["output_config"] == {"effort": "xhigh"}
+
+
+def test_effort_levels_come_from_what_the_api_says_the_model_supports():
+    from types import SimpleNamespace as NS
+
+    def capabilities(**levels):
+        yes, no = NS(supported=True), NS(supported=False)
+        effort = NS(supported=bool(levels), **{name: yes if levels.get(name) else no for name in EFFORT_LEVELS})
+        return NS(capabilities=NS(effort=effort))
+
+    known = {
+        "new": capabilities(low=True, medium=True, high=True, xhigh=True, max=True),
+        "older": capabilities(low=True, medium=True, high=True),
+        "oldest": capabilities(),
+        "unknown-shape": NS(capabilities=None),
+    }
+    client = NS(models=NS(retrieve=lambda model: known[model]))
+    assert AnthropicProvider("new", client=client).efforts() == ["low", "medium", "high", "xhigh", "max"]
+    assert AnthropicProvider("older", client=client).efforts() == ["low", "medium", "high"]
+    assert AnthropicProvider("oldest", client=client).efforts() == []
+    assert AnthropicProvider("unknown-shape", client=client).efforts() == []
 
 
 def test_the_reply_carries_the_model_the_api_says_answered_and_the_request_names_the_current_one():

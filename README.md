@@ -67,6 +67,7 @@ Wren asks before every file edit and every shell command, and shows you exactly 
 | `/usage`        | Tokens used this session, and how full the context is |
 | `/compact`      | Replace the conversation with a summary, to save tokens |
 | `/model`        | Choose a different model (`/model NAME` switches directly) |
+| `/effort`       | Choose how hard the model works (`/effort LEVEL`)     |
 | `/resume`       | Go back to an earlier conversation in this folder     |
 | `/permissions`  | Show what you've said Wren may always do this session |
 | `/memory`       | Show which memory files are loaded                    |
@@ -92,6 +93,8 @@ The files are plain text, readable only by your user account, and kept until you
 ### Models
 
 `/model` lists the models your provider offers and switches to the one you pick; `/model NAME` switches directly. The conversation carries over. The first reply from a new model costs full price for the whole conversation, because the cache is kept per model. `/usage` shows the model the API reports as having written the last reply, so you can confirm a switch took effect. `--model` or `WREN_MODEL` sets the model Wren starts with.
+
+`/effort` chooses how hard the model works on each reply (how much it thinks, how thorough it is): higher is slower and costs more. The levels offered are the ones the current model accepts; `/effort LEVEL` sets one directly, `/effort default` hands the choice back to the model, and `--effort` or `WREN_EFFORT` sets it at launch. Changing model puts effort back to that model's default. Some providers offer effort as part of the model choice and not as a separate setting; there, `/effort` tells you to look in `/model`.
 
 ### Memory: standing instructions
 
@@ -140,6 +143,7 @@ Each setting can come from a flag, an environment variable, or the default, in t
 | `--max-tokens` | `WREN_MAX_TOKENS`    | `32000`             |
 | `--max-steps`  | `WREN_MAX_STEPS`     | `25`                |
 | `--context-budget` | `WREN_CONTEXT_BUDGET` | `150000`       |
+| `--effort`     | `WREN_EFFORT`        | the model's default |
 | `--resume [ID]` |                     |                     |
 | `--plain`      |                      | off                 |
 

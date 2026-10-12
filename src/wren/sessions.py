@@ -55,8 +55,8 @@ class Journal(Protocol):
     def replace(self, messages: list[Message]) -> None:
         """The whole history was replaced (a compaction)."""
 
-    def model_changed(self, provider: str, model: str) -> None:
-        """The conversation moved to a different model."""
+    def model_changed(self, provider: str, model: str, effort: str | None) -> None:
+        """The conversation moved to a different model, or effort level."""
 
     def spent(self, usage: Usage, context_tokens: int) -> None:
         """A model call finished: what it cost, and how big the conversation now is."""
@@ -120,6 +120,7 @@ class SavedSession:
     messages: list[Message]
     provider: str
     model: str
+    effort: str | None  # None: the model's own default
     created: str  # ISO date and time
     title: str  # the first thing the user said, shortened
     usage: Usage  # what the conversation has cost so far, added up
@@ -167,7 +168,7 @@ def load(path: Path) -> SavedSession:
                         )
                         context_tokens = record.get("context_tokens", context_tokens)
                     elif kind == "model":
-                        meta.update(provider=record["provider"], model=record["model"])
+                        meta.update(provider=record["provider"], model=record["model"], effort=record.get("effort"))
                     # Any other type is from a newer Wren: skip it, don't fail.
                 except (json.JSONDecodeError, KeyError, ValueError, TypeError, AttributeError) as e:
                     # The very last line may be half-written if Wren was
@@ -187,6 +188,7 @@ def load(path: Path) -> SavedSession:
         messages=messages,
         provider=meta.get("provider", ""),
         model=meta.get("model", ""),
+        effort=meta.get("effort"),
         created=meta.get("created", ""),
         title=first_line if len(first_line) <= 70 else first_line[:69] + "…",
         usage=usage,
@@ -209,11 +211,13 @@ class SessionStore:
     lines appear in the current session's file.
     """
 
-    def __init__(self, cwd: Path, provider: str, model: str, home: Path | None = None) -> None:
+    def __init__(
+        self, cwd: Path, provider: str, model: str, home: Path | None = None, effort: str | None = None
+    ) -> None:
         self.cwd = cwd.resolve()
         home = home if home is not None else Path.home()
         self.folder = home / ".wren" / "sessions" / project_folder_name(self.cwd)
-        self.provider, self.model = provider, model
+        self.provider, self.model, self.effort = provider, model, effort
         # No file yet. It's created by the first message, so opening Wren
         # and quitting doesn't leave an empty session behind.
         self.path: Path | None = None
@@ -226,10 +230,10 @@ class SessionStore:
     def replace(self, messages: list[Message]) -> None:
         self._write({"type": "replaced", "messages": [message_to_json(m) for m in messages]})
 
-    def model_changed(self, provider: str, model: str) -> None:
-        self.provider, self.model = provider, model
+    def model_changed(self, provider: str, model: str, effort: str | None) -> None:
+        self.provider, self.model, self.effort = provider, model, effort
         if self.path is not None:  # otherwise the first line will carry it
-            self._write({"type": "model", "provider": provider, "model": model})
+            self._write({"type": "model", "provider": provider, "model": model, "effort": effort})
 
     def spent(self, usage: Usage, context_tokens: int) -> None:
         # Saved so that a resumed conversation knows its totals and its size
@@ -281,6 +285,7 @@ class SessionStore:
                 "created": now.isoformat(timespec="seconds"),
                 "provider": self.provider,
                 "model": self.model,
+                "effort": self.effort,
             }
             file.write(json.dumps(meta) + "\n")
 

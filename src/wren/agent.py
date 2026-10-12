@@ -413,8 +413,19 @@ class Agent:
         private reasoning means nothing to the new one, which ignores it.
         """
         self.provider.model = model
+        # Effort goes back to the new model's default. The levels differ
+        # from model to model, and a level this one doesn't take would make
+        # every request fail.
+        self.provider.effort = None
         if self.journal is not None:
-            self.journal.model_changed(self.provider.name, model)
+            self.journal.model_changed(self.provider.name, model, None)
+
+    def set_effort(self, effort: str | None) -> None:
+        """Change how hard the model works on each reply, from the next
+        request on. None means its own default."""
+        self.provider.effort = effort
+        if self.journal is not None:
+            self.journal.model_changed(self.provider.name, self.provider.model, effort)
 
     def reset(self) -> None:
         """Forget the conversation and its totals (the tools stay), and

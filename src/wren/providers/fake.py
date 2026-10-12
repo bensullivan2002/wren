@@ -47,15 +47,23 @@ from wren.prompts import COMPACT_PROMPT
 class FakeProvider:
     name = "fake"
 
-    def __init__(self, replies: list[str | Message] | None = None, delay: float = 0.0) -> None:
+    def __init__(
+        self, replies: list[str | Message] | None = None, delay: float = 0.0, effort: str | None = None
+    ) -> None:
         self.replies = list(replies) if replies is not None else None
         self.model = "demo" if replies is None else "scripted"
+        self.effort = effort
         self.delay = delay  # seconds between words, to make streaming visible
         self.calls: list[dict] = []  # what we were sent, for test assertions
         self._next_id = 0
 
     def models(self) -> list[str]:
         return ["demo", "demo-large", "demo-fast"]  # all equally pretend
+
+    def efforts(self) -> list[str]:
+        # "demo-fast" plays the part of a model with no separate effort
+        # setting, so both kinds of provider can be tried offline.
+        return [] if self.model == "demo-fast" else ["low", "medium", "high"]
 
     def stream(
         self,
@@ -66,7 +74,14 @@ class FakeProvider:
         max_tokens: int,
     ) -> Iterator[StreamEvent]:
         self.calls.append(
-            {"system": system, "messages": list(messages), "tools": list(tools), "max_tokens": max_tokens}
+            {
+                "system": system,
+                "messages": list(messages),
+                "tools": list(tools),
+                "max_tokens": max_tokens,
+                "model": self.model,
+                "effort": self.effort,
+            }
         )
 
         if self.replies is None:

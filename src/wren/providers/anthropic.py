@@ -27,17 +27,29 @@ from wren.messages import (
     Usage,
 )
 
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")  # lowest first
+
 _KNOWN_STOP_REASONS = {"end_turn", "max_tokens", "tool_use", "stop_sequence", "refusal"}
 
 
 class AnthropicProvider:
     name = "anthropic"
 
-    def __init__(self, model: str, client: Any = None) -> None:
+    def __init__(self, model: str, client: Any = None, effort: str | None = None) -> None:
         self.model = model
+        self.effort = effort
         # The SDK reads ANTHROPIC_API_KEY from the environment by itself.
         # Tests pass in a fake `client` instead, so no network is needed.
         self.client = client if client is not None else anthropic.Anthropic()
+
+    def efforts(self) -> list[str]:
+        # Which levels a model takes varies by model (older ones take none),
+        # so we ask the API about this one. It's reported per level.
+        capabilities = self.client.models.retrieve(self.model).capabilities
+        effort = getattr(capabilities, "effort", None)
+        if effort is None or not effort.supported:
+            return []
+        return [level for level in EFFORT_LEVELS if getattr(getattr(effort, level, None), "supported", False)]
 
     def models(self) -> list[str]:
         # Asked of the API, not written down here: a list in the code would
@@ -73,6 +85,10 @@ class AnthropicProvider:
         # A cache is matched from the start, byte for byte, so anything that
         # changed near the front would throw away everything after it.
         request["cache_control"] = {"type": "ephemeral"}
+        if self.effort:
+            # Left out entirely when unset, so the model uses its own
+            # default (which differs between models).
+            request["output_config"] = {"effort": self.effort}
 
         # `messages.stream` keeps an HTTP connection open and receives the reply
         # as a series of server-sent events. The SDK's `text_stream` gives us

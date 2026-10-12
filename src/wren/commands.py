@@ -31,6 +31,7 @@ COMMANDS = """\
 /usage         tokens used in this conversation, and how full the context is
 /compact       replace the conversation with a summary of it, to save tokens
 /model         choose a different model (/model NAME switches straight to it)
+/effort        choose how hard the model works on each reply (/effort LEVEL)
 /resume        go back to an earlier conversation in this folder (/resume ID)
 /permissions   show what you've said Wren may always do this session
 /memory        show which memory files (WREN.md, AGENTS.md) are loaded
@@ -46,6 +47,7 @@ class CommandResult:
     quit: bool = False  # the front end should exit
     compact: bool = False  # the front end should run agent.compact() (a model call, so it takes a while)
     pick_model: bool = False  # the front end should offer the provider's models to choose from
+    pick_effort: bool = False  # ...or the effort levels the current model takes
     pick_session: bool = False  # ...or this folder's saved sessions
     resumed: bool = False  # the conversation was swapped for a saved one; redraw it
     cleared: bool = False  # the conversation was reset; a front end with a transcript should empty it
@@ -67,6 +69,10 @@ def run_command(
         if not args:
             return CommandResult(pick_model=True)
         return CommandResult(switch_model(agent, args[0]))
+    if name == "/effort":
+        if not args:
+            return CommandResult(pick_effort=True)
+        return CommandResult(switch_effort(agent, None if args[0].lower() == "default" else args[0].lower()))
     if name == "/resume":
         if sessions is None:
             return CommandResult("Sessions aren't being saved.", is_error=True)
@@ -127,11 +133,43 @@ def _tools(agent: Agent, name: str | None) -> CommandResult:
 def switch_model(agent: Agent, model: str) -> str:
     if model == agent.provider.model:
         return f"Already using {model}."
+    had_effort = agent.provider.effort
     agent.set_model(model)
     note = f"Now using {model}."
+    if had_effort:
+        note += " Effort is back to this model's default (/effort to change it)."
     if agent.messages:
         note += " Its first reply re-reads the conversation at full price: the cache is kept per model."
     return note
+
+
+def switch_effort(agent: Agent, effort: str | None) -> str:
+    if effort == agent.provider.effort:
+        return f"Effort is already {effort_name(agent)}."
+    agent.set_effort(effort)
+    note = f"Effort is now {effort_name(agent)}."
+    if agent.messages:
+        note += " The next reply re-reads the conversation at full price: changing effort resets the cache."
+    return note
+
+
+def effort_name(agent: Agent) -> str:
+    return agent.provider.effort or "the model's default"
+
+
+def effort_list(agent: Agent) -> tuple[list[str], str]:
+    """The effort levels the current model takes, or a note to show if it
+    takes none, or they couldn't be fetched."""
+    try:
+        levels = agent.provider.efforts()
+    except Exception as e:  # no network, a bad key, a model the API doesn't know...
+        return [], f"couldn't find out which effort levels {agent.provider.model} takes: {e}. You can still set one: /effort LEVEL"
+    if not levels:
+        return [], (
+            f"{agent.provider.model} has no separate effort setting. "
+            "If this provider offers a choice, it's among its models: /model"
+        )
+    return levels, ""
 
 
 def model_list(agent: Agent) -> tuple[list[str], str]:
@@ -159,13 +197,15 @@ def resume_session(agent: Agent, sessions: SessionStore, session: SavedSession) 
 
     provider = agent.provider
     note = f"Resumed {session.id} ({ago(session.modified)}): {len(agent.messages)} messages."
-    if session.model and session.model != provider.model:
-        if session.provider == provider.name:
-            provider.model = session.model  # carry on with the model it was using
-            sessions.provider, sessions.model = provider.name, session.model
-            note += f" Using {session.model}, as it was."
-        else:
-            note += f" It was using {session.provider}'s {session.model}; continuing with {provider.model}."
+    if session.provider == provider.name and session.model:
+        # Carry on with the model and effort it was using.
+        if (session.model, session.effort) != (provider.model, provider.effort):
+            provider.model, provider.effort = session.model, session.effort
+            sessions.provider, sessions.model, sessions.effort = provider.name, session.model, session.effort
+            effort = f" at {session.effort} effort" if session.effort else ""
+            note += f" Using {session.model}{effort}, as it was."
+    elif session.model:
+        note += f" It was using {session.provider}'s {session.model}; continuing with {provider.model}."
     return note + " Files may have changed since."
 
 
@@ -204,7 +244,7 @@ def _usage(agent: Agent) -> str:
         f"This conversation: {u.sent_tokens:,} tokens in · {u.output_tokens:,} out",
         f"  of the input, {u.cache_read_tokens:,} were read from the cache (about a tenth of the price)",
         f"Conversation now: {context_meter(agent)}",
-        f"Model asked for: {agent.provider.model}",
+        f"Model asked for: {agent.provider.model}  ·  effort: {effort_name(agent)}",
         # The second line is the provider's word, not ours. If /model is
         # really working, it changes after the next reply.
         f"Last reply came from: {agent.answered_by or '(no reply yet)'}  (as reported by {agent.provider.name})",

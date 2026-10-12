@@ -52,12 +52,14 @@ from wren.agent import Agent, Compacted, CompactionStarted, ToolFinished, ToolSt
 from wren.commands import (
     budget_used,
     compaction_note,
+    effort_list,
     format_call,
     model_list,
     resume_session,
     run_command,
     session_label,
     shorten,
+    switch_effort,
     switch_model,
 )
 from wren.memory import Memory
@@ -270,7 +272,8 @@ class WrenApp(App):
     def _header_text(self) -> str:
         provider, tools = self.agent.provider, self.agent.tools
         where = str(tools.context.root).replace(str(Path.home()), "~", 1)
-        return f"wren {__version__} · {provider.name} · {provider.model} · {len(tools)} tools · {where}"
+        effort = f" ({provider.effort} effort)" if provider.effort else ""
+        return f"wren {__version__} · {provider.name} · {provider.model}{effort} · {len(tools)} tools · {where}"
 
     async def on_mount(self) -> None:
         # "Anchored" means: stay scrolled to the bottom as content is added,
@@ -370,7 +373,7 @@ class WrenApp(App):
         if self.busy and line.split()[0].lower() == "/compact":
             self.notify("Wren is still working. Compact when it has finished.")
             return
-        if self.busy and line.split()[0].lower() in ("/model", "/resume"):
+        if self.busy and line.split()[0].lower() in ("/model", "/effort", "/resume"):
             self.notify("Wren is still working. Try that when it has finished.")
             return
         result = run_command(self.agent, line, KEYS_HELP, self.memory, self.sessions)
@@ -378,6 +381,11 @@ class WrenApp(App):
             self.busy = True  # fetching the list is a network call: off to the worker
             self._show_status()
             self.fetch_models()
+            return
+        if result.pick_effort:
+            self.busy = True  # another question for the API
+            self._show_status()
+            self.fetch_efforts()
             return
         if result.pick_session:
             await self.pick_session()
@@ -399,6 +407,7 @@ class WrenApp(App):
             await self._draw_conversation()  # empty now, with memory re-read for the new conversation
         if result.text:
             await self.note(result.text, "error" if result.is_error else "output")
+        self.query_one("#header", Static).update(self._header_text())  # /model NAME and /effort LEVEL change it
 
     # --- A turn, on the worker thread -------------------------------------------
 
@@ -453,6 +462,26 @@ class WrenApp(App):
 
     async def _model_chosen(self, model: str) -> None:
         await self.note(switch_model(self.agent, model))
+        self.query_one("#header", Static).update(self._header_text())
+
+    @work(thread=True, exclusive=True, group="turn")
+    def fetch_efforts(self) -> None:
+        levels, problem = effort_list(self.agent)  # may ask the API: worker thread
+        self._on_app_thread(self.pick_effort, levels, problem)
+
+    async def pick_effort(self, levels: list[str], problem: str) -> None:
+        self.busy = False
+        self._show_status()
+        if problem:  # including "this model has no separate effort setting"
+            await self.note(problem)
+            return
+        current = self.agent.provider.effort
+        rows = [("default: let the model decide" + ("   (in use)" if current is None else ""), None)]
+        rows += [(level + ("   (in use)" if level == current else ""), level) for level in levels]
+        await self._open_picker(f"Effort for {self.agent.provider.model}", rows, self._effort_chosen)
+
+    async def _effort_chosen(self, effort: str | None) -> None:
+        await self.note(switch_effort(self.agent, effort))
         self.query_one("#header", Static).update(self._header_text())
 
     async def pick_session(self) -> None:

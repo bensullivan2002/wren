@@ -37,6 +37,7 @@ class Config:
     max_tokens: int = DEFAULT_MAX_TOKENS
     max_steps: int = DEFAULT_MAX_STEPS
     context_budget: int = DEFAULT_CONTEXT_BUDGET
+    effort: str | None = None  # None: whatever the model does by default
 
     @classmethod
     def load(
@@ -47,6 +48,7 @@ class Config:
         max_tokens: int | None = None,
         max_steps: int | None = None,
         context_budget: int | None = None,
+        effort: str | None = None,
         env: Mapping[str, str] = os.environ,
     ) -> Config:
         """Build a Config. Arguments are command-line flags (None = not given)."""
@@ -56,6 +58,7 @@ class Config:
             max_tokens=max_tokens or int(env.get("WREN_MAX_TOKENS") or DEFAULT_MAX_TOKENS),
             max_steps=max_steps or int(env.get("WREN_MAX_STEPS") or DEFAULT_MAX_STEPS),
             # `is not None`, not `or`: 0 is a real choice here (never compact).
+            effort=effort or env.get("WREN_EFFORT") or None,
             context_budget=(
                 context_budget
                 if context_budget is not None

@@ -44,6 +44,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--max-tokens", type=int, help="longest reply allowed (env: WREN_MAX_TOKENS)")
     parser.add_argument("--max-steps", type=int, help="most model calls in one turn (env: WREN_MAX_STEPS)")
     parser.add_argument(
+        "--effort",
+        help="how hard the model works on each reply, e.g. low, medium, high; "
+        "what's accepted depends on the model (env: WREN_EFFORT)",
+    )
+    parser.add_argument(
         "--context-budget",
         type=int,
         help="compact the conversation once it passes this many tokens; 0 = never (env: WREN_CONTEXT_BUDGET)",
@@ -70,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
         max_tokens=args.max_tokens,
         max_steps=args.max_steps,
         context_budget=args.context_budget,
+        effort=args.effort,
     )
 
     if config.provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
@@ -82,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     root = Path.cwd()
-    provider = make_provider(config.provider, config.model)
+    provider = make_provider(config.provider, config.model, config.effort)
     permissions = Permissions()
     tools = ToolRegistry(default_tools(), root=root, permissions=permissions)
     memory = Memory(root)
@@ -96,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     agent = Agent(provider, system_prompt, config.max_tokens, tools, config.max_steps, config.context_budget)
 
     # From here on, every message is written to a session file as it's added.
-    sessions = SessionStore(root, provider.name, provider.model)
+    sessions = SessionStore(root, provider.name, provider.model, effort=provider.effort)
     agent.journal = sessions
     notice = ""
     # `--resume` alone opens the same list that /resume shows, and the front

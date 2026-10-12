@@ -409,3 +409,21 @@ Every conversation is kept indefinitely. Both an age limit and a way to turn sav
 
 Each reply records the model named in the provider's response, and `/usage` shows it beside the model Wren asked for. Added when you asked how to tell whether the picker really changes anything: the header only shows Wren's intention.
 *Not chosen:* asking the model what it is (models often don't know, or get it wrong).
+
+### D65. Effort is a provider capability that may be separate, or part of the model
+*Step 7 · you*
+
+You asked for an effort setting, and for it to cope with providers that bundle effort into the model choice. A provider has `effort` and `efforts()`. Where effort is a separate request setting (Anthropic), `efforts()` lists the levels and `/effort` picks one. Where it's part of the model's name, `efforts()` is empty, the variants are in `models()`, and `/effort` points to `/model`.
+*Not chosen:* one combined model-and-effort picker for every provider (it would multiply Claude's model list by five, and hide that they are the same model). Effort handled only inside the Anthropic provider (the next provider would have to redo the interface).
+
+### D66. Effort levels are read from the API per model; unset is not sent
+*Step 7 · design*
+
+`AnthropicProvider.efforts` reads the model's reported capabilities. With no effort set, the request omits the field and the model's own default applies.
+*Not chosen:* a fixed list in the code (levels differ by model, and change). Defaulting to a level of our choosing (the right default depends on the model; the provider already picks one).
+
+### D67. Switching model resets effort to the new model's default
+*Step 7 · design*
+
+*Why:* the levels differ between models, and an unsupported one fails every request. Checking would need a network call during the switch.
+*Cost:* you set effort again after changing model. Wren tells you when it has dropped one. Open to challenge: keeping the level when the new model reports it as supported would be kinder.

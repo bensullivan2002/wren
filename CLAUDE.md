@@ -34,6 +34,7 @@ Things Ben has decided that aren't obvious from the code:
 - **No ACP / Toad.** An ACP mode was built and removed in step 4 (D33): he found driving Wren through another program confusing, and wants no second way in. Don't re-propose it before step 8, and only if he raises it.
 - **He tests with a paid API balance, not his Claude subscription.** Don't build subscription (OAuth) login.
 - **He likes a full-screen, Claude Code-like feel:** input box at the bottom, conversation above, questions in place.
+- **He intends Wren to support other providers, OpenAI in particular.** He asked for effort to work both as a separate setting and bundled into the model choice (D65). Keep provider differences behind the `Provider` interface, and have front ends ask the provider what it offers.
 - **He prefers one obvious way to do a thing over copying Claude Code's flags:** he rejected `--continue` plus `--resume` as confusing and chose `--resume` alone, opening the same picker as `/resume` (D57). Offer the simpler interface first.
 
 Carried over, for whenever they fit (see "Known limits" in journals 03 and 04):

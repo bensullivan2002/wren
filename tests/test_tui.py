@@ -312,6 +312,36 @@ async def test_the_model_picker_switches_model_and_updates_the_header(tmp_path):
         assert "Now using demo-large." in screen_text(app) and app.focused is app.prompt
 
 
+async def test_the_effort_picker_sets_effort_and_shows_it_in_the_header(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await say(app, pilot, "/effort")
+        await until(pilot, lambda: app.query(Picker), "the effort picker")
+        first = str(app.query_one(Picker).get_option_at_index(0).prompt)
+        assert "default" in first and "(in use)" in first
+        await pilot.press("down", "down", "down", "enter")  # default, low, medium, high
+
+        await until(pilot, lambda: not app.query(Picker), "the picker to close")
+        assert app.agent.provider.effort == "high"
+        assert "demo (high effort)" in str(app.query_one("#header").content)
+        assert "Effort is now high." in screen_text(app)
+
+        await say(app, pilot, "hello")
+        await finished(app, pilot)
+        assert app.agent.provider.calls[-1]["effort"] == "high"
+
+
+async def test_effort_for_a_model_without_the_setting_explains_instead_of_offering_a_list(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await say(app, pilot, "/model demo-fast")
+        await pilot.pause()
+        assert "demo-fast" in str(app.query_one("#header").content)  # typed switches update the header too
+        await say(app, pilot, "/effort")
+        await until(pilot, lambda: "no separate effort setting" in screen_text(app), "the explanation")
+        assert not app.query(Picker) and not app.busy
+
+
 async def test_escape_closes_a_picker_without_choosing(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:

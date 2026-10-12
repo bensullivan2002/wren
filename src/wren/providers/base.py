@@ -21,6 +21,26 @@ class Provider(Protocol):
     name: str  # e.g. "anthropic"
     model: str  # e.g. "claude-sonnet-5-5". Read on every request, so it can be changed between them.
 
+    # Effort: how hard the model should work on each reply (how much it
+    # thinks, how thorough it is), traded against speed and cost. Providers
+    # differ on where this setting lives, and the interface allows for both:
+    #
+    #   * A SEPARATE SETTING, sent alongside the model's name (Anthropic).
+    #     `efforts()` lists the levels the current model takes, and
+    #     `effort` holds the chosen one.
+    #   * PART OF THE MODEL'S NAME, where a provider offers, say, "x-low"
+    #     and "x-high" as different models. Then `efforts()` returns
+    #     nothing, the choices appear in `models()`, and `effort` stays None.
+    #
+    # Either way the rest of Wren does the same thing: ask the provider what
+    # there is to choose from, and show that.
+    effort: str | None  # None means "the model's own default"
+
+    def efforts(self) -> list[str]:
+        """The effort levels the current model accepts as a separate
+        setting, lowest first. Empty if it has none. May make a network call."""
+        ...
+
     def models(self) -> list[str]:
         """The models this provider offers right now, for a picker to show.
         May make a network call. Best first, if there's a natural order."""

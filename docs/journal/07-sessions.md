@@ -10,6 +10,7 @@ Quitting Wren no longer throws the conversation away.
 - **`wren --resume`** opens Wren on a list of this folder's earlier conversations. **`/resume`** opens the same list from inside. **`wren --resume ID`** goes straight to one.
 - A resumed conversation is redrawn on screen, tool calls and all, and carries on in the same file.
 - **`/model`** opens a list of models to switch to, mid-conversation. `/model NAME` switches directly.
+- **`/effort`** chooses how hard the model works on each reply, where the model has such a setting.
 
 Try it without an API key:
 
@@ -156,11 +157,42 @@ Last reply came from: claude-haiku-5-5  (as reported by anthropic)
 
 After `/model`, the first line changes at once and the second after the next reply. It's the same idea as the context meter in step 5: when the system will tell you the answer, show that, not your own belief about it.
 
-## Idea 8: one picker, two uses
+## Idea 8: effort, and two ways a provider can offer it
 
-The app has a `Picker` widget: Textual's `OptionList` plus a note of what each row stands for and what to do with the choice. `/model` and `/resume` both use it, and `wren --resume` simply opens the session picker as the app starts. Like a permission question, it sits in the conversation and takes the focus; Escape closes it.
+Current models can be told how hard to work on a reply: how much to think, how thorough to be. More effort is slower and costs more; less is quick and cheap. `/effort` chooses it.
 
-Fetching the model list is a network call, so it runs on the worker thread (step 4's rule), and the picker opens when the list arrives. The session list is read from disk, which is fast enough to do directly.
+The interesting part is that providers disagree about what kind of thing effort *is*:
+
+| | Where the setting lives | Example |
+| --- | --- | --- |
+| **A separate dial** | Sent with the request, beside the model's name | Anthropic: `output_config: {"effort": "high"}` |
+| **Part of the model** | The provider lists variants as different models | a "…-low" and a "…-high" in the model list |
+
+Wren only has a Claude provider today, but the `Provider` interface was written so that either kind fits without the rest of Wren caring:
+
+```python
+effort: str | None                    # None means "the model's own default"
+
+def efforts(self) -> list[str]:
+    """The effort levels the current model accepts as a separate
+    setting, lowest first. Empty if it has none."""
+```
+
+A provider of the first kind returns levels from `efforts()`. A provider of the second kind returns nothing, puts its variants in `models()`, and `/effort` says: *"…has no separate effort setting. If this provider offers a choice, it's among its models: /model"*. The front ends never ask "which provider is this?". They ask the provider what there is to choose from, and show that. The fake provider plays both parts (`demo-fast` has no levels), so both paths are tested.
+
+Three details:
+
+- **The levels are asked of the API, per model.** They differ (older models take none, newer ones up to five), so `AnthropicProvider.efforts` reads the model's reported capabilities. Nothing is written into the code to go stale.
+- **Unset means unsent.** With no effort chosen, the request leaves the field out, and the model uses its own default, which also differs by model.
+- **Switching model resets effort to that model's default.** A level the new model doesn't take would make every request fail, and Wren can't know without asking. It tells you.
+
+Like switching model, changing effort resets the cache for one request, and Wren says so. A session records its effort and resuming restores it.
+
+## Idea 9: one picker, three uses
+
+The app has a `Picker` widget: Textual's `OptionList` plus a note of what each row stands for and what to do with the choice. `/model`, `/effort` and `/resume` all use it, and `wren --resume` simply opens the session picker as the app starts. Like a permission question, it sits in the conversation and takes the focus; Escape closes it.
+
+Fetching the model list, or a model's effort levels, is a network call, so it runs on the worker thread (step 4's rule), and the picker opens when the list arrives. The session list is read from disk, which is fast enough to do directly.
 
 On resume the app redraws the conversation from the history: your messages, the replies as markdown, a line per tool call. The one-line summaries (`→ 2 lines`) were never saved, only what the model saw, so a redrawn tool call shows the first line of its result.
 
@@ -193,6 +225,8 @@ The second had been there since step 4. It took a failing test in a different fe
 - **Resuming one session in two terminals** interleaves both into one file.
 - **Transcripts are plain text on disk.** Private to your user account, but not encrypted. Don't paste secrets into a conversation.
 - **No way to switch saving off.**
+- **Effort is untested against the real API:** the request field and the capability lookup follow the documentation.
+- **No other provider exists yet,** so the "effort is part of the model" path is exercised only by the fake one.
 - **Switching models is untested against the real API.** In particular, how a different model treats the old one's reasoning blocks is taken from the documentation.
 - **A redrawn tool call shows less than the original did:** no diff, no command output, just the first line of the result.
 - **Sessions saved before the `spent` line existed** resume with totals at zero and an estimated size, until the first reply measures it.

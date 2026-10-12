@@ -25,7 +25,7 @@ from typing import Any, Callable, TextIO
 
 from wren import __version__
 from wren.agent import Agent, Compacted, CompactionStarted, ToolFinished, ToolStarted, TurnFinished
-from wren.commands import compaction_note, format_call, model_list, run_command, session_label
+from wren.commands import compaction_note, effort_list, format_call, model_list, run_command, session_label
 from wren.memory import Memory
 from wren.sessions import SessionStore
 from wren.messages import Completed, TextDelta
@@ -90,7 +90,8 @@ class Repl:
 
     def run(self) -> None:
         provider, tools = self.agent.provider, self.agent.tools
-        self.say(f"{bold('wren')} {__version__} {dim(f'· {provider.name} · {provider.model} · {len(tools)} tools')}")
+        effort = f" ({provider.effort} effort)" if provider.effort else ""
+        self.say(f"{bold('wren')} {__version__} {dim(f'· {provider.name} · {provider.model}{effort} · {len(tools)} tools')}")
         self.say(dim("Type a message, /help for commands, Ctrl-D to quit."))
         if self.memory and self.memory.files:
             # Said up front, every time: these files steer the model, and in
@@ -225,6 +226,8 @@ class Repl:
         result = run_command(self.agent, line, KEYS_HELP, self.memory, self.sessions)
         if result.pick_model:
             self.list_models()
+        if result.pick_effort:
+            self.list_efforts()
         if result.pick_session:
             self.list_sessions()
         if result.compact:
@@ -251,6 +254,17 @@ class Repl:
         if current not in models:
             self.say(f"  {current}" + dim("  (in use)"))
         self.say(dim("Switch with /model NAME"))
+
+    def list_efforts(self) -> None:
+        levels, problem = effort_list(self.agent)
+        if problem:
+            self.say(problem)
+            return
+        current = self.agent.provider.effort
+        for level in ["default", *levels]:
+            in_use = level == current or (level == "default" and current is None)
+            self.say(f"  {level}" + (dim("  (in use)") if in_use else ""))
+        self.say(dim("Switch with /effort LEVEL"))
 
     def list_sessions(self) -> None:
         saved = [s for s in self.sessions.saved() if s.id != self.sessions.current_id] if self.sessions else []

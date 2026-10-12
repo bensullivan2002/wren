@@ -146,6 +146,15 @@ def test_models_can_be_listed_and_switched_in_plain_mode():
     assert "Now using demo-fast." in result.stdout and "demo-fast  (in use)" in result.stdout
 
 
+def test_effort_can_be_listed_and_set_in_plain_mode_and_from_the_command_line():
+    result = wren("--provider", "fake", "--effort", "low", stdin="/effort\n/effort high\n/model demo-fast\n/effort\n")
+    out = result.stdout
+    assert "demo (low effort)" in out  # the banner
+    assert "low  (in use)" in out and "Switch with /effort LEVEL" in out
+    assert "Effort is now high." in out
+    assert "demo-fast has no separate effort setting" in out
+
+
 def test_tools_command_lists_and_shows_tools():
     result = wren("--provider", "fake", stdin="/tools\n/tools read_file\n")
     assert "list_files" in result.stdout and "search" in result.stdout
@@ -169,6 +178,9 @@ def test_config_precedence_flag_then_env_then_default():
     assert Config.load(context_budget=0, env={"WREN_CONTEXT_BUDGET": "5"}).context_budget == 0
     assert Config.load(env={"WREN_CONTEXT_BUDGET": "0"}).context_budget == 0
     assert Config.load(env={}).context_budget == 150_000
+    assert Config.load(env={}).effort is None  # unset: the model's own default
+    assert Config.load(env={"WREN_EFFORT": "low"}).effort == "low"
+    assert Config.load(effort="high", env={"WREN_EFFORT": "low"}).effort == "high"
 
 
 def test_system_prompt_describes_the_environment():

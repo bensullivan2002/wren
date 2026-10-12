@@ -109,18 +109,22 @@ Memory lives in the system prompt, which compaction doesn't touch, so it survive
 | `meta` | the file is created | records version, folder, time, provider and model |
 | `message` | a message is added | appended to the history |
 | `replaced` | a compaction | the history so far is swapped for the messages it carries |
-| `model` | `/model` | the session's model is updated |
+| `model` | `/model` or `/effort` | the session's model and effort are updated |
 | `spent` | a model call finishes | its token counts are added to the conversation's totals; its `context_tokens` becomes the conversation's size |
 
 `/clear` makes the next message start a new file; the old one is kept.
 
 **Reading.** `sessions.load` replays a file from the top. A broken last line (a crash mid-write) is ignored; a broken line elsewhere, or a newer format version, is an error. Unknown line types are skipped.
 
-**Resuming** (`commands.resume_session`): point the store at the session's file, then `Agent.restore(messages)`. `restore` ties off a turn that was cut short (the same code as an interruption, with wording that says the tool's outcome is unknown), checks `history_problems`, and refuses the session, keeping the current conversation, if it still isn't valid. The session's model is restored when the provider matches, and so are the conversation's token totals and its measured size. Permissions and the system prompt are not restored: the prompt is rebuilt from today's memory files.
+**Resuming** (`commands.resume_session`): point the store at the session's file, then `Agent.restore(messages)`. `restore` ties off a turn that was cut short (the same code as an interruption, with wording that says the tool's outcome is unknown), checks `history_problems`, and refuses the session, keeping the current conversation, if it still isn't valid. The session's model and effort are restored when the provider matches, and so are the conversation's token totals and its measured size. Permissions and the system prompt are not restored: the prompt is rebuilt from today's memory files.
 
 **Entry points.** `wren --resume` starts the front end on the session list; `wren --resume ID` resumes before it starts; `/resume` and `/resume ID` do the same from inside. In the app, the list is a `Picker` and the transcript is redrawn from the history.
 
-## Switching models
+## Switching models and effort
+
+A provider has a `model` and an `effort` (None for the model's default), both read on each request. `Agent.set_model` and `Agent.set_effort` set them and tell the journal; switching model puts effort back to None.
+
+`/effort` lists `provider.efforts()`: the levels the current model accepts as a separate setting. A provider whose models have none (unsupported, or folded into the model's name) returns an empty list, and the front end says to look in `/model`. `/effort LEVEL` and `--effort` set one directly; an unset effort is left out of the request.
 
 `Agent.set_model` sets `provider.model`, which the provider reads on each request, and tells the journal. `/model` lists `provider.models()` (asked of the API; in the app, on the worker thread) in a `Picker`; `/model NAME` switches directly. The conversation carries over unchanged. The prompt cache is per model, so the next request is uncached, and another model's reasoning blocks are ignored by the new one.
 
@@ -158,7 +162,7 @@ Three things flow the other way, from a front end into the core:
 | Hook | Set on | In the app | In the REPL |
 | --- | --- | --- | --- |
 | Permission question | `Permissions.ask` | `WrenApp.ask_permission`: shows a `PermissionPrompt`, waits for a key | `Repl.ask_permission`: prints, then `input()` |
-| A choice from a list (model, session) | a `CommandResult` flag from `commands.py` | a `Picker` in the transcript | a printed list, and a command to type |
+| A choice from a list (model, effort, session) | a `CommandResult` flag from `commands.py` | a `Picker` in the transcript | a printed list, and a command to type |
 | Stop the turn | closing the `run_turn` generator | Escape sets a flag; the worker's loop breaks | Ctrl-C |
 | Stop a slow tool | `ToolContext.should_stop` | the same flag; the shell polls it | not used (Ctrl-C interrupts directly) |
 

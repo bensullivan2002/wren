@@ -7,7 +7,7 @@ import stat
 import pytest
 
 from wren.agent import NEVER_RECORDED, RESUMED_NOTE, Agent
-from wren.commands import ago, resume_session, run_command
+from wren.commands import ago, effort_list, resume_session, run_command
 from wren.messages import Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock, history_problems
 from wren.prompts import COMPACTED_NOTE
 from wren.providers.fake import FakeProvider
@@ -298,9 +298,65 @@ def test_switching_model_takes_effect_on_the_next_request_and_is_recorded(tmp_pa
     assert "Now using demo-large" in note and "full price" in note
     run(agent, "again")
     assert agent.provider.model == "demo-large"
-    assert {"type": "model", "provider": "fake", "model": "demo-large"} in lines(store)
+    assert {"type": "model", "provider": "fake", "model": "demo-large", "effort": None} in lines(store)
     assert load(store.path).model == "demo-large"
     assert "Already using demo-large" in run_command(agent, "/model demo-large").text
+
+
+# --- Effort ---------------------------------------------------------------------------------
+
+
+def test_effort_is_sent_from_the_next_request_on_and_default_means_unset(tmp_path):
+    agent, store = make(tmp_path, ["one", "two", "three"])
+    run(agent, "hi")
+    assert run_command(agent, "/effort").pick_effort
+
+    note = run_command(agent, "/effort HIGH").text
+    assert "Effort is now high." in note and "resets the cache" in note
+    run(agent, "again")
+    assert [call["effort"] for call in agent.provider.calls] == [None, "high"]
+    assert "effort: high" in run_command(agent, "/usage").text
+    assert "already high" in run_command(agent, "/effort high").text
+
+    assert "Effort is now the model's default." in run_command(agent, "/effort default").text
+    run(agent, "and again")
+    assert agent.provider.calls[-1]["effort"] is None
+
+
+def test_switching_model_puts_effort_back_to_that_models_default(tmp_path):
+    agent, store = make(tmp_path, [])
+    agent.set_effort("high")
+    note = run_command(agent, "/model demo-large").text
+    assert agent.provider.effort is None and "Effort is back to this model's default" in note
+
+
+def test_a_model_with_no_separate_effort_setting_points_you_to_the_model_list(tmp_path):
+    # The other kind of provider: effort, if there's a choice, is part of the model's name.
+    agent, store = make(tmp_path, [])
+    assert effort_list(agent) == (["low", "medium", "high"], "")
+    agent.set_model("demo-fast")
+    levels, note = effort_list(agent)
+    assert levels == [] and "no separate effort setting" in note and "/model" in note
+
+
+def test_a_failure_to_list_effort_levels_is_reported_not_raised(tmp_path):
+    agent, store = make(tmp_path, [])
+    agent.provider.efforts = lambda: 1 / 0
+    levels, note = effort_list(agent)
+    assert levels == [] and "couldn't find out" in note and "/effort LEVEL" in note
+
+
+def test_a_session_remembers_its_effort_and_resuming_restores_it(tmp_path):
+    agent, store = make(tmp_path, ["hello"])
+    agent.set_model("demo-large")
+    agent.set_effort("low")
+    run(agent, "hi")
+    assert lines(store)[0]["effort"] == "low"  # set before the file existed, so the first line carries it
+
+    later, later_store = make(tmp_path, [])
+    note = resume_session(later, later_store, later_store.find(None))
+    assert (later.provider.model, later.provider.effort) == ("demo-large", "low")
+    assert "Using demo-large at low effort, as it was" in note
 
 
 def test_usage_shows_which_model_actually_answered(tmp_path):

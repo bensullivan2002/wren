@@ -7,17 +7,17 @@ from wren.providers.base import Provider
 PROVIDERS = ("anthropic", "fake")
 
 
-def make_provider(name: str, model: str) -> Provider:
+def make_provider(name: str, model: str, effort: str | None = None) -> Provider:
     # Imports happen inside the branches so that, for example, the fake
     # provider works even if a real provider's SDK has a problem.
     if name == "anthropic":
         from wren.providers.anthropic import AnthropicProvider
 
-        return AnthropicProvider(model)
+        return AnthropicProvider(model, effort=effort)
     if name == "fake":
         from wren.providers.fake import FakeProvider
 
-        return FakeProvider(delay=0.03)
+        return FakeProvider(delay=0.03, effort=effort)
     raise ValueError(f"unknown provider {name!r} (choose from: {', '.join(PROVIDERS)})")
 
 
