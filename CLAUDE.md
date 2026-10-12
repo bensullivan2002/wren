@@ -21,7 +21,7 @@ Wren is a coding-agent harness for the terminal, built step by step by Claude wi
 
 Steps 1 to 7 are done (see the roadmap in README.md). Wren is a complete single agent; step 8 opens it up.
 
-**First thing next session: ask Ben how real use is going.** Worth asking about specifically, because they are tested only against stand-ins: switching model mid-conversation against the real API (journal 07, "Known limits"), tool loops with reasoning blocks (D45), and whether `/usage` shows cache reads. Fix what he finds first.
+**First thing next session: ask Ben how real use is going.** Ben has confirmed against the real API: `/usage`, `/compact`, `/history`, the model picker, and effort (a controlled low-versus-high comparison showed different thinking-token counts). Still unconfirmed, because tested only against stand-ins: tool loops with reasoning blocks (D45), cache reads showing in `/usage`, and resuming a session after switching model. Fix what he finds first.
 
 **Then: step 8, extensions.** It is three separate pieces; the first question for Ben is which to build first, and each should probably be its own commit and journal entry (8a, 8b, 8c):
 

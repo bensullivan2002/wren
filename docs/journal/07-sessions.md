@@ -248,7 +248,7 @@ The second had been there since step 4. It took a failing test in a different fe
 - **Resuming one session in two terminals** interleaves both into one file.
 - **Transcripts are plain text on disk.** Private to your user account, but not encrypted. Don't paste secrets into a conversation.
 - **No way to switch saving off.**
-- **Effort is untested against the real API:** the request field and the capability lookup follow the documentation.
+- **Effort is confirmed by one controlled comparison,** not by automated tests: the same question at low and high effort against the real API gave clearly different thinking-token counts (Ben, October 2026).
 - **No other provider exists yet,** so the "effort is part of the model" path is exercised only by the fake one.
 - **Switching models is untested against the real API.** In particular, how a different model treats the old one's reasoning blocks is taken from the documentation.
 - **A redrawn tool call shows less than the original did:** no diff, no command output, just the first line of the result.
