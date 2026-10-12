@@ -1,6 +1,11 @@
-"""The terminal front end: a REPL (Read, Eval, Print, Loop).
+"""The plain front end: a REPL (Read, Eval, Print, Loop).
 
     read a line -> run a turn on the agent -> print events as they stream -> repeat
+
+This was Wren's only interface until step 4. The full-screen app (tui.py) is
+now what you get by default; this one remains for `wren --plain`, and for
+whenever Wren isn't attached to a real terminal (a pipe, a script, the
+tests). It needs nothing but print() and input().
 
 Everything about *showing* things lives here, and nothing about *doing*
 things. The agent hands us events; we decide how they look. Swapping this
@@ -13,16 +18,15 @@ like.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
-import textwrap
 from contextlib import closing
 from typing import Any, Callable, TextIO
 
 from wren import __version__
 from wren.agent import Agent, ToolFinished, ToolStarted, TurnFinished
-from wren.messages import Completed, Message, TextBlock, TextDelta, ToolResultBlock, ToolUseBlock
+from wren.commands import format_call, run_command
+from wren.messages import Completed, TextDelta
 from wren.tools import Decision, PermissionRequest
 
 try:
@@ -55,20 +59,10 @@ PROMPT = "\001\033[1;36m\002›\001\033[0m\002 " if _COLOR else "> "
 # to judge most changes; a huge one says how much more there is.
 MAX_DETAIL_LINES = 40
 
-HELP = """\
-/help          show this list
-/tools         list the tools Wren can use
-/tools NAME    show exactly what the model is told about one tool
-/history       show the conversation exactly as Wren holds it
-/system        show the system prompt sent with every request
-/usage         tokens used this session
-/permissions   show what you've said Wren may always do this session
-/clear         start a fresh conversation
-/quit          exit (Ctrl-D works too)
-
+KEYS_HELP = """\
 Wren asks before it edits a file or runs a command: y, n, or a for "always".
 Ctrl-C while Wren is working stops it. Whatever it had already done stays done,
-and stays in the conversation."""
+and stays in the conversation. Ctrl-D quits."""
 
 
 class Repl:
@@ -191,70 +185,14 @@ class Repl:
                 return Decision.ALWAYS
             self.say(dim("    Please answer " + ("y, n or a." if request.scope is not None else "y or n.")))
 
-    def show_permissions(self) -> None:
-        always = self.agent.tools.permissions.always
-        if not always:
-            self.say(dim("Nothing is always allowed: Wren asks before every edit and command."))
-            return
-        self.say("Allowed without asking, until you quit:")
-        for label in always.values():
-            self.say(f"  {label}")
-
     # --- Slash commands -----------------------------------------------------
 
     def command(self, line: str) -> bool:
         """Run a slash command. Returns False when the REPL should exit."""
-        name, *args = line.split()
-        name = name.lower()
-        if name in ("/quit", "/exit"):
-            return False
-        if name == "/help":
-            self.say(HELP)
-        elif name == "/clear":
-            self.agent.reset()
-            self.say(dim("Conversation cleared."))
-        elif name == "/usage":
-            u = self.agent.usage
-            self.say(f"{u.input_tokens:,} tokens in · {u.output_tokens:,} out (this session)")
-        elif name == "/system":
-            self.say(self.agent.system_prompt)
-        elif name == "/history":
-            self.show_history()
-        elif name == "/permissions":
-            self.show_permissions()
-        elif name == "/tools":
-            self.show_tools(args[0] if args else None)
-        else:
-            self.say(red(f"unknown command {name}") + dim("  (try /help)"))
-        return True
-
-    def show_tools(self, name: str | None) -> None:
-        if name is None:
-            for tool in self.agent.tools:
-                first_sentence = tool.description.split(". ")[0].rstrip(".")
-                self.say(f"{bold(tool.name):<24} {first_sentence}")
-            self.say(dim("\n/tools NAME shows exactly what the model is told about a tool."))
-            return
-        tool = self.agent.tools.get(name)
-        if tool is None:
-            self.say(red(f"no tool named {name}"))
-            return
-        spec = tool.spec()
-        self.say(json.dumps({"name": spec.name, "description": spec.description, "input_schema": spec.input_schema}, indent=2))
-
-    def show_history(self) -> None:
-        if not self.agent.messages:
-            self.say(dim("(empty: nothing said yet)"))
-            return
-        for i, message in enumerate(self.agent.messages, 1):
-            self.say(bold(f"[{i}] {message.role}"))
-            self.say(textwrap.indent(_describe(message), "    "))
-
-
-def format_call(call: ToolUseBlock) -> str:
-    """A tool call written like a Python call: read_file(path='app.py')."""
-    args = ", ".join(f"{key}={_shorten(repr(value), 60)}" for key, value in call.input.items())
-    return f"{call.name}({args})"
+        result = run_command(self.agent, line, KEYS_HELP)
+        if result.text:
+            self.say(red(result.text) if result.is_error else result.text)
+        return not result.quit
 
 
 def _colour_diff_line(line: str) -> str:
@@ -264,20 +202,3 @@ def _colour_diff_line(line: str) -> str:
     if line.startswith("-") and not line.startswith("---"):
         return red(line)
     return line
-
-
-def _shorten(text: str, limit: int) -> str:
-    return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
-def _describe(message: Message) -> str:
-    parts = []
-    for block in message.content:
-        if isinstance(block, TextBlock):
-            parts.append(block.text)
-        elif isinstance(block, ToolUseBlock):
-            parts.append(f"<tool_use id={block.id} {block.name} {json.dumps(block.input)}>")
-        elif isinstance(block, ToolResultBlock):
-            error = " error" if block.is_error else ""
-            parts.append(f"<tool_result for={block.tool_use_id}{error}> {_shorten(block.content, 300)!r}")
-    return "\n".join(parts)

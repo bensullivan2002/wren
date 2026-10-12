@@ -2,7 +2,7 @@
 
 A small, readable coding-agent harness for the terminal, built step by step so every part can be understood.
 
-> **Status: step 4 of the roadmap.** Wren chats with Claude, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first. Use it in its own plain terminal REPL, or through a richer interface such as [Toad](https://github.com/batrachianai/toad), which drives Wren over the Agent Client Protocol. The shell is not sandboxed, so read what you approve.
+> **Status: step 4 of the roadmap.** Wren is a full-screen terminal app that chats with Claude, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first. The shell is not sandboxed, so read what you approve.
 
 ## Quickstart
 
@@ -23,44 +23,27 @@ If you use [uv](https://docs.astral.sh/uv/): `uv sync --extra dev`, then `uv run
 
 **No API key?** `wren --provider fake` starts Wren with a pretend model. It's free and offline. It echoes what you type, except for a few commands that make it call real tools, so you can watch the agent loop and the permission prompts work: `ls [pattern]`, `read <path>`, `search <regex>`, `write <path> <text>`, `edit <path> <old> => <new>`, `run <command>`.
 
-## Using it with Toad (ACP)
+## Using it
 
-`wren acp` makes Wren speak the [Agent Client Protocol](https://agentclientprotocol.com) on stdin and stdout, so an ACP client can be its interface: rendered markdown, diffs, permission dialogs. [Toad](https://github.com/batrachianai/toad) is one such client, for macOS and Linux:
+Run `wren` inside the project you want to work on: its file tools can only see that folder. It opens a full-screen app:
 
-```bash
-uv tool install -U batrachian-toad --python 3.14
-cd ~/some/project
-toad acp "/full/path/to/wren/.venv/bin/wren acp"
-```
+![Wren asking permission for an edit](docs/images/wren-tui.svg)
 
-Toad starts Wren in the project folder and passes on your environment, so `ANTHROPIC_API_KEY` must be set in the shell you start Toad from. To try it with no key, add `--provider fake` inside the quotes. Flags such as `--model` go there too.
+Type in the box at the bottom. Replies stream into the conversation as rendered markdown. Each tool call shows as one line; edits show their diff, and commands the end of their output.
 
-Wren's ACP mode is tested against the protocol, but has not yet been run under Toad itself. It does not support saved sessions, modes or images yet.
+| Key | What it does |
+| --- | --- |
+| Enter | Send your message |
+| Ctrl+J | Start a new line in your message |
+| Escape | Stop Wren while it's working |
+| `y` / `a` / `n` | Answer a permission question |
+| Ctrl+C | Copy the text you've selected with the mouse |
+| Ctrl+P | Textual's command palette (themes, and more) |
+| Ctrl+Q | Quit |
 
-## Using the REPL
+Escape stops Wren at once in most cases. Anything it had already done stays done, and stays in the conversation, so Wren knows where it left off.
 
-Run `wren` inside the project you want to work on: its file tools can only see that folder. Type a message and press Enter. Replies stream in as they're written. Tool calls appear as they happen, followed by a dim line with the tokens the turn used:
-
-```
-› the area function is wrong, fix it and run the tests
-Let me look.
-  ▸ read_file(path='shapes.py')  → 2 lines
-  ▸ edit_file(path='shapes.py', old_string='w + h', new_string='w * h')
-    Edit shapes.py
-    │ @@ -1,2 +1,2 @@
-    │  def area(w, h):
-    │ -    return w + h
-    │ +    return w * h
-    Allow? [y]es / [n]o / [a]lways allow all file edits this session: y
-  → shapes.py +1 −1
-  ▸ shell(command='pytest -q')
-    Run a shell command
-    │ pytest -q
-    Allow? [y]es / [n]o / [a]lways allow commands starting with `pytest` this session: a
-  → 3 lines
-Fixed: area multiplied nothing, it added (shapes.py:2). The tests pass.
-↳ 9,480 in · 420 out · 4 model calls
-```
+**Plain mode.** `wren --plain` gives the original line-by-line interface, and Wren uses it automatically when its input or output isn't a terminal (`echo "explain main.py" | wren`). There, Ctrl-C stops a turn and Ctrl-D quits.
 
 ### Permission
 
@@ -84,9 +67,7 @@ Wren asks before every file edit and every shell command, and shows you exactly 
 | `/usage`        | Tokens used this session                              |
 | `/permissions`  | Show what you've said Wren may always do this session |
 | `/clear`        | Start a fresh conversation                            |
-| `/quit`         | Exit (Ctrl-D works too)                               |
-
-Ctrl-C while Wren is working stops it. Anything it had already done stays done, and stays in the conversation, so Wren knows where it left off. Ctrl-C at the prompt clears the line.
+| `/quit`         | Exit                                                  |
 
 ### Tools
 
@@ -103,8 +84,6 @@ The file tools are confined to the working directory, skip folders like `.git`, 
 
 ## Configuration
 
-`wren [chat|acp] [flags]`: `chat`, the default, is the REPL; `acp` is for clients such as Toad.
-
 Each setting can come from a flag, an environment variable, or the default, in that order of priority.
 
 | Flag           | Environment variable | Default             |
@@ -113,6 +92,7 @@ Each setting can come from a flag, an environment variable, or the default, in t
 | `--model`      | `WREN_MODEL`         | `claude-sonnet-5-5` |
 | `--max-tokens` | `WREN_MAX_TOKENS`    | `8192`              |
 | `--max-steps`  | `WREN_MAX_STEPS`     | `25`                |
+| `--plain`      |                      | off                 |
 
 `--max-tokens` limits one reply; `--max-steps` limits how many times Wren calls the model in one turn before it stops and checks in with you.
 
@@ -126,20 +106,18 @@ The docs are written to teach, not just to reference:
   1. [Foundations: a chat loop you own](docs/journal/01-foundations.md)
   2. [Tools: the agent loop](docs/journal/02-tools.md)
   3. [Acting safely: edits, commands and permission](docs/journal/03-acting-safely.md)
-  4. [Borrowing a UI: Wren speaks ACP](docs/journal/04-acp.md)
+  4. [A full-screen interface](docs/journal/04-terminal-ui.md)
 
 ## Roadmap
 
 - [x] **1. Foundations**: conversation state, a swappable model provider, streaming, the terminal loop
 - [x] **2. Tools, read-only**: the real agent loop; Wren can list, read and search files
 - [x] **3. Acting safely**: typed tool inputs (Pydantic), editing files and running commands, behind permission prompts
-- [x] **4. A better UI, borrowed**: Wren speaks the Agent Client Protocol, so Toad (or an editor) can be its interface
+- [x] **4. A better terminal UI**: a full-screen app with rendered markdown, diffs, in-place permission questions, and Escape to stop
 - [ ] **5. Context management**: token budgets, compaction, prompt caching
 - [ ] **6. Project memory**: a `WREN.md` file of standing instructions per project
 - [ ] **7. Sessions**: save, list and resume conversations
 - [ ] **8. Extensions**: subagents, MCP servers, hooks
-
-Unscheduled: a nicer built-in REPL (markdown, spinners); sandboxing the shell; saved permission rules; an async core.
 
 ## Development
 
@@ -147,7 +125,7 @@ Unscheduled: a nicer built-in REPL (markdown, spinners); sandboxing the shell; s
 pytest
 ```
 
-The tests use a fake model, so they need no API key and no network.
+The tests use a fake model, so they need no API key and no network. The app's tests run it headless and press its keys.
 
 ```
 src/wren/
@@ -156,10 +134,9 @@ src/wren/
   prompts.py        the system prompt, including live environment details
   agent.py          owns the conversation; runs the agent loop
   messages.py       provider-neutral message types, and the history rules
-  repl.py           front end for a person: the terminal REPL
-  acp/              front end for a program: the Agent Client Protocol
-    jsonrpc.py      the wire: JSON-RPC messages, one per line, both ways
-    server.py       translates ACP requests, updates and permission to and from the agent
+  tui.py            the full-screen front end (Textual)
+  repl.py           the plain front end (--plain, pipes)
+  commands.py       slash commands, shared by both front ends
   providers/
     base.py         the Provider interface
     anthropic.py    Claude, via the Anthropic Messages API

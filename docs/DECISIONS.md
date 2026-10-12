@@ -194,52 +194,54 @@ Saying no doesn't end the turn. The model gets a result saying the user declined
 
 ---
 
-### D32. The better UI is someone else's: Wren speaks ACP, and Toad draws it
+### D32. Wren's interface is its own full-screen Textual app
 *Step 4 · you*
 
-Step 4 was planned as "a better terminal UI". Instead, Wren gained an ACP mode (`wren acp`), so that Toad, or any other ACP client, is its interface.
-*The route:* the first recommendation was our own inline UI on Rich and prompt_toolkit. You then chose a full-screen Textual app of our own, and after seeing what that involved (Textual is async, the agent is not) chose Toad.
-*Not chosen:* Rich + prompt_toolkit (Aider's approach: the most to learn about terminal UIs for the least machinery). Our own Textual app (highest ceiling, largest rewrite). Rich alone.
-*Cost:* nothing was learned about building a terminal UI; Wren's own REPL is unchanged and plain; the polished experience depends on a young third-party app that needs macOS or Linux.
+`wren` opens a full-screen terminal app built on Textual: a scrolling conversation of rendered markdown, a prompt box, tool calls with diffs, and permission questions in place.
+*The route:* the first recommendation was an inline UI on Rich and prompt_toolkit. We then built an ACP mode so that Toad, a third-party Textual app, could be the interface (see D33). You chose Wren's own Textual app after trying that.
+*Not chosen:* Rich + prompt_toolkit (inline, keeps the terminal's scrollback, the least machinery; Aider's approach). Rich alone. A third-party client over ACP (D33).
+*Cost:* an event-driven, two-thread program is harder to follow than a REPL; the conversation isn't in your terminal's scrollback after you quit; Textual is a sizeable dependency.
 
-### D33. The ACP layer is hand-written, on the standard library
+### D33. An ACP mode was built, then removed
 *Step 4 · you*
 
-`acp/jsonrpc.py` and `acp/server.py` implement the wire and the protocol directly: no new dependency, and every message is visible.
-*Not chosen:* the official `agent-client-protocol` Python SDK (typed models, kept current with the spec; but its base classes are async, so the synchronous agent would need bridging, and the wire becomes a black box).
-*Cost:* we track spec changes ourselves, and implement only what Wren needs.
+For one commit (`f2f8e5e`), `wren acp` made Wren an Agent Client Protocol agent: a hand-written JSON-RPC server on stdin and stdout, so that Toad or an editor could drive it. It was removed in the same step.
+*Why removed:* driving Wren through another program felt like leaving Wren, and a second way in would confuse users and add code to keep working.
+*What stayed:* the two neutral hooks it prompted (D36), which the Textual app needed too.
+*If it comes back:* the natural place is step 8, beside MCP. The front-end contract in ARCHITECTURE.md is what it would implement.
 
-### D34. Threads, not async: one reader, one thread per turn
+### D34. Threads, not async: a turn runs on a worker thread
 *Step 4 · design*
 
-The agent stays synchronous. The main thread reads stdin; each `session/prompt` runs on its own thread. Cancelling is cooperative: a flag the turn checks at each event, and the shell polls.
-*Not chosen:* rewriting the agent, providers and tools as async (how most production agents are built; cancellation would be immediate everywhere, but every core file and most tests would change).
-*Cost:* a cancel can lag while the model is producing its first words. This question was put to you during the Textual plan and left open when you changed course; it's a design call here, and worth revisiting if parallel tool calls or subagents (step 8) need it.
+The agent, providers and tools stay synchronous. The app runs each turn on a worker thread, which reaches the screen only through `call_from_thread`. Stopping is cooperative: a flag the worker checks at each event, and the shell polls.
+*Not chosen:* rewriting the core as async (how most production agents are built; stopping would be immediate everywhere, but every core file and most tests would change).
+*Cost:* Escape can lag while the model is producing its first words. This question was put to you and left unanswered when plans changed, so it's a design call, and worth revisiting if parallel tool calls or subagents (step 8) need it.
 
-### D35. Wren keeps running its own tools under ACP
+### D35. The plain REPL stays, as `--plain` and for pipes
 *Step 4 · design*
 
-ACP lets an agent delegate file access and terminals to the client. Wren doesn't: the working-directory fence, permission checks and tests live in Wren's tools, and delegating would mean a second implementation of each.
-*Cost:* unsaved changes in an editor's buffers are invisible to Wren, and commands don't appear in the client's own terminal panes.
+`repl.py` remains. Wren uses it when asked (`--plain`) or when input or output isn't a terminal. It needs nothing but `print` and `input`, it's what the end-to-end tests drive, and a second front end keeps the boundary between agent and interface honest.
+*Not chosen:* deleting it (less code, but no fallback, no scripting, and subprocess tests would need a terminal emulator).
 
-### D36. The REPL stays, as a second front end
+### D36. Two neutral hooks for front ends; nothing Textual-specific in the core
 *Step 4 · design*
 
-`wren` with no mode still starts the plain REPL. It needs no other program, it's what the end-to-end tests drive, and having two front ends keeps the boundary between agent and interface honest.
+The tools layer gained `FileChange` (an edit as before-and-after text, on `PermissionRequest` and `ToolResult`) and `ToolContext.should_stop` (so a long-running tool can be stopped). Slash commands moved to `commands.py`, returning text. Textual is imported only by `tui.py`.
 
-### D37. Front-end vocabulary stays out of the core; two neutral hooks were added
-*Step 4 · design*
-
-ACP's terms (tool kinds, titles, update types) live only in `acp/`. The tools layer gained two things any front end could use: `FileChange` (an edit as before-and-after text, on `PermissionRequest` and `ToolResult`) and `ToolContext.should_stop` (so a long-running tool can be stopped).
-*Not chosen:* a `kind` attribute on each tool (simpler lookup, but it would put one client protocol's categories on every tool).
-
-### D38. Tolerant of clients that stray from the spec
-*Step 4 · design*
-
-`session/cancel` is accepted as a notification (per the spec) or as a request (answered with null). A cancel also ends Wren's wait for a permission answer, without relying on the client to send "cancelled". Both came from reading Toad's client code.
-
-### D39. Clients are shown the gist of a tool result, not all of it
+### D37. Tool calls are shown compactly, with the detail that matters
 *Step 4 · you*
 
-Your choice of "compact, with key detail": a finished tool call sends the diff for an edit, the output for a command (the last 4,000 characters), the error for a failure, and a one-line summary otherwise. The model still receives the full result.
-*Not chosen:* summaries only (edits under "always allow" would happen unseen); everything the model sees (noisy).
+One line per tool call. Edits always show their diff; commands show the last lines of their output; everything else shows a one-line summary. The model still receives the full result.
+*Not chosen:* summaries only (edits under "always allow" would happen unseen); everything the model sees (noisy; could be a later verbose mode).
+
+### D38. Permission questions appear in the conversation, not in a dialog
+*Step 4 · design*
+
+A question is a widget in the transcript that takes the keyboard focus and is answered with one key. It reads in order with what led to it, and you can still scroll back while deciding.
+*Not chosen:* a modal dialog over the screen (more prominent, but it hides the context you need to decide).
+
+### D39. Enter sends; Ctrl+J adds a line; Escape stops; Ctrl+Q quits
+*Step 4 · design*
+
+Ctrl+C is left as copy, Textual's convention, so text can be copied out of a full-screen app. The REPL's Ctrl-C-to-stop therefore becomes Escape in the app.
+*Not chosen:* Shift+Enter for a new line (many terminals can't tell it from Enter). Ctrl+C to stop (it would take away copying).

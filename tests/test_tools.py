@@ -538,6 +538,14 @@ def test_shell_keeps_the_end_of_very_long_output(tools, monkeypatch):
     assert "showing the last 20 of" in result.content and result.content.endswith("99\n100")
 
 
+@posix_only
+def test_shell_gives_up_early_when_asked_to_stop(tools):
+    # A front end that can cancel (the full-screen app's Escape) sets this hook.
+    tools.context.should_stop = lambda: True
+    result = err(tools.run("shell", {"command": "echo started; sleep 30"}))
+    assert result.content.startswith("started") and "Stopped by the user" in result.content
+
+
 def test_shell_refuses_an_empty_command_and_a_silly_timeout(tools, user):
     assert "command is empty" in err(tools.run("shell", {"command": "  "})).content
     assert "less than or equal to 600" in err(tools.run("shell", {"command": "true", "timeout": 9999})).content

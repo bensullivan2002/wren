@@ -9,10 +9,13 @@ dependencies = [
     # Tool inputs are Pydantic models. The anthropic SDK already depends on
     # Pydantic, but we import it ourselves, so we say so.
     "pydantic>=2",
+    # The full-screen terminal interface (tui.py). Brings in Rich, which
+    # renders the markdown and coloured text.
+    "textual>=8",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
 
 # `pip install -e .` puts a `wren` command on your PATH that calls wren.cli:main
 [project.scripts]
@@ -27,4 +30,5 @@ packages = ["src/wren"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"  # lets a test be `async def`: needed to drive the Textual app
 pythonpath = ["src"]

@@ -11,8 +11,8 @@ part of Wren, so the parts themselves don't have to know about each other:
 
 There are two front ends, and the agent can't tell them apart:
 
-    wren        the REPL: a person at a keyboard            (repl.py)
-    wren acp    ACP: a program, such as the Toad terminal UI (acp/)
+    WrenApp (tui.py)   the full-screen app: what you get in a terminal
+    Repl (repl.py)     plain text in, plain text out: `--plain`, pipes, scripts
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ import sys
 from pathlib import Path
 
 from wren import __version__
-from wren.acp import run_acp
 from wren.agent import Agent
 from wren.config import Config
 from wren.prompts import build_system_prompt
@@ -37,18 +36,13 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         prog="wren",
         description="A small, readable coding agent for your terminal.",
     )
-    parser.add_argument(
-        "mode",
-        nargs="?",
-        choices=["chat", "acp"],
-        default="chat",
-        help="chat (the default) talks to you in the terminal; acp speaks the Agent Client Protocol "
-        "on stdin/stdout, for a client such as Toad to drive",
-    )
     parser.add_argument("--provider", choices=PROVIDERS, help="model provider (env: WREN_PROVIDER)")
     parser.add_argument("--model", help="model name, e.g. claude-opus-5-5 (env: WREN_MODEL)")
     parser.add_argument("--max-tokens", type=int, help="longest reply allowed (env: WREN_MAX_TOKENS)")
     parser.add_argument("--max-steps", type=int, help="most model calls in one turn (env: WREN_MAX_STEPS)")
+    parser.add_argument(
+        "--plain", action="store_true", help="use the plain line-by-line interface, not the full-screen app"
+    )
     parser.add_argument("--version", action="version", version=f"wren {__version__}")
     return parser.parse_args(argv)
 
@@ -71,24 +65,25 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    root = Path.cwd()
     provider = make_provider(config.provider, config.model)
-
-    def make_agent(root: Path, permissions: Permissions) -> Agent:
-        tools = ToolRegistry(default_tools(), root=root, permissions=permissions)
-        return Agent(provider, build_system_prompt(root), config.max_tokens, tools, config.max_steps)
-
-    if args.mode == "acp":
-        # The client decides the working directory, per session, and may
-        # open several sessions: so it gets the recipe, not one agent.
-        run_acp(make_agent)
-        return 0
-
     permissions = Permissions()
-    agent = make_agent(Path.cwd(), permissions)
-    repl = Repl(agent)
-    # The one loop in the wiring: tools need to ask the user, and the REPL is
-    # the part that talks to the user. Until this line, Permissions has
-    # nobody to ask, and so refuses everything.
-    permissions.ask = repl.ask_permission
-    repl.run()
+    tools = ToolRegistry(default_tools(), root=root, permissions=permissions)
+    agent = Agent(provider, build_system_prompt(root), config.max_tokens, tools, config.max_steps)
+
+    # A full-screen app needs a real terminal at both ends. When input or
+    # output is a pipe or a file (`echo hi | wren`, the tests), fall back to
+    # the plain REPL, which only needs lines of text.
+    if args.plain or not (sys.stdin.isatty() and sys.stdout.isatty()):
+        repl = Repl(agent)
+        # The one loop in the wiring: tools need to ask the user, and the
+        # front end is the part that talks to the user. Until this line,
+        # Permissions has nobody to ask, and so refuses everything.
+        permissions.ask = repl.ask_permission
+        repl.run()
+    else:
+        # Imported here so that plain mode never loads Textual at all.
+        from wren.tui import WrenApp
+
+        WrenApp(agent).run()  # wires itself to the same hooks in its __init__
     return 0

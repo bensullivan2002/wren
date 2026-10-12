@@ -10,12 +10,9 @@ Wren is that harness. `cli.py` builds the parts and wires them together:
 
 ```mermaid
 flowchart LR
-    you([You]) <-->|keyboard / screen| repl["<b>Repl</b><br/>repl.py<br/><i>wren</i>"]
-    client(["Toad, or an editor"]) <-->|"JSON-RPC on stdin / stdout"| acp["<b>AcpServer</b><br/>acp/<br/><i>wren acp</i>"]
-    repl -->|"run_turn(text)"| agent["<b>Agent</b><br/>agent.py<br/><i>the agent loop</i>"]
-    acp -->|"run_turn(text)"| agent
-    agent -.->|events| repl
-    agent -.->|events| acp
+    you([You]) <-->|keyboard / screen| ui["<b>A front end</b><br/>WrenApp (tui.py), full-screen<br/>or Repl (repl.py), plain"]
+    ui -->|"run_turn(text)"| agent["<b>Agent</b><br/>agent.py<br/><i>the agent loop</i>"]
+    agent -.->|events| ui
     agent -->|"stream(system, messages, tools)"| provider{{"<b>Provider</b><br/>providers/"}}
     provider -.->|stream events| agent
     provider --- anthropic["AnthropicProvider"] --> api[("Claude API")]
@@ -23,20 +20,19 @@ flowchart LR
     agent -->|"run(name, args)"| registry["<b>ToolRegistry</b><br/>tools/registry.py"]
     registry -.->|ToolResult| agent
     registry -->|"allows(request)?"| perms["<b>Permissions</b><br/>tools/permissions.py"]
-    perms -.->|"ask(request)"| repl
-    perms -.->|"ask(request)"| acp
+    perms -.->|"ask(request)"| ui
     registry --> ro["list_files · read_file · search<br/><i>read-only, never ask</i>"] --> fs[("Your project<br/>(working directory only)")]
     registry --> rw["edit_file · write_file<br/><i>ask first</i>"] --> fs
     registry --> sh["shell<br/><i>asks first</i>"] --> os[("Your machine<br/>(not fenced)")]
 ```
 
-Solid arrows are calls; dotted arrows are what comes back, or a callback. Only one front end runs at a time: `wren` starts the REPL, `wren acp` starts the ACP server.
+Solid arrows are calls; dotted arrows are what comes back, or a callback. One front end runs at a time: the full-screen app in a terminal, the plain REPL with `--plain` or when input or output is a pipe.
 
 ## The parts
 
 | Part | File | Its job | What it knows about |
 | --- | --- | --- | --- |
-| **Entry point** | `cli.py` | Parse flags, load config, build everything, start the REPL | Everything (the only file that does) |
+| **Entry point** | `cli.py` | Parse flags, load config, build everything, pick and start a front end | Everything (the only file that does) |
 | **Config** | `config.py` | Decide each setting: flag, then env var, then default | Nothing else |
 | **System prompt** | `prompts.py` | Who the model is, how to work, plus live facts: folder, OS, date | Nothing else |
 | **Agent** | `agent.py` | Own the conversation; run the agent loop; keep history valid and truthful | A `Provider`, a `ToolRegistry`, the message types |
@@ -46,11 +42,11 @@ Solid arrows are calls; dotted arrows are what comes back, or a callback. Only o
 | **Tool base** | `tools/base.py` | What a tool is; turn an `Input` model into a schema and into checked arguments | Pydantic |
 | **Permissions** | `tools/permissions.py` | Remember what's "always" allowed this session; otherwise ask, through a callback | Nothing else |
 | **Tools** | `tools/*.py` | Do one job each; describe themselves to the model, and their effects to the user | The working directory (via `ToolContext`) |
-| **REPL** | `repl.py` | Front end for a person: read input, show events, ask permission questions, run slash commands | The `Agent`, the event and message types |
-| **ACP server** | `acp/server.py` | Front end for a program: translate ACP requests into turns, events into `session/update`, permission into `session/request_permission` | The `Agent`, the event and message types, ACP's vocabulary |
-| **JSON-RPC** | `acp/jsonrpc.py` | The wire: one JSON message per line, both directions; match responses to requests by id | Nothing else |
+| **App** | `tui.py` | The full-screen front end (Textual): run each turn on a worker thread, draw events as widgets, ask permission questions, stop on Escape | The `Agent`, the event types, Textual |
+| **REPL** | `repl.py` | The plain front end: read a line, print events, ask permission questions with `input()` | The `Agent`, the event types |
+| **Commands** | `commands.py` | Slash commands, returning text for either front end to show | The `Agent` |
 
-The rule behind this table: **each part knows as little as possible about the others.** The agent never prints and never touches files. Tools don't know there's a model, and never call `input()`. Nothing outside `providers/anthropic.py` knows what Anthropic's JSON looks like, and nothing outside `acp/` knows what ACP's looks like. That's what lets us swap the model, swap the interface, add tools, or test any part alone.
+The rule behind this table: **each part knows as little as possible about the others.** The agent never prints and never touches files. Tools don't know there's a model, and never call `input()`. Nothing outside `providers/anthropic.py` knows what Anthropic's JSON looks like. Nothing outside `tui.py` knows about Textual. That's what lets us swap the model, have two interfaces, add tools, or test any part alone.
 
 ## Anatomy of a tool
 
@@ -70,7 +66,7 @@ One Pydantic `Input` model per tool is the single source for the JSON Schema sen
 
 What happens when you type *"rename helper to assist in util.py"* and press Enter:
 
-1. **`Repl.turn`** calls `agent.run_turn(text)` and shows each event it yields.
+1. **The front end** calls `agent.run_turn(text)` and shows each event it yields. (In the app, that call is on a worker thread: see "The full-screen app" below.)
 2. **`Agent.run_turn`** appends your message.
 3. **The loop begins.** `_call_model` sends the system prompt, the **entire** history and the **tool specs** to the provider.
 4. **The provider** translates to Anthropic's format and streams the reply. Text arrives as `TextDelta` events, which the REPL prints immediately. One `Completed` event ends the reply, carrying the assembled message, the stop reason and the token counts.
@@ -81,52 +77,48 @@ What happens when you type *"rename helper to assist in util.py"* and press Ente
    1. finds the tool, or returns an error result listing the real ones;
    2. parses the arguments into the tool's `Input`, filling in defaults (`Tool.parse`);
    3. asks the tool what it's about to change (`Tool.permission`). Read-only tools say nothing. `edit_file` works out the edit and returns a diff; an edit that can't work fails here;
-   4. if there's a request, asks `Permissions.allows`. That returns at once if the scope is already "always" allowed, and otherwise calls the REPL's `ask_permission`, which shows the request and reads y / n / a. A no becomes an error result telling the model not to retry;
+   4. if there's a request, asks `Permissions.allows`. That returns at once if the scope is already "always" allowed, and otherwise calls the front end's `ask_permission`, which shows the request and waits for y / n / a. A no becomes an error result telling the model not to retry;
    5. calls `tool.run(args, ctx)`, turning any exception into an error result;
    6. caps the output's size.
 7. **All the results go into one user message**, appended to the history, and the loop returns to step 3.
 8. **If the loop reaches `max_steps`,** the agent appends a short assistant note saying it stopped, and yields `TurnFinished(hit_step_limit=True)`.
 
-**If the turn is cut short** between steps 2 and 8 (Ctrl-C, a network error, a bad API key), nothing is deleted. `Agent._close_unfinished_turn` ties off the loose ends: every unanswered tool request gets a result (the real one if the tool finished, otherwise a note that it was cut short or never ran), and a closing assistant note records where and why the turn stopped, after any text that had already streamed.
+**If the turn is cut short** between steps 2 and 8 (Escape or Ctrl-C, a network error, a bad API key), nothing is deleted. `Agent._close_unfinished_turn` ties off the loose ends: every unanswered tool request gets a result (the real one if the tool finished, otherwise a note that it was cut short or never ran), and a closing assistant note records where and why the turn stopped, after any text that had already streamed.
 
 ## Events and callbacks: the front-end contract
 
-The agent's output is a stream of events. Each front end decides what to do with them:
+The agent's output is a stream of events. Each front end decides how they look:
 
-| Event | From | Meaning | REPL shows | ACP sends |
+| Event | From | Meaning | In the app | In the REPL |
 | --- | --- | --- | --- | --- |
-| `TextDelta` | provider | a fragment of the model's text | printed as it arrives | `session/update` `agent_message_chunk` |
-| `Completed` | provider | one model call finished | newline; warning if cut off | nothing (its stop reason is kept for the response) |
-| `ToolStarted` | agent | about to run a tool | `▸ edit_file(path='util.py', …)` | `session/update` `tool_call` |
-| `ToolFinished` | agent | the tool's result | `→ util.py +1 −1`, or `✗ declined` | `session/update` `tool_call_update` |
-| `TurnFinished` | agent | the whole turn is over | `↳ 3,210 in · 250 out · 2 model calls` | the `session/prompt` response: `{"stopReason": …}` |
+| `TextDelta` | provider | a fragment of the model's text | appended to a `Markdown` widget | printed as it arrives |
+| `Completed` | provider | one model call finished | the reply widget is closed | newline; warning if cut off |
+| `ToolStarted` | agent | about to run a tool | a `ToolCallView` line, ending `…` | `▸ edit_file(path='util.py', …)` |
+| `ToolFinished` | agent | the tool's result | summary, plus the diff or the end of a command's output | `→ util.py +1 −1`, or `✗ declined` |
+| `TurnFinished` | agent | the whole turn is over | status line updated | `↳ 3,210 in · 250 out · 2 model calls` |
 
 Three things flow the other way, from a front end into the core:
 
-| Hook | Set on | REPL | ACP |
+| Hook | Set on | In the app | In the REPL |
 | --- | --- | --- | --- |
-| Permission question | `Permissions.ask` | `Repl.ask_permission`: prints, then `input()` | `session/request_permission`, then waits for the response |
-| Stop the turn | closing the `run_turn` generator | Ctrl-C | `session/cancel` sets a flag; the turn's loop breaks |
-| Stop a slow tool | `ToolContext.should_stop` | not used (Ctrl-C interrupts directly) | the same cancel flag; the shell polls it |
+| Permission question | `Permissions.ask` | `WrenApp.ask_permission`: shows a `PermissionPrompt`, waits for a key | `Repl.ask_permission`: prints, then `input()` |
+| Stop the turn | closing the `run_turn` generator | Escape sets a flag; the worker's loop breaks | Ctrl-C |
+| Stop a slow tool | `ToolContext.should_stop` | the same flag; the shell polls it | not used (Ctrl-C interrupts directly) |
 
 A permission question needs an answer *before* the tool runs, so it's a callback, not an event. It's called synchronously, between `ToolStarted` and `ToolFinished`.
 
-## ACP mode
+## The full-screen app
 
-`wren acp` reads JSON-RPC requests from stdin and writes to stdout. It answers four methods:
+Textual runs an event loop on the main thread: it redraws, reads keys, and calls our handlers, each of which must return quickly. The agent blocks for seconds at a time. So:
 
-| Client sends | Wren does |
-| --- | --- |
-| `initialize` | returns protocol version 1, its name and version, and its capabilities (text and embedded files in prompts; no saved sessions) |
-| `session/new` `{cwd}` | builds a new `Agent` rooted at `cwd`, with its own `Permissions`; returns a session id |
-| `session/prompt` `{sessionId, prompt}` | runs one turn on its own thread; responds at the end with the stop reason: `end_turn`, `max_tokens`, `max_turn_requests`, `refusal` or `cancelled` |
-| `session/cancel` `{sessionId}` | sets the session's cancel flag (accepted as a notification or a request) |
+| Thread | Runs | May touch widgets? |
+| --- | --- | --- |
+| app (the event loop) | `compose`, key and message handlers, `show_event`, `show_question`, `turn_ended` | yes |
+| worker (one per turn) | `run_turn`: the agent's loop, and everything it calls, including tools and `ask_permission` | **no**: it asks the app thread, with `call_from_thread`, and waits |
 
-**Threads.** The main thread reads stdin: it answers the quick requests, delivers responses to Wren's own requests, and sets cancel flags. Each `session/prompt` gets a thread, because stdin must keep being read while a turn runs. A lock around writing keeps messages whole.
+Three objects cross between them: each event (worker to app, in order, one at a time); a `Future` holding the answer to a permission question (app to worker); and a `threading.Event`, the stop flag (app to worker).
 
-**Stdout carries only the protocol.** `run_acp` keeps the real stdout for the connection and points `sys.stdout` at stderr, so a stray `print` can't corrupt the stream.
-
-**What isn't used.** ACP's client-side file and terminal methods, modes, plans, saved sessions and MCP servers. Wren runs its own tools, inside its own fence and permission checks.
+The screen is a column: a header line, the scrolling transcript, a status line, and the prompt box. The transcript holds one widget per thing that happened: your message, a reply, a tool call, a question, a note. All text from outside (model, files, commands) is passed as Rich `Text` or with `markup=False`, so it's never read as Textual markup.
 
 ## Permission scopes
 
@@ -151,18 +143,17 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 6. **Nobody is asked about a call that can't run.** Arguments are validated, and edits worked out, before the question.
 7. **File tools stay inside the working directory.** Every path is resolved (following `..` and symlinks) *before* it's checked. Writing tools also refuse anything inside `.git`. *(The shell is the exception: it is not fenced. See the journal.)*
 8. **No tool result exceeds 50,000 characters.**
-9. **Vendor formats never leak.** Only a provider module sees its vendor's request and response shapes, and only `acp/` sees ACP's.
+9. **Vendor formats never leak.** Only a provider module sees its vendor's request and response shapes.
 10. **The agent and the tools never do I/O with the user.** The agent yields events; permission questions go through a callback. Front ends decide what to show.
-11. **Front ends are interchangeable.** The agent, tools and providers contain nothing specific to the REPL or to ACP.
-12. **In ACP mode, every line on stdout is one JSON-RPC message.**
-13. **Every `session/prompt` gets exactly one response,** whether the turn finished, was cancelled, or failed, and the history is valid afterwards.
+11. **Front ends are interchangeable.** The agent, tools and providers contain nothing specific to the app or to the REPL.
+12. **In the app, only the app's thread touches widgets.** The worker thread reaches the screen through `call_from_thread`.
+13. **Text from outside is never interpreted as markup.**
 
 ## Where the next steps plug in
 
 | Coming in | Plugs in at |
 | --- | --- |
-| Step 5: context management | Inside `Agent`, just before each call to the provider; ACP's `usage_update` can report it |
-| Step 7: sessions | Saving and loading `agent.messages`; ACP's `session/load` and the `loadSession` capability |
-| Step 8: MCP | `session/new` already receives `mcpServers`; today it's ignored |
+| Step 5: context management | Inside `Agent`, just before each call to the provider; a context meter in the status line |
+| Step 7: sessions | Saving and loading `agent.messages`; the app would redraw the transcript from them |
 | Later: saved permission rules | Loaded into `Permissions.always` at startup |
 | Later: sandboxing | Around `tools/shell.py`'s `_run` |
