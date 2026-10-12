@@ -5,9 +5,11 @@ records the request and plays back a response built from the SDK's own types."""
 import json
 from types import SimpleNamespace
 
+import pytest
 from openai.types.responses import Response
 
 from wren.agent import Agent
+from wren.commands import run_command
 from wren.messages import (
     Completed,
     Message,
@@ -37,7 +39,7 @@ def text_item(text):
     }
 
 
-def response(output, status="completed", incomplete=None, usage=None, model="gpt-6-astra"):
+def response(output, status="completed", incomplete=None, usage=None, model="gpt-6-astra", reasoning=None):
     return Response.model_validate(
         {
             "id": "resp_1",
@@ -50,6 +52,7 @@ def response(output, status="completed", incomplete=None, usage=None, model="gpt
             "tools": [],
             "status": status,
             "incomplete_details": {"reason": incomplete} if incomplete else None,
+            "reasoning": reasoning,
             "usage": usage
             or {
                 "input_tokens": 100,
@@ -198,6 +201,51 @@ def test_effort_is_sent_only_when_set_and_recorded_on_the_reply():
     provider.effort = "high"
     assert stream(provider)[-1].effort_sent == "high"
     assert client.requests[1]["reasoning"] == {"effort": "high"}
+
+
+@pytest.mark.parametrize("sent, reported", [("high", "xhigh"), (None, "xhigh"), ("high", "none")])
+def test_effort_reported_is_read_from_the_response_not_the_request(sent, reported):
+    client = FakeClient(response([text_item("hi")], reasoning={"effort": reported}))
+    done = stream(OpenAIProvider("m", client=client, effort=sent))[-1]
+    assert done.effort_sent == sent
+    assert done.effort_reported == reported
+
+
+@pytest.mark.parametrize("reasoning", [None, {}, {"effort": None}])
+def test_missing_response_effort_is_unknown_even_when_effort_was_sent(reasoning):
+    client = FakeClient(response([text_item("hi")], reasoning=reasoning))
+    done = stream(OpenAIProvider("m", client=client, effort="xhigh"))[-1]
+    assert done.effort_sent == "xhigh"
+    assert done.effort_reported is None
+
+
+def test_missing_reasoning_field_is_also_unknown():
+    final = response([text_item("hi")])
+    del final.reasoning  # a client without this optional response field
+    done = stream(OpenAIProvider("m", client=FakeClient(final), effort="xhigh"))[-1]
+    assert done.effort_reported is None
+
+
+def test_usage_shows_response_effort_separately_and_does_not_keep_stale_metadata():
+    client = FakeClient(
+        response([text_item("first")], reasoning={"effort": "xhigh"}),
+        response([text_item("second")]),
+    )
+    agent = Agent(OpenAIProvider("m", client=client, effort="high"), "sys", 100)
+    list(agent.run_turn("hi"))
+    shown = run_command(agent, "/usage").text
+    assert "Last request was sent with: effort high  (Wren's record)" in shown
+    assert "Effort in the last reply: xhigh  (as reported by openai)" in shown
+    assert agent.last_call.effort_reported == "xhigh"
+
+    agent.set_effort("low")
+    assert "Effort in the last reply: xhigh" in run_command(agent, "/usage").text
+    list(agent.run_turn("again"))
+    shown = run_command(agent, "/usage").text
+    assert "Last request was sent with: effort low  (Wren's record)" in shown
+    assert "Effort in the last reply: not reported by openai" in shown
+    assert "Effort in the last reply: xhigh" not in shown
+    assert history_problems(agent.messages) == []
 
 
 def test_stop_reasons():

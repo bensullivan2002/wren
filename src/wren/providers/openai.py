@@ -64,10 +64,10 @@ from wren.messages import (
 # the API on the next request.
 EFFORT_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
-# What a model does when no effort is sent. Not reported by the API: copied
-# from OpenAI's reasoning guide, so it can go stale. A model that isn't
-# covered is reported as unknown, never guessed. Checked October 2026.
-DEFAULT_EFFORT_SOURCE = "per OpenAI's documentation, October 2026; the API doesn't report it"
+# Documented defaults, used independently of the last response's effort.
+# Copied from OpenAI's reasoning guide, so they can go stale. A model that
+# isn't covered is reported as unknown, never guessed. Checked October 2026.
+DEFAULT_EFFORT_SOURCE = "per OpenAI's documentation, October 2026; not measured from a response"
 DOCUMENTED_DEFAULT_EFFORT = {
     "gpt-5.5": "medium",
     "gpt-5.6": "medium",
@@ -150,6 +150,8 @@ class OpenAIProvider:
             usage=_usage(final.usage),
             model=final.model,  # from the response, not from self.model
             effort_sent=request.get("reasoning", {}).get("effort"),
+            # Response metadata, not a fallback to the requested setting.
+            effort_reported=getattr(getattr(final, "reasoning", None), "effort", None),
         )
 
 

@@ -106,7 +106,7 @@ The files are plain text, readable only by your user account, and kept until you
 
 `/effort` chooses how hard the model works on each reply (how much it thinks, how thorough it is): higher is slower and costs more. The levels offered are the ones the current model accepts (for OpenAI, every level the API knows, since it can't be asked per model); `/effort LEVEL` sets one directly, `/effort default` hands the choice back to the model, and `--effort` or `WREN_EFFORT` sets it at launch. Changing model puts effort back to that model's default. Some providers offer effort as part of the model choice and not as a separate setting; there, `/effort` tells you to look in `/model`.
 
-`/usage` shows what the default effort is for the current model (from Anthropic's documentation: the API doesn't report it), the effort Wren sent with the last request, and how many thinking tokens the API reported for the last reply. The API never states which effort it used, so thinking tokens are the only measurable sign that a change took effect.
+`/usage` separates the current model's documented default effort, the effort Wren sent with the last request, the effort returned by the API (OpenAI's `response.reasoning.effort`, when present), and the last reply's thinking-token count. Missing response effort is shown as "not reported", never filled in from local settings. Response effort is metadata from the API, not a measurement of how hard the model actually worked. This last-call metadata isn't saved across restarts; send a message after restarting or resuming to check it.
 
 ### Memory: standing instructions
 

@@ -221,9 +221,11 @@ class Completed:
     # request really went where you meant it to.
     model: str = ""
     # The effort setting this request was sent with (None: none was sent).
-    # This is the provider module's record of what it put in the request.
-    # It is NOT confirmation from the API, which doesn't say what it used.
+    # This is Wren's request record, not confirmation from the API.
     effort_sent: str | None = None
+    # The effort returned in the provider's response, where available.
+    # Kept separate from what we sent; None means it wasn't reported.
+    effort_reported: str | None = None
 
 
 StreamEvent = Union[TextDelta, Completed]

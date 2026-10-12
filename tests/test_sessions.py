@@ -376,7 +376,8 @@ def test_usage_separates_what_wren_sent_from_what_the_provider_reported(tmp_path
     run(agent, "hi")
     first = run_command(agent, "/usage").text
     assert "Last request was sent with: no effort setting, so the model's default applied" in first
-    assert "(Wren's record: fake doesn't report the effort it used)" in first
+    assert "(Wren's record)" in first
+    assert "Effort in the last reply: not reported by fake" in first
     assert "Thinking in the last reply: 0 of" in first and "(as reported by fake" in first
 
     agent.set_effort("high")

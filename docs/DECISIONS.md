@@ -488,3 +488,9 @@ The mid-priced option, by the reasoning of D11 for Sonnet. `/model` or `--model`
 *Step 8 · design*
 
 The API lists every model on the account, including image, speech and embedding models. The picker keeps ids starting `gpt-` or `o` and drops those containing words such as `embedding` or `audio`. It is a heuristic; `/model NAME` accepts any name.
+
+### D78. `/usage` exposes OpenAI's response effort separately from the request
+*Step 8 follow-up · design*
+
+You asked to check effort from the OpenAI API response, not local settings. The installed SDK exposes optional `response.reasoning.effort`; the earlier blanket claim that no API returns effort was wrong for OpenAI. `Completed.effort_reported` carries that field to `/usage`, alongside the existing `effort_sent` request record and thinking-token counts. Absent or null response effort stays unknown; the string `"none"` is a valid reported level. This extends D68 without treating request settings or token counts as API-confirmed effort.
+*Not chosen:* falling back to the requested effort, inferring effort from thinking tokens, or calling response metadata a measurement of internal work. Saving last-call metadata in sessions is left out of this change; restart, send a message and use `/usage` for a fresh response check. Tests use SDK-validated stand-ins; this is not a claim of live API verification.

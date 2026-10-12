@@ -176,21 +176,24 @@ def default_effort(agent: Agent) -> str | None:
 
 
 def _effort_evidence(agent: Agent) -> list[str]:
-    """What can honestly be said about the effort the last reply was given.
+    """Keep the request record, response metadata and token counts separate.
 
-    For the model, the API names the one that answered. For effort it says
-    nothing: no response field reports the level used. So there are two
-    lesser things to show, each labelled for what it is. One is Wren's own
-    record of what it sent. The other is a number the provider does report,
-    which moves with effort: how much of the reply was thinking.
+    OpenAI can return effort in the response; other providers may not.
+    Missing response metadata stays unknown, even when effort was sent.
     """
     call = agent.last_call
     name = agent.provider.name
     if call is None:
         return ["Last request: (none yet)"]
     sent = f"effort {call.effort_sent}" if call.effort_sent else "no effort setting, so the model's default applied"
+    reported = (
+        f"{call.effort_reported}  (as reported by {name})"
+        if call.effort_reported is not None
+        else f"not reported by {name}"
+    )
     return [
-        f"Last request was sent with: {sent}  (Wren's record: {name} doesn't report the effort it used)",
+        f"Last request was sent with: {sent}  (Wren's record)",
+        f"Effort in the last reply: {reported}",
         f"Thinking in the last reply: {call.usage.thinking_tokens:,} of {call.usage.output_tokens:,} output tokens"
         f"  (as reported by {name}; more effort usually means more)",
     ]

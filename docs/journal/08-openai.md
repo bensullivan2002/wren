@@ -111,9 +111,28 @@ Step 7 ended with a rule: say what was measured, say what's only believed, and l
 | How many thinking tokens? | reported | reported (`reasoning_tokens`) |
 | Which effort levels does this model take? | reported, per model | **not reported** |
 | What's this model's default effort? | not reported | not reported |
-| What effort was used for this reply? | not reported | not reported |
+| What effort metadata came back for this reply? | not reported | `response.reasoning.effort`, when present |
 
 So for OpenAI, `/effort` offers every level the API knows (`none` to `max`), and one the model doesn't take is refused by the API on the next request. Defaults come from a dated table copied from OpenAI's guide, and a model the guide doesn't cover shows as unknown. `/usage` labels all of it.
+
+### Follow-up: expose the response's effort
+
+The original implementation missed a response field: the installed OpenAI SDK (3.29.0) has optional `Response.reasoning`, whose optional `effort` can include `xhigh`. The provider now reads it independently of the request:
+
+```python
+effort_sent=request.get("reasoning", {}).get("effort"),
+effort_reported=getattr(getattr(final, "reasoning", None), "effort", None),
+```
+
+Both values travel in `Completed`; the agent already keeps that event as `last_call`, so `/usage` can show the response metadata without changing the agent or either front end. For example, **if the API returns `xhigh`**, it shows:
+
+```text
+Effort in the last reply: xhigh  (as reported by openai)
+```
+
+If the response omits `reasoning` or its `effort`, or returns null, the line says "not reported by openai". The string `"none"` is a reported level, not missing data. There is no fallback to local settings. This is API-returned metadata, not a measurement of internal work; thinking-token counts remain a separate measurement. It is not saved in session files.
+
+Tests use SDK-validated responses with different sent and reported levels, a reported level when none was requested, `"none"`, and missing/null fields. An agent-level test checks the `/usage` text and verifies that the next response replaces the previous response's effort. Live API verification is still needed: restart Wren, send a message, then run `/usage` and inspect the response-derived line.
 
 One more wrinkle: listing OpenAI's models returns everything on the account, including image, speech and embedding models. The picker filters by name. It's a guess at "can this hold a conversation", and it's labelled as one in the code.
 
