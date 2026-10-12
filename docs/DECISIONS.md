@@ -343,3 +343,62 @@ A cloned repository's `AGENTS.md` enters the prompt unread by the user. So: load
 The note goes to the project memory file nearest the working directory, and a new `WREN.md` is created only if there is none at all.
 *Why:* a new `WREN.md` beside an existing `AGENTS.md` would shadow it (D48), and the project's instructions would silently stop loading.
 *Cost:* `/remember` may add a line to a file shared with other tools and people. It says which file it wrote.
+
+---
+
+### D55. Model switching is built now, with a picker
+*Step 7 · you*
+
+`/model` opens a list of the provider's models to choose from; `/model NAME` switches directly. It wasn't on the roadmap; you asked for it, and it belongs with sessions because a saved session should record its model.
+*Not chosen:* `/model NAME` only (no picker; you'd need to know the names). Leaving it for later.
+
+### D56. Sessions live in the home folder, per project, as JSON Lines
+*Step 7 · you*
+
+`~/.wren/sessions/<project>/<id>.jsonl`, one file per conversation, appended to as it happens. This is Claude Code's layout.
+*Why:* transcripts hold file contents and command output, which can include secrets. Outside the repository they can't be committed by accident.
+*Not chosen:* a `.wren/sessions/` folder inside the project (easy to find, travels with the folder, and one `git add .` from being published). One flat folder for every project (simplest, but "the sessions for this folder" means opening every file).
+
+### D57. One word for going back: `--resume`, and `/resume`
+*Step 7 · you*
+
+`wren --resume` opens Wren on the list of this folder's saved conversations, the same list `/resume` shows inside it. `wren --resume ID` goes straight to one.
+*The route:* the first plan copied Claude Code: `--continue` for the most recent, `--resume` for a picker. You found two words for nearly one thing confusing, then asked for `--resume` alone to open the picker.
+*Cost:* getting back to the most recent conversation takes one more key press (Enter on the top row) than a dedicated flag would.
+
+### D58. The session file is a log; the history is rebuilt by replaying it
+*Step 7 · design*
+
+Each event is one appended line: `meta`, `message`, `replaced` (a compaction), `model`. Nothing written is ever changed.
+*Why:* nothing to remember to save, a crash costs at most the line in progress, and writing doesn't slow as the conversation grows.
+*Not chosen:* rewriting a snapshot of the whole history on each change (simpler to read back; destroyed if interrupted mid-write). A database such as SQLite (robust and queryable, but opaque: you couldn't `cat` a session).
+*Cost:* a compacted conversation's old messages stay in the file. That allows recovery from a bad summary, and means compaction doesn't remove anything from disk.
+
+### D59. The agent reports to a four-method journal, through one method of its own
+*Step 7 · design*
+
+`Agent.journal` is anything with `append`, `replace`, `model_changed` and `reset`. All additions to the history go through `Agent._add`.
+*Not chosen:* the front end saving the history after each turn (less in the agent, but nothing is saved mid-turn, which is when a crash is likeliest). The agent writing files itself (it would then know about paths and formats).
+
+### D60. Resuming restores the conversation and the model, and nothing else
+*Step 7 · design*
+
+"Always allow" permissions are not restored: they were granted for one sitting (D23, D50). The system prompt is rebuilt from the memory files as they are now. Session token totals start again. The model is restored when the session's provider is the one in use.
+
+### D61. A session cut off mid-turn is tied off on resume, or refused
+*Step 7 · design*
+
+`Agent.restore` answers pending tool requests with "no result was recorded… it may or may not have run", adds a note, and then requires `history_problems` to be empty. A history that still isn't valid is not loaded, and the current conversation is kept.
+*Not chosen:* dropping the unfinished turn (it would hide a command that may have run). Loading whatever is there (the API would reject every request).
+
+### D62. The model list is fetched from the provider, not written in the code
+*Step 7 · design*
+
+`Provider.models()` asks the API when the picker opens.
+*Not chosen:* a hard-coded list (works offline, and wrong within months).
+*Cost:* a network call to open the picker; if it fails, you can still switch by name.
+
+### D63. Sessions are saved with no expiry and no off switch, for now
+*Step 7 · design*
+
+Every conversation is kept indefinitely. Both an age limit and a way to turn saving off are obvious next additions; neither was needed to make resuming work. Open to challenge: for a tool that records what it reads, an off switch may deserve to come sooner.

@@ -19,27 +19,27 @@ Wren is a coding-agent harness for the terminal, built step by step by Claude wi
 
 ## Status
 
-Steps 1 to 6 are done (see the roadmap in README.md).
+Steps 1 to 7 are done (see the roadmap in README.md). Wren is a complete single agent; step 8 opens it up.
 
-**First thing next session: ask Ben how real use is going.** He has confirmed `/usage`, `/compact` and `/history` work. Still worth asking about: tool loops against the real API (reasoning blocks, D45), whether `/usage` shows cache reads, and whether a `WREN.md` is actually followed. Fix what he finds before step 7.
+**First thing next session: ask Ben how real use is going.** Worth asking about specifically, because they are tested only against stand-ins: switching model mid-conversation against the real API (journal 07, "Known limits"), tool loops with reasoning blocks (D45), and whether `/usage` shows cache reads. Fix what he finds first.
 
-**Then: step 7, sessions** (save the conversation to disk, list past sessions, resume one). Questions to put to Ben:
+**Then: step 8, extensions.** It is three separate pieces; the first question for Ben is which to build first, and each should probably be its own commit and journal entry (8a, 8b, 8c):
 
-- Format and place: one JSON Lines file per session, appended as events happen, under `~/.wren/sessions/` (per project) or inside the project? Check how Claude Code and others store transcripts before presenting.
-- What resuming restores: the history only, or also the "always allow" permissions (probably not: D23, D50)? What to say to the model about time having passed and files having changed.
-- How to resume: `wren --resume` / `--continue` flags, a `/resume` picker in the app, or both.
-- What to do with `ReasoningBlock`s on disk (they are provider-specific, D45) and with sessions saved by a different model or provider.
-- Whether the app should redraw the old transcript on resume.
+- **MCP** (tools from other programs). Questions: stdio servers only, or HTTP too; hand-written client or the official `mcp` Python SDK (it is async: see D34); where servers are configured; and how permissions work for tools Wren did not write (every MCP tool call should ask, with "always" per tool). Check the current MCP spec first.
+- **Subagents** (a task handed to a fresh conversation). Questions: which tools a subagent gets, whether it can ask the user for permission, how its result returns, and whether they run in parallel (D34 again).
+- **Hooks** (the user's commands run at set moments). Questions: which moments, whether a hook can block an action, and where they are configured (a settings file, which also reopens saved permission rules, D50).
 
 Things Ben has decided that aren't obvious from the code:
 
 - **No ACP / Toad.** An ACP mode was built and removed in step 4 (D33): he found driving Wren through another program confusing, and wants no second way in. Don't re-propose it before step 8, and only if he raises it.
 - **He tests with a paid API balance, not his Claude subscription.** Don't build subscription (OAuth) login.
 - **He likes a full-screen, Claude Code-like feel:** input box at the bottom, conversation above, questions in place.
+- **He prefers one obvious way to do a thing over copying Claude Code's flags:** he rejected `--continue` plus `--resume` as confusing and chose `--resume` alone, opening the same picker as `/resume` (D57). Offer the simpler interface first.
 
 Carried over, for whenever they fit (see "Known limits" in journals 03 and 04):
 
 - An async core (D34) if parallel tools or subagents need it; Escape can lag while waiting for the model's first words.
+- Session gaps: no expiry and no off switch (D63), no names or search, one folder at a time.
 - Memory gaps: loading a subfolder's `WREN.md` on demand, imports, auto memory (D49), saved permission rules (D50).
 - Context gaps: trimming old tool results before resorting to a summary (D40), compacting inside a very long turn (D47), keeping recent messages verbatim (D42 explains why not), showing cost in money.
 - App gaps: expanding cut-off diffs and output, queueing a message while Wren works, showing a tool request as it's written (needs a provider event).
@@ -49,6 +49,8 @@ Carried over, for whenever they fit (see "Known limits" in journals 03 and 04):
 - The tool-writing conventions are in `docs/ARCHITECTURE.md` ("Anatomy of a tool"): a nested Pydantic `Input(ToolInput)`, `permission()` for anything that changes things, and tests that use a fake asker.
 - A front-end feature must work in both front ends or be clearly optional: `tui.py` and `repl.py` implement the same contract (ARCHITECTURE.md, "the front-end contract"). Nothing Textual-specific goes in `agent.py`, `tools/` or `commands.py`.
 - The history is append-only between compactions, and requests are always built the same way (ARCHITECTURE invariants 2 and 16). Don't edit or reorder earlier messages, the system prompt or the tool list mid-session: it breaks prompt caching and can invalidate the model's reasoning blocks. `ReasoningBlock.data` is opaque: only its provider reads it.
+- Every message enters the history through `Agent._add` (invariant 20); never append to `agent.messages` directly, or the session file misses it. The session file format is a promise (journal 07, Idea 3): add new line types, don't change existing ones, and bump `FORMAT_VERSION` only for a change old code can't read.
+- On macOS there is no `timeout` command. If a test run hangs, it is almost certainly a UI test whose worker thread is waiting: run `tests/test_tui.py` alone with `-o faulthandler_timeout=20`.
 - The system prompt is fixed for a conversation (invariant 17): memory is read at the start and on `/clear` only. Memory files are untrusted text (D53): never let one grant a permission or change what the registry enforces.
 - In `tui.py`, only the app thread touches widgets, and text from the model, files or commands is never passed as markup. UI tests wait on conditions (`until`), never fixed sleeps.
 

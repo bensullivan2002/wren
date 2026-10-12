@@ -117,6 +117,32 @@ def test_remember_saves_a_note_that_the_next_conversation_sees(tmp_path):
     assert "- tests live in spec/\n</file>" in after_clear
 
 
+def test_a_conversation_is_saved_and_resume_brings_it_back(tmp_path):
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    project.mkdir()
+    env = {"HOME": str(home)}
+    wren("--provider", "fake", stdin="remember the number 42\n", cwd=project, env_extra=env)
+    (saved,) = (home / ".wren" / "sessions").glob("*/*.jsonl")
+
+    listed = wren("--provider", "fake", "--resume", stdin="", cwd=project, env_extra=env)
+    assert f"remember the number 42   [{saved.stem}]" in listed.stdout
+    assert "Resume one with /resume ID" in listed.stdout
+
+    resumed = wren("--provider", "fake", "--resume", saved.stem, stdin="/history\nand again\n", cwd=project, env_extra=env)
+    assert f"Resumed {saved.stem}" in resumed.stdout and "You said: remember the number 42" in resumed.stdout
+    assert len(saved.read_text().splitlines()) == 5  # meta, then four messages, all in the one file
+
+    missing = wren("--provider", "fake", "--resume", "nope", stdin="", cwd=project, env_extra=env)
+    assert "Couldn't resume" in missing.stdout and "This is a new conversation" in missing.stdout
+
+
+def test_models_can_be_listed_and_switched_in_plain_mode():
+    result = wren("--provider", "fake", stdin="/model\n/model demo-fast\n/model\n")
+    assert "demo  (in use)" in result.stdout and "Switch with /model NAME" in result.stdout
+    assert "Now using demo-fast." in result.stdout and "demo-fast  (in use)" in result.stdout
+
+
 def test_tools_command_lists_and_shows_tools():
     result = wren("--provider", "fake", stdin="/tools\n/tools read_file\n")
     assert "list_files" in result.stdout and "search" in result.stdout

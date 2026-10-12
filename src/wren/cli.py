@@ -25,10 +25,12 @@ from pathlib import Path
 from wren import __version__
 from wren.agent import Agent
 from wren.config import Config
+from wren.commands import resume_session
 from wren.memory import Memory
 from wren.prompts import build_system_prompt
 from wren.providers import PROVIDERS, make_provider
 from wren.repl import Repl
+from wren.sessions import SessionError, SessionStore
 from wren.tools import Permissions, ToolRegistry, default_tools
 
 
@@ -45,6 +47,13 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--context-budget",
         type=int,
         help="compact the conversation once it passes this many tokens; 0 = never (env: WREN_CONTEXT_BUDGET)",
+    )
+    parser.add_argument(
+        "--resume",
+        nargs="?",
+        const="",
+        metavar="ID",
+        help="choose an earlier conversation in this folder to reopen, or reopen the one with this id",
     )
     parser.add_argument(
         "--plain", action="store_true", help="use the plain line-by-line interface, not the full-screen app"
@@ -86,11 +95,24 @@ def main(argv: list[str] | None = None) -> int:
 
     agent = Agent(provider, system_prompt, config.max_tokens, tools, config.max_steps, config.context_budget)
 
+    # From here on, every message is written to a session file as it's added.
+    sessions = SessionStore(root, provider.name, provider.model)
+    agent.journal = sessions
+    notice = ""
+    # `--resume` alone opens the same list that /resume shows, and the front
+    # end does that once it's running. `--resume ID` needs no choosing.
+    choose_session = args.resume == ""
+    if args.resume:
+        try:
+            notice = resume_session(agent, sessions, sessions.find(args.resume))
+        except (SessionError, ValueError) as e:
+            notice = f"Couldn't resume: {e}. This is a new conversation."
+
     # A full-screen app needs a real terminal at both ends. When input or
     # output is a pipe or a file (`echo hi | wren`, the tests), fall back to
     # the plain REPL, which only needs lines of text.
     if args.plain or not (sys.stdin.isatty() and sys.stdout.isatty()):
-        repl = Repl(agent, memory=memory)
+        repl = Repl(agent, memory=memory, sessions=sessions, notice=notice, choose_session=choose_session)
         # The one loop in the wiring: tools need to ask the user, and the
         # front end is the part that talks to the user. Until this line,
         # Permissions has nobody to ask, and so refuses everything.
@@ -100,5 +122,5 @@ def main(argv: list[str] | None = None) -> int:
         # Imported here so that plain mode never loads Textual at all.
         from wren.tui import WrenApp
 
-        WrenApp(agent, memory).run()  # wires itself to the same hooks in its __init__
+        WrenApp(agent, memory, sessions, notice, choose_session).run()  # wires itself to the same hooks in its __init__
     return 0

@@ -39,6 +39,12 @@ class AnthropicProvider:
         # Tests pass in a fake `client` instead, so no network is needed.
         self.client = client if client is not None else anthropic.Anthropic()
 
+    def models(self) -> list[str]:
+        # Asked of the API, not written down here: a list in the code would
+        # be out of date within months. The SDK pages through the results;
+        # they arrive newest first.
+        return [model.id for model in self.client.models.list()]
+
     def stream(
         self,
         *,

@@ -2,7 +2,7 @@
 
 A small, readable coding-agent harness for the terminal, built step by step so every part can be understood.
 
-> **Status: step 6 of the roadmap.** Wren is a full-screen terminal app that chats with Claude, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first. It reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable. The shell is not sandboxed, so read what you approve.
+> **Status: step 7 of the roadmap.** Wren is a full-screen terminal app that chats with Claude, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first. It saves every conversation so you can resume it, switches models mid-conversation, reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable. The shell is not sandboxed, so read what you approve.
 
 ## Quickstart
 
@@ -66,11 +66,32 @@ Wren asks before every file edit and every shell command, and shows you exactly 
 | `/system`       | Show the system prompt sent with every request        |
 | `/usage`        | Tokens used this session, and how full the context is |
 | `/compact`      | Replace the conversation with a summary, to save tokens |
+| `/model`        | Choose a different model (`/model NAME` switches directly) |
+| `/resume`       | Go back to an earlier conversation in this folder     |
 | `/permissions`  | Show what you've said Wren may always do this session |
 | `/memory`       | Show which memory files are loaded                    |
 | `/remember X`   | Add the note X to the project's memory file           |
-| `/clear`        | Start a fresh conversation                            |
+| `/clear`        | Start a fresh conversation (the old one stays saved)  |
 | `/quit`         | Exit                                                  |
+
+### Saved conversations
+
+Every conversation is saved as it happens, to `~/.wren/sessions/`, grouped by project folder.
+
+| To | Do |
+| --- | --- |
+| Pick an earlier conversation as you start | `wren --resume` |
+| Go straight to one | `wren --resume ID` (the first few characters will do) |
+| Switch conversation from inside Wren | `/resume` |
+| Start a new one | `/clear` (the old one is kept) |
+
+Resuming brings back the conversation and the model it was using. It does not bring back "always allow" answers, and your files are however they are now, so Wren may need to re-read them. If Wren was closed mid-turn, the unfinished step is marked as such.
+
+The files are plain text, readable only by your user account, and kept until you delete them. They contain whatever Wren read, so treat them as you would the project itself.
+
+### Models
+
+`/model` lists the models your provider offers and switches to the one you pick; `/model NAME` switches directly. The conversation carries over. The first reply from a new model costs full price for the whole conversation, because the cache is kept per model. `--model` or `WREN_MODEL` sets the model Wren starts with.
 
 ### Memory: standing instructions
 
@@ -119,6 +140,7 @@ Each setting can come from a flag, an environment variable, or the default, in t
 | `--max-tokens` | `WREN_MAX_TOKENS`    | `32000`             |
 | `--max-steps`  | `WREN_MAX_STEPS`     | `25`                |
 | `--context-budget` | `WREN_CONTEXT_BUDGET` | `150000`       |
+| `--resume [ID]` |                     |                     |
 | `--plain`      |                      | off                 |
 
 `--max-tokens` limits one reply, including the model's private thinking. `--max-steps` limits how many times Wren calls the model in one turn before it stops and checks in with you. `--context-budget` is how large the conversation may grow before Wren compacts it; 0 means never.
@@ -136,6 +158,7 @@ The docs are written to teach, not just to reference:
   4. [A full-screen interface](docs/journal/04-terminal-ui.md)
   5. [Context: what a long conversation costs](docs/journal/05-context.md)
   6. [Memory: instructions that outlast a conversation](docs/journal/06-memory.md)
+  7. [Sessions, and switching models](docs/journal/07-sessions.md)
 
 ## Roadmap
 
@@ -145,7 +168,7 @@ The docs are written to teach, not just to reference:
 - [x] **4. A better terminal UI**: a full-screen app with rendered markdown, diffs, in-place permission questions, and Escape to stop
 - [x] **5. Context management**: prompt caching, a context meter, and compaction at a token budget
 - [x] **6. Project memory**: standing instructions from `WREN.md` or `AGENTS.md`, per project and personal, with `/remember`
-- [ ] **7. Sessions**: save, list and resume conversations
+- [x] **7. Sessions**: conversations saved as they happen, a picker to resume them, and model switching
 - [ ] **8. Extensions**: subagents, MCP servers, hooks
 
 ## Development
@@ -162,6 +185,7 @@ src/wren/
   config.py         settings and where they come from
   prompts.py        the system prompt, and the prompt used to compact a conversation
   memory.py         finds and loads WREN.md / AGENTS.md; /remember
+  sessions.py       saves conversations as JSON Lines; lists and loads them
   agent.py          owns the conversation; runs the agent loop; compacts it
   messages.py       provider-neutral message types, and the history rules
   tui.py            the full-screen front end (Textual)

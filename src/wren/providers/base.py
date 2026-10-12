@@ -19,7 +19,12 @@ from wren.messages import Message, StreamEvent, ToolSpec
 
 class Provider(Protocol):
     name: str  # e.g. "anthropic"
-    model: str  # e.g. "claude-sonnet-5-5"
+    model: str  # e.g. "claude-sonnet-5-5". Read on every request, so it can be changed between them.
+
+    def models(self) -> list[str]:
+        """The models this provider offers right now, for a picker to show.
+        May make a network call. Best first, if there's a natural order."""
+        ...
 
     def stream(
         self,

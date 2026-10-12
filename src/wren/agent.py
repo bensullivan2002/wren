@@ -35,7 +35,16 @@ from dataclasses import dataclass
 from typing import Callable, Generator, Iterator, Union
 
 from wren.config import DEFAULT_MAX_STEPS
-from wren.messages import Completed, Message, TextBlock, TextDelta, ToolResultBlock, ToolUseBlock, Usage
+from wren.messages import (
+    Completed,
+    Message,
+    TextBlock,
+    TextDelta,
+    ToolResultBlock,
+    ToolUseBlock,
+    Usage,
+    history_problems,
+)
 from wren.prompts import COMPACT_PROMPT, COMPACTED_NOTE
 from wren.providers import Provider
 from wren.tools import ToolRegistry, ToolResult
@@ -54,6 +63,15 @@ ERROR_NOTE = (
 # Results for tool requests that were never answered because the turn stopped.
 NOT_RUN = "Not run: the turn was stopped before this tool started."
 CUT_SHORT = "The turn was stopped while this tool was running. It may have partly completed: check before relying on it."
+# The same, for a conversation read back from disk (see Agent.restore).
+RESUMED_NOTE = (
+    "[This conversation was saved while a turn was still in progress, and has now been "
+    "reopened. Everything above really happened; anything not shown above was not done.]"
+)
+NEVER_RECORDED = (
+    "No result was recorded for this tool: Wren closed while it was pending. "
+    "It may or may not have run: check before relying on it."
+)
 
 STEP_LIMIT_NOTE = (
     "[Wren stopped this turn after {steps} model calls, its limit for one turn. "
@@ -131,6 +149,10 @@ class Agent:
         # Where the current turn has got to, kept on the agent (not in local
         # variables) so that if the turn is cut short we still know what had
         # already happened. See _close_unfinished_turn.
+        # Whoever is recording the conversation (see sessions.Journal), if
+        # anyone. Every change to the history is reported to it as it happens.
+        self.journal = None
+
         self._partial_text = ""  # text streamed so far in the current model call
         self._results: list[ToolResultBlock] = []  # tools finished in the current batch
         self._running: str | None = None  # id of the tool call in progress, if any
@@ -149,7 +171,7 @@ class Agent:
         if self.context_budget and self.context_tokens >= self.context_budget:
             yield from self.compact(automatic=True)
 
-        self.messages.append(Message.user(user_text))
+        self._add(Message.user(user_text))
         try:
             # `yield from` passes every event from _loop up to our caller,
             # then hands us _loop's return value.
@@ -160,6 +182,13 @@ class Agent:
             self._close_unfinished_turn(stopped_by)
             raise
         yield finished
+
+    def _add(self, message: Message) -> None:
+        """The one way a message joins the history. Because every addition
+        comes through here, the journal can't miss one."""
+        self.messages.append(message)
+        if self.journal is not None:
+            self.journal.append(message)
 
     def _close_unfinished_turn(self, stopped_by: BaseException) -> None:
         """Make the history valid again after a turn was cut short, *without*
@@ -175,26 +204,37 @@ class Agent:
           * a closing note stands in for the assistant's reply, carrying any
             text that had been streamed before the stop.
         """
-        last = self.messages[-1]
-        if last.role == "assistant" and not last.tool_uses:
-            return  # the reply was already complete; nothing is loose
-
-        if last.role == "assistant":
-            finished = {result.tool_use_id: result for result in self._results}
-            answers = []
-            for call in last.tool_uses:
-                unfinished = CUT_SHORT if call.id == self._running else NOT_RUN
-                answers.append(finished.get(call.id) or ToolResultBlock(call.id, unfinished, is_error=True))
-            self.messages.append(Message("user", answers))
-
         if isinstance(stopped_by, Exception):
             reason = str(stopped_by).splitlines()[0] if str(stopped_by) else type(stopped_by).__name__
             note = ERROR_NOTE.format(error=reason[:200])
         else:  # KeyboardInterrupt, or the UI closing the turn
             note = INTERRUPTED_NOTE
-        said = self._partial_text.rstrip()
-        self.messages.append(Message.assistant(f"{said}\n\n{note}" if said else note))
+        finished = {result.tool_use_id: result for result in self._results}
+        self._tie_off(note, finished, running=self._running, said=self._partial_text)
         self._partial_text = ""
+
+    def _tie_off(
+        self,
+        note: str,
+        finished: dict[str, ToolResultBlock],
+        running: str | None = None,
+        said: str = "",
+        not_run: str = NOT_RUN,
+    ) -> None:
+        """Answer any tool requests still waiting, and close with `note`."""
+        last = self.messages[-1]
+        if last.role == "assistant" and not last.tool_uses:
+            return  # the reply was already complete; nothing is loose
+
+        if last.role == "assistant":
+            answers = []
+            for call in last.tool_uses:
+                unfinished = CUT_SHORT if call.id == running else not_run
+                answers.append(finished.get(call.id) or ToolResultBlock(call.id, unfinished, is_error=True))
+            self._add(Message("user", answers))
+
+        said = said.rstrip()
+        self._add(Message.assistant(f"{said}\n\n{note}" if said else note))
 
     def _loop(self) -> Generator[AgentEvent, None, TurnFinished]:
         turn_usage = Usage()
@@ -213,7 +253,7 @@ class Agent:
                 # rejects an empty assistant message anywhere in the history,
                 # so add a placeholder (after any reasoning, which stays).
                 reply.content.append(TextBlock("(no reply)"))
-            self.messages.append(reply)
+            self._add(reply)
             self._partial_text = ""  # it's all in `reply` now
 
             # We look for tool requests rather than trusting stop_reason == "tool_use":
@@ -223,12 +263,12 @@ class Agent:
                 return TurnFinished(turn_usage, step)
 
             results = yield from self._run_tools(reply.tool_uses)
-            self.messages.append(Message("user", results))
+            self._add(Message("user", results))
 
         # Out of steps. The history ends with tool results, so add a short
         # note in the assistant's place. It keeps the history valid, and it
         # tells the model next turn why it stopped.
-        self.messages.append(Message.assistant(STEP_LIMIT_NOTE.format(steps=self.max_steps)))
+        self._add(Message.assistant(STEP_LIMIT_NOTE.format(steps=self.max_steps)))
         return TurnFinished(turn_usage, self.max_steps, hit_step_limit=True)
 
     def _call_model(self) -> Generator[AgentEvent, None, Completed]:
@@ -320,15 +360,67 @@ class Agent:
         # Only the summary's text is kept. Any reasoning that came with it
         # belonged to the conversation we've just let go of.
         self.messages[:] = [Message.user(COMPACTED_NOTE), Message.assistant(summary)]
+        if self.journal is not None:
+            self.journal.replace(self.messages)
         # The summary's length is a fair first estimate of the new size. The
         # next model call will replace it with a real measurement.
         self.context_tokens = completed.usage.output_tokens
         yield Compacted(before, self.context_tokens)
+
+    # --- Sessions and models -----------------------------------------------------
+
+    def restore(self, messages: list[Message]) -> None:
+        """Take up a conversation read back from disk.
+
+        A saved conversation can stop anywhere: Wren may have been closed,
+        or killed, in the middle of a turn. So the first thing we do is what
+        we'd do after an interruption (step 3): answer any tool request left
+        hanging, and add a note saying where things stopped. If the history
+        still doesn't satisfy the rules after that, we refuse it. Better no
+        conversation than one the API will reject on every request.
+        """
+        previous = list(self.messages)
+        self.messages[:] = messages
+        if self.messages:
+            self._tie_off(RESUMED_NOTE, finished={}, not_run=NEVER_RECORDED)
+        problems = history_problems(self.messages)
+        if problems:
+            self.messages[:] = previous
+            raise ValueError("the saved conversation is not usable: " + "; ".join(problems))
+        # We weren't there for the last model call, so this is a rough guess
+        # (about four characters to a token). The next call measures it.
+        self.context_tokens = sum(_characters(message) for message in self.messages) // 4
+
+    def set_model(self, model: str) -> None:
+        """Switch to a different model, from the next request on.
+
+        The conversation carries over: it's just messages, and any model can
+        read them. Two things don't. The cache is kept per model, so the new
+        one reads everything afresh once, at full price. And the old model's
+        private reasoning means nothing to the new one, which ignores it.
+        """
+        self.provider.model = model
+        if self.journal is not None:
+            self.journal.model_changed(self.provider.name, model)
 
     def reset(self) -> None:
         """Forget the conversation (the tools and totals stay), and rebuild
         the system prompt if we were given a way to."""
         self.messages.clear()
         self.context_tokens = 0
+        if self.journal is not None:
+            self.journal.reset()
         if self._build_system_prompt is not None:
             self.system_prompt = self._build_system_prompt()
+
+
+def _characters(message: Message) -> int:
+    total = 0
+    for block in message.content:
+        if isinstance(block, TextBlock):
+            total += len(block.text)
+        elif isinstance(block, ToolResultBlock):
+            total += len(block.content)
+        elif isinstance(block, ToolUseBlock):
+            total += len(str(block.input))
+    return total

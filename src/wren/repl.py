@@ -25,8 +25,9 @@ from typing import Any, Callable, TextIO
 
 from wren import __version__
 from wren.agent import Agent, Compacted, CompactionStarted, ToolFinished, ToolStarted, TurnFinished
-from wren.commands import compaction_note, format_call, run_command
+from wren.commands import compaction_note, format_call, model_list, run_command, session_label
 from wren.memory import Memory
+from wren.sessions import SessionStore
 from wren.messages import Completed, TextDelta
 from wren.tools import Decision, PermissionRequest
 
@@ -67,9 +68,20 @@ and stays in the conversation. Ctrl-D quits."""
 
 
 class Repl:
-    def __init__(self, agent: Agent, out: TextIO = sys.stdout, memory: Memory | None = None) -> None:
+    def __init__(
+        self,
+        agent: Agent,
+        out: TextIO = sys.stdout,
+        memory: Memory | None = None,
+        sessions: SessionStore | None = None,
+        notice: str = "",
+        choose_session: bool = False,
+    ) -> None:
         self.agent = agent
         self.memory = memory
+        self.sessions = sessions
+        self.notice = notice  # something to say at startup, e.g. which session was resumed
+        self.choose_session = choose_session  # started with --resume: begin by listing saved sessions
         self.out = out
         self._mid_line = False  # True when streamed text didn't end with a newline
 
@@ -85,6 +97,10 @@ class Repl:
             # a project you've just cloned you didn't write them.
             names = ", ".join(self.memory.shown(file.path) for file in self.memory.files)
             self.say(dim(f"Instructions loaded from: {names}  (/memory for details)"))
+        if self.notice:
+            self.say(dim(self.notice))
+        if self.choose_session:
+            self.list_sessions()
 
         while True:
             self.say()
@@ -206,7 +222,11 @@ class Repl:
 
     def command(self, line: str) -> bool:
         """Run a slash command. Returns False when the REPL should exit."""
-        result = run_command(self.agent, line, KEYS_HELP, self.memory)
+        result = run_command(self.agent, line, KEYS_HELP, self.memory, self.sessions)
+        if result.pick_model:
+            self.list_models()
+        if result.pick_session:
+            self.list_sessions()
         if result.compact:
             try:
                 for event in self.agent.compact():
@@ -216,6 +236,30 @@ class Repl:
         if result.text:
             self.say(red(result.text) if result.is_error else result.text)
         return not result.quit
+
+
+    # There's no picker in plain mode: list the choices, and say how to pick one.
+
+    def list_models(self) -> None:
+        models, problem = model_list(self.agent)
+        if problem:
+            self.say(red(problem))
+            return
+        current = self.agent.provider.model
+        for model in models:
+            self.say(f"  {model}" + (dim("  (in use)") if model == current else ""))
+        if current not in models:
+            self.say(f"  {current}" + dim("  (in use)"))
+        self.say(dim("Switch with /model NAME"))
+
+    def list_sessions(self) -> None:
+        saved = [s for s in self.sessions.saved() if s.id != self.sessions.current_id] if self.sessions else []
+        if not saved:
+            self.say(dim("There are no other saved conversations for this folder."))
+            return
+        for session in saved[:20]:
+            self.say("  " + session_label(session))
+        self.say(dim("Resume one with /resume ID (the first few characters of the id will do)"))
 
 
 def _colour_diff_line(line: str) -> str:

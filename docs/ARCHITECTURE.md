@@ -1,6 +1,6 @@
 # Architecture
 
-*Describes Wren as of **step 6**. This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
+*Describes Wren as of **step 7**. This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
 
 ## The big picture
 
@@ -38,14 +38,15 @@ Solid arrows are calls; dotted arrows are what comes back, or a callback. One fr
 | **Memory** | `memory.py` | Find and read the memory files (`WREN.md`, `AGENTS.md`); render them for the prompt; append `/remember` notes | The file helpers |
 | **Agent** | `agent.py` | Own the conversation; run the agent loop; keep history valid and truthful; track its size and compact it | A `Provider`, a `ToolRegistry`, the message types |
 | **Messages** | `messages.py` | Provider-neutral types; the history rules (`history_problems`) | Nothing else |
-| **Provider** | `providers/` | Translate to a vendor's API and back; stream the reply; ask for caching; report token use | The vendor SDK, the message types |
+| **Provider** | `providers/` | Translate to a vendor's API and back; stream the reply; ask for caching; report token use; list its models | The vendor SDK, the message types |
 | **Tool registry** | `tools/registry.py` | Look up tools, check arguments, get permission, run, turn failures into error results, cap output | The `Tool` interface, `Permissions` |
 | **Tool base** | `tools/base.py` | What a tool is; turn an `Input` model into a schema and into checked arguments | Pydantic |
 | **Permissions** | `tools/permissions.py` | Remember what's "always" allowed this session; otherwise ask, through a callback | Nothing else |
 | **Tools** | `tools/*.py` | Do one job each; describe themselves to the model, and their effects to the user | The working directory (via `ToolContext`) |
 | **App** | `tui.py` | The full-screen front end (Textual): run each turn on a worker thread, draw events as widgets, ask permission questions, stop on Escape | The `Agent`, the event types, Textual |
 | **REPL** | `repl.py` | The plain front end: read a line, print events, ask permission questions with `input()` | The `Agent`, the event types |
-| **Commands** | `commands.py` | Slash commands, returning text for either front end to show | The `Agent`, `Memory` |
+| **Sessions** | `sessions.py` | Write the conversation to a JSON Lines file as it happens; list and load saved sessions | The message types |
+| **Commands** | `commands.py` | Slash commands, returning text for either front end to show; resuming a session, switching model | The `Agent`, `Memory`, `SessionStore` |
 
 The rule behind this table: **each part knows as little as possible about the others.** The agent never prints and never touches files. Tools don't know there's a model, and never call `input()`. Nothing outside `providers/anthropic.py` knows what Anthropic's JSON looks like. Nothing outside `tui.py` knows about Textual. That's what lets us swap the model, have two interfaces, add tools, or test any part alone.
 
@@ -99,6 +100,29 @@ Empty files are skipped; each is capped at 20,000 characters. `Memory.render` wr
 
 Memory lives in the system prompt, which compaction doesn't touch, so it survives compaction unchanged.
 
+## Sessions
+
+**Writing.** The agent has an optional `journal` (the `Journal` protocol: `append`, `replace`, `model_changed`, `reset`). Every message joins the history through `Agent._add`, which also tells the journal. `SessionStore` is the journal `cli.py` installs: it appends one JSON line per event to `~/.wren/sessions/<project>/<id>.jsonl`, creating the file (mode `0o600`) at the first message.
+
+| Line type | Written when | On replay |
+| --- | --- | --- |
+| `meta` | the file is created | records version, folder, time, provider and model |
+| `message` | a message is added | appended to the history |
+| `replaced` | a compaction | the history so far is swapped for the messages it carries |
+| `model` | `/model` | the session's model is updated |
+
+`/clear` makes the next message start a new file; the old one is kept.
+
+**Reading.** `sessions.load` replays a file from the top. A broken last line (a crash mid-write) is ignored; a broken line elsewhere, or a newer format version, is an error. Unknown line types are skipped.
+
+**Resuming** (`commands.resume_session`): point the store at the session's file, then `Agent.restore(messages)`. `restore` ties off a turn that was cut short (the same code as an interruption, with wording that says the tool's outcome is unknown), checks `history_problems`, and refuses the session, keeping the current conversation, if it still isn't valid. The session's model is restored when the provider matches. Permissions, token totals and the system prompt are not restored: the prompt is rebuilt from today's memory files.
+
+**Entry points.** `wren --resume` starts the front end on the session list; `wren --resume ID` resumes before it starts; `/resume` and `/resume ID` do the same from inside. In the app, the list is a `Picker` and the transcript is redrawn from the history.
+
+## Switching models
+
+`Agent.set_model` sets `provider.model`, which the provider reads on each request, and tells the journal. `/model` lists `provider.models()` (asked of the API; in the app, on the worker thread) in a `Picker`; `/model NAME` switches directly. The conversation carries over unchanged. The prompt cache is per model, so the next request is uncached, and another model's reasoning blocks are ignored by the new one.
+
 ## Context: size, caching and compaction
 
 **The request is always built the same way:** tools, then the system prompt, then the messages in order, with new material only at the end. Prompt caching depends on that. The provider adds `cache_control` to every request, and the API reads the unchanged beginning back at about a tenth of the price.
@@ -133,6 +157,7 @@ Three things flow the other way, from a front end into the core:
 | Hook | Set on | In the app | In the REPL |
 | --- | --- | --- | --- |
 | Permission question | `Permissions.ask` | `WrenApp.ask_permission`: shows a `PermissionPrompt`, waits for a key | `Repl.ask_permission`: prints, then `input()` |
+| A choice from a list (model, session) | a `CommandResult` flag from `commands.py` | a `Picker` in the transcript | a printed list, and a command to type |
 | Stop the turn | closing the `run_turn` generator | Escape sets a flag; the worker's loop breaks | Ctrl-C |
 | Stop a slow tool | `ToolContext.should_stop` | the same flag; the shell polls it | not used (Ctrl-C interrupts directly) |
 
@@ -185,11 +210,18 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 17. **The system prompt is fixed for the length of a conversation.** Memory files are read when a conversation starts, and not again until the next.
 18. **Memory files can't grant permission.** They are text in the prompt; the permission check in the registry doesn't read them.
 19. **Memory is looked for only in the home directory's `.wren/`, and from the working directory up to the top of its git repository.**
+20. **Every message enters the history through `Agent._add`,** so the journal sees each one, in order, as it happens.
+21. **A session file is only ever appended to.** Nothing already written is changed, including by compaction.
+22. **A restored history is valid or it isn't used.** `restore` ties off loose ends, then `history_problems` must be empty.
+23. **Session files are outside the project and private to the user** (`0o700` folders, `0o600` files).
+24. **However the app closes, it releases its worker thread.**
 
 ## Where the next steps plug in
 
 | Coming in | Plugs in at |
 | --- | --- |
-| Step 7: sessions | Saving and loading `agent.messages`, including `ReasoningBlock`s; a resumed session rebuilds its system prompt from today's memory files |
+| Step 8: MCP | More tools in the `ToolRegistry`, provided by other programs; each needs a `permission()` story |
+| Step 8: subagents | A second `Agent` with its own history, run as a tool of the first |
+| Step 8: hooks | Around `ToolRegistry.run` and at turn boundaries in `Agent` |
 | Later: saved permission rules | Loaded into `Permissions.always` at startup |
 | Later: sandboxing | Around `tools/shell.py`'s `_run` |

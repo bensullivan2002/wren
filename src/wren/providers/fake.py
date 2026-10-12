@@ -54,6 +54,9 @@ class FakeProvider:
         self.calls: list[dict] = []  # what we were sent, for test assertions
         self._next_id = 0
 
+    def models(self) -> list[str]:
+        return ["demo", "demo-large", "demo-fast"]  # all equally pretend
+
     def stream(
         self,
         *,

@@ -18,16 +18,23 @@ from wren.agent import INTERRUPTED_NOTE, Agent
 from wren.memory import Memory
 from wren.messages import Message, TextBlock, ToolUseBlock, history_problems
 from wren.providers.fake import FakeProvider
+from wren.sessions import SessionStore
 from wren.tools import Permissions, ToolRegistry, default_tools
 from wren.tools.permissions import FileChange
-from wren.tui import PermissionPrompt, WrenApp, change_text
+from wren.tui import PermissionPrompt, Picker, WrenApp, change_text
 
 
-def make_app(tmp_path, replies=None, memory=None):
+def make_app(tmp_path, replies=None, memory=None, saved=False, choose_session=False):
     """An app on a throwaway project. With no `replies`, the fake model is in
-    demo mode, where typing `read x`, `write x text` or `run cmd` asks for a tool."""
+    demo mode, where typing `read x`, `write x text` or `run cmd` asks for a tool.
+    With `saved`, its conversations are written under tmp_path/home."""
     tools = ToolRegistry(default_tools(), root=tmp_path, permissions=Permissions())
-    return WrenApp(Agent(FakeProvider(replies), "sys", 100, tools), memory)
+    agent = Agent(FakeProvider(replies), "sys", 100, tools)
+    sessions = None
+    if saved:
+        sessions = SessionStore(tmp_path, agent.provider.name, agent.provider.model, home=tmp_path / "home")
+        agent.journal = sessions
+    return WrenApp(agent, memory, sessions, choose_session=choose_session)
 
 
 def asks(*calls):
@@ -289,6 +296,74 @@ async def test_loaded_memory_files_are_announced_and_remember_adds_to_them(tmp_p
         await pilot.pause()
         assert "Added to WREN.md" in screen_text(app)
     assert (tmp_path / "WREN.md").read_text() == "Be brief.\n- use tabs\n"
+
+
+async def test_the_model_picker_switches_model_and_updates_the_header(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await say(app, pilot, "/model")
+        await until(pilot, lambda: app.query(Picker), "the model picker")
+        assert app.focused is app.query_one(Picker)
+        await pilot.press("down", "enter")  # the second in the list
+
+        await until(pilot, lambda: not app.query(Picker), "the picker to close")
+        assert app.agent.provider.model == "demo-large"
+        assert "demo-large" in str(app.query_one("#header").content)
+        assert "Now using demo-large." in screen_text(app) and app.focused is app.prompt
+
+
+async def test_escape_closes_a_picker_without_choosing(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await say(app, pilot, "/model")
+        await until(pilot, lambda: app.query(Picker), "the model picker")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not app.query(Picker) and app.agent.provider.model == "demo" and app.focused is app.prompt
+
+
+async def test_resume_picks_an_earlier_conversation_and_redraws_it(tmp_path):
+    (tmp_path / "a.txt").write_text("one\ntwo\n")
+    app = make_app(tmp_path, saved=True)
+    async with app.run_test() as pilot:
+        await say(app, pilot, "read a.txt")
+        await finished(app, pilot)
+        await say(app, pilot, "/clear")
+        await pilot.pause()
+        await say(app, pilot, "something else entirely")
+        await finished(app, pilot)
+        assert "read a.txt" not in screen_text(app)
+
+        await say(app, pilot, "/resume")
+        await until(pilot, lambda: app.query(Picker), "the session picker")
+        await pilot.press("enter")  # the only other conversation
+        await until(pilot, lambda: "Resumed" in screen_text(app), "the old conversation")
+
+        shown = screen_text(app)
+        assert "read a.txt" in shown and "read_file(path='a.txt')" in shown  # the old turn, tool call and all
+        assert "something else entirely" not in shown
+        assert len(app.agent.messages) == 4 and app.focused is app.prompt
+
+
+async def test_starting_with_resume_opens_the_same_picker(tmp_path):
+    first = make_app(tmp_path, ["an earlier answer"], saved=True)
+    async with first.run_test() as pilot:
+        await say(first, pilot, "an earlier question")
+        await finished(first, pilot)
+
+    app = make_app(tmp_path, saved=True, choose_session=True)  # wren --resume
+    async with app.run_test() as pilot:
+        await until(pilot, lambda: app.query(Picker), "the session picker, straight away")
+        assert "an earlier question" in str(app.query_one(Picker).get_option_at_index(0).prompt)
+        await pilot.press("enter")
+        await until(pilot, lambda: "an earlier answer" in screen_text(app), "the old conversation")
+
+
+async def test_resume_with_nothing_saved_just_says_so(tmp_path):
+    app = make_app(tmp_path, saved=True, choose_session=True)
+    async with app.run_test() as pilot:
+        await until(pilot, lambda: "no other saved conversations" in screen_text(app), "the note")
+        assert not app.query(Picker)
 
 
 async def test_quit_command_exits(tmp_path):

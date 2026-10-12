@@ -14,9 +14,11 @@ from __future__ import annotations
 import json
 import textwrap
 from dataclasses import dataclass
+from datetime import datetime
 
 from wren.agent import Agent, Compacted
 from wren.memory import Memory
+from wren.sessions import SavedSession, SessionError, SessionStore
 from wren.messages import Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock
 from wren.tools import ToolError
 
@@ -28,10 +30,12 @@ COMMANDS = """\
 /system        show the system prompt sent with every request
 /usage         tokens used this session, and how full the context is
 /compact       replace the conversation with a summary of it, to save tokens
+/model         choose a different model (/model NAME switches straight to it)
+/resume        go back to an earlier conversation in this folder (/resume ID)
 /permissions   show what you've said Wren may always do this session
 /memory        show which memory files (WREN.md, AGENTS.md) are loaded
 /remember X    add the note X to the project's memory file
-/clear         start a fresh conversation
+/clear         start a fresh conversation (the old one stays saved)
 /quit          exit"""
 
 
@@ -41,14 +45,37 @@ class CommandResult:
     is_error: bool = False
     quit: bool = False  # the front end should exit
     compact: bool = False  # the front end should run agent.compact() (a model call, so it takes a while)
+    pick_model: bool = False  # the front end should offer the provider's models to choose from
+    pick_session: bool = False  # ...or this folder's saved sessions
+    resumed: bool = False  # the conversation was swapped for a saved one; redraw it
     cleared: bool = False  # the conversation was reset; a front end with a transcript should empty it
 
 
-def run_command(agent: Agent, line: str, keys_help: str = "", memory: Memory | None = None) -> CommandResult:
+def run_command(
+    agent: Agent,
+    line: str,
+    keys_help: str = "",
+    memory: Memory | None = None,
+    sessions: SessionStore | None = None,
+) -> CommandResult:
     """Run one slash command. `keys_help` is the front end's own note about
     its keys (Ctrl-C, Escape...), added to the end of /help."""
     name, *args = line.split()
     name = name.lower()
+
+    if name == "/model":
+        if not args:
+            return CommandResult(pick_model=True)
+        return CommandResult(switch_model(agent, args[0]))
+    if name == "/resume":
+        if sessions is None:
+            return CommandResult("Sessions aren't being saved.", is_error=True)
+        if not args:
+            return CommandResult(pick_session=True)
+        try:
+            return CommandResult(resume_session(agent, sessions, sessions.find(args[0])), resumed=True)
+        except (SessionError, ValueError) as e:
+            return CommandResult(f"couldn't resume: {e}", is_error=True)
 
     if name == "/memory":
         return CommandResult(memory.describe() if memory else "Memory files are switched off.")
@@ -92,6 +119,67 @@ def _tools(agent: Agent, name: str | None) -> CommandResult:
     return CommandResult(
         json.dumps({"name": spec.name, "description": spec.description, "input_schema": spec.input_schema}, indent=2)
     )
+
+
+# --- Models and sessions: used by the commands above, and by the pickers ------
+
+
+def switch_model(agent: Agent, model: str) -> str:
+    if model == agent.provider.model:
+        return f"Already using {model}."
+    agent.set_model(model)
+    note = f"Now using {model}."
+    if agent.messages:
+        note += " Its first reply re-reads the conversation at full price: the cache is kept per model."
+    return note
+
+
+def model_list(agent: Agent) -> tuple[list[str], str]:
+    """The provider's models, and a problem to report if they couldn't be fetched."""
+    try:
+        return agent.provider.models(), ""
+    except Exception as e:  # no network, a bad key...
+        return [], f"couldn't list the models: {e}. You can still switch by name: /model NAME"
+
+
+def resume_session(agent: Agent, sessions: SessionStore, session: SavedSession) -> str:
+    """Swap the conversation for a saved one, and carry on writing to its file."""
+    if session.id == sessions.current_id:
+        raise SessionError("that's the conversation you're in")
+    # Point the journal at that session's file first, so that anything
+    # `restore` adds to tidy up an unfinished turn is written there too.
+    previous = sessions.path
+    sessions.continue_in(session)
+    try:
+        agent.restore(session.messages)  # raises ValueError, keeping the old history, if it's unusable
+    except ValueError:
+        sessions.path = previous
+        raise
+
+    provider = agent.provider
+    note = f"Resumed {session.id} ({ago(session.modified)}): {len(agent.messages)} messages."
+    if session.model and session.model != provider.model:
+        if session.provider == provider.name:
+            provider.model = session.model  # carry on with the model it was using
+            sessions.provider, sessions.model = provider.name, session.model
+            note += f" Using {session.model}, as it was."
+        else:
+            note += f" It was using {session.provider}'s {session.model}; continuing with {provider.model}."
+    return note + " Files may have changed since."
+
+
+def session_label(session: SavedSession) -> str:
+    # What it was about comes first: that's what you recognise it by.
+    return f"{ago(session.modified):<14}  {session.title}   [{session.id}]"
+
+
+def ago(when: datetime, now: datetime | None = None) -> str:
+    seconds = int(((now or datetime.now()) - when).total_seconds())
+    for size, unit in ((86400, "day"), (3600, "hour"), (60, "minute")):
+        if seconds >= size:
+            count = seconds // size
+            return f"{count} {unit}{'' if count == 1 else 's'} ago"
+    return "just now"
 
 
 def _remember(memory: Memory | None, note: str) -> CommandResult:
