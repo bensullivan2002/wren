@@ -175,7 +175,7 @@ An edit names the text to replace. It fails if that text is missing, or occurs m
 *Cost:* the first word is a coarse unit. "Always allow `git`" includes `git push --force`.
 
 ### D29. The shell runs each command fresh, with a timeout, and is not sandboxed
-*Step 3 · design*
+*Step 3 · design* · **Sandboxing superseded on macOS by D101 in step 9.**
 
 Each command gets a new shell in the working directory, no keyboard input, combined stdout and stderr, and a timeout (120 seconds by default, 600 at most), after which its whole process group is killed. A non-zero exit code is reported in a normal result, not an error. Long output keeps its tail.
 *Not chosen:* one persistent shell session (state carries over, but so do surprises, and it's much more machinery). Sandboxing (the right long-term answer; a project of its own).
@@ -651,3 +651,61 @@ Wren compacts at the model's window, less `--max-tokens` (room for one reply), l
 *Design details:* the agent asks once per (provider, model): at the start of a turn, and in the app from a worker at start-up and after a model change, so the bar appears before the first message. A failed lookup stores nothing and is retried next turn; an answer that arrives after the model changed is dropped. With no budget, the footer says why instead of a bar ("window not looked up yet", "window unknown: never compacted", "compaction off"), and `/usage` spells out how the figure was worked out. The REPL gets the `/usage` lines; the footer is the app's only.
 *Not chosen:* a flat 90% of the window (ignores the reply, which can be 32,000 tokens or more). Compacting right at the window less the reply (one long turn of tool output overflows it). Falling back to 150,000 for an unknown model (a made-up number presented as the model's).
 *Cost:* long conversations now run far longer before compacting, and every request re-sends them. Several models charge more for long prompts (D89: Haiku 5.5 over 100k, several OpenAI models over 272k), so those prices now apply more often. A cap brings back the old behaviour: `--context-budget 150000`.
+
+### D100. Auto mode: contained actions go ahead without asking
+*Step 9 · you*
+
+You said you'd stopped reading the permission prompts, and asked for an auto mode. Of four options you chose a sandbox plus auto-approval, the way Codex CLI works. `/auto` turns it on: a request the tool marks `contained` is allowed without a question. That means an edit to an ordinary file in the project, or a command that will run in the sandbox. Everything else still asks. Wren works out containment from the resolved path or from where the command will run. It is never the model's claim (journal 09, Idea 3).
+*Not chosen:* a reviewer model judging each action (what you asked about: neither Claude Code's nor Codex's classifier is offered as an API as far as we could find, and a reviewer reads the same files the agent does, so text in them can try to sway it). Approving everything (simplest; protects nothing). The sandbox now and a reviewer later for commands that leave it (still open, as a follow-up).
+*Cost:* without a sandbox (anything but macOS), auto mode still asks before every command.
+
+### D101. On macOS, every command runs in the sandbox, in normal mode too
+*Step 9 · design, confirmed by you*
+
+The sandbox applies whether auto mode is on or off. The permission question says "in the sandbox" or "outside the sandbox".
+*Why:* the same command behaves the same way in either mode, and what you approve is what runs. It's also how Codex works: its sandbox doesn't depend on its approval setting.
+*Not chosen:* sandboxing only in auto mode (normal mode would keep step 3's behaviour, with no first attempt that fails for lack of network, but an approved command would do different things depending on a mode you may have forgotten you set).
+*Cost:* a command that needs the network or writes `.git` fails once in the sandbox. The model then asks again with `outside_sandbox` (D104), which costs a model call and a question.
+
+### D102. Wren writes its own Seatbelt profile, denying by default
+*Step 9 · design*
+
+`tools/sandbox.py` builds a profile of about 40 lines of SBPL and runs commands with `sandbox-exec -p`. It starts from `(deny default)` and allows what terminal programs need, with a short list of system services taken from Codex's and Anthropic's sandbox-runtime's profiles (both Apache-2.0). Paths go in as parameters (`-D NAME=path`), never pasted into the profile's text, and as real paths (`/tmp` is `/private/tmp`).
+*Why deny-default:* under `(allow default)` a command can ask the system to open an app, and the app runs outside the sandbox. Checked: `open -a Calculator` works under an allow-default profile and fails under Wren's.
+*Not chosen:* Anthropic's `@anthropic-ai/sandbox-runtime` (it also does Linux and a network allow-list, but it's a Node package, and Wren is Python). Docker or another container (a separate install, slow to start, and the project has to be mounted in). Bubblewrap or Landlock (Linux only; a later step).
+*Cost:* macOS only. Apple marks `sandbox-exec` as deprecated, though it ships it and Codex and Claude Code rely on it. The profile is ours to maintain.
+
+### D103. What a sandboxed command may do
+*Step 9 · design*
+
+- **Read** anywhere, except the credential folders in your home directory (`.ssh`, `.aws`, `.gnupg`, `.netrc`, `.config/gh`, `.docker`, `.kube`, `.pypirc`, `.npmrc`, `Library/Keychains`). With no network they couldn't be sent anywhere, but output goes to the model and into the session file.
+- **Write** inside the project and the temporary folders, except `PROTECTED` at the top of the project: `.git`, `.envrc`, `.vscode`, `.idea`, `.claude`, `.codex`. These are run later, outside the sandbox, by git, direnv, editors or other agents. So `git status`, `log` and `diff` work in the sandbox, and `git add` and `commit` don't.
+- **No network.**
+
+*Not chosen:* no reads outside the project (stricter, but it breaks toolchains and settings under your home directory: `~/.gitconfig`, `~/.pyenv`, caches). A network allow-list through a proxy, as sandbox-runtime does (a larger piece of work; for later). Protecting those names at every depth (Seatbelt can only match a path relative to a parameter by its start, and building a regular expression would mean pasting the path in).
+*Cost:* a command can still read other projects and your shell history, and write `sub/.envrc`.
+
+### D104. Leaving the sandbox is the model's request, asked about every time it isn't "always" allowed
+*Step 9 · design*
+
+The shell tool has an `outside_sandbox` argument, false by default. Setting it runs the command unsandboxed, and the request is never contained, so auto mode asks about it too. Its "always" scope is `shell-outside:<word>`, separate from the sandbox's `shell:<word>`, so "always allow `uv`" in the sandbox doesn't cover `uv` with the network. When a sandboxed command fails, its result says it ran in the sandbox and how to ask to leave.
+*Not chosen:* Wren noticing a sandbox refusal and retrying outside by itself (that's leaving the sandbox without asking). No way out at all (installing packages and committing would be impossible).
+*Cost:* the model decides when to ask. A model that sets `outside_sandbox` on everything turns auto mode back into a question per command, which is safe but tiresome.
+
+### D105. In auto mode, edits to files that run by themselves still ask
+*Step 9 · design*
+
+An edit or write is contained unless any folder or file in its path is one of `PROTECTED`, at any depth (`sub/.vscode/tasks.json` counts). The writing tools still refuse `.git` entirely (D30).
+*Not chosen:* the sandbox's top-level-only rule (D103), which would let an edit to `sub/.envrc` through. Protecting memory files too (they can't grant permission, D53, but they do steer the next conversation: listed as a known limit, and an easy addition if you want it).
+
+### D106. The prompt and tool descriptions say the user "may" be asked
+*Step 9 · design*
+
+Auto mode switches on and off mid-conversation, but the system prompt and the tool list are fixed for a conversation (invariants 16 and 17). So they now say the user may be asked to approve an edit or command, which is true in both modes. The shell's description describes the sandbox only on a machine that has one, which can't change mid-conversation either.
+*Not chosen:* telling the model when auto mode changes (it would need a message in the history, and nothing about the model's job changes: it should be as careful either way).
+
+### D107. `/auto` is a toggle for the session, shown in the footer
+*Step 9 · design*
+
+`/auto` switches auto mode on or off, in both front ends. The app's footer shows `auto: on` in yellow, and `/permissions` describes what auto mode allows. Like "always" answers (D23), it's forgotten on exit and isn't restored with a session.
+*Not chosen, for now:* a `--auto` flag or `WREN_AUTO` (you want one, as a separate piece of work: [issue #9](https://github.com/bensullivan2002/wren/issues/9)). A saved default (a setting that removes questions in every project, including repositories you've only just cloned).

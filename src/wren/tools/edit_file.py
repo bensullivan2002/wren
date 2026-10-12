@@ -26,7 +26,16 @@ from pathlib import Path
 from pydantic import Field
 
 from wren.tools.base import Tool, ToolContext, ToolError, ToolInput, ToolResult
-from wren.tools.files import diff, diff_summary, numbered, read_text, resolve_for_writing, shown, write_text
+from wren.tools.files import (
+    diff,
+    diff_summary,
+    numbered,
+    read_text,
+    resolve_for_writing,
+    runs_by_itself,
+    shown,
+    write_text,
+)
 from wren.tools.permissions import FileChange, PermissionRequest
 
 CONTEXT_LINES = 3  # lines shown either side of the change in the result
@@ -41,7 +50,7 @@ class EditFile(Tool):
         "By default old_string must occur exactly once: if it occurs more often, include more of the "
         "surrounding lines to make it unique, or set replace_all to change every occurrence. "
         "Read the file first so you are quoting what is really there. "
-        "To create a new file, use write_file. The user is asked to approve each edit."
+        "To create a new file, use write_file. The user may be asked to approve the edit."
     )
 
     class Input(ToolInput):
@@ -61,6 +70,7 @@ class EditFile(Tool):
             scope="edit",
             scope_label="all file edits",
             change=plan.change,
+            contained=not runs_by_itself(ctx, plan.path),
         )
 
     def run(self, args: Input, ctx: ToolContext) -> ToolResult:

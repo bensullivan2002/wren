@@ -73,6 +73,7 @@ MAX_DETAIL_LINES = 40
 
 KEYS_HELP = """\
 Wren asks before it edits a file or runs a command: y, n, or a for "always".
+/auto stops most of the questions: see /permissions for what still asks.
 Ctrl-C while Wren is working stops it. Whatever it had already done stays done,
 and stays in the conversation. Ctrl-D quits."""
 

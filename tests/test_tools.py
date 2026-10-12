@@ -4,17 +4,22 @@ Each test builds a small throwaway project in pytest's `tmp_path`.
 """
 
 import os
+import shlex
+import sys
 
 import pytest
 from pydantic import Field
 
+from wren.agent import Agent
+from wren.providers.fake import FakeProvider
 from wren.tools import Decision, Permissions, Tool, ToolError, ToolInput, ToolRegistry, ToolResult, default_tools
 from wren.tools import list_files as list_files_module
+from wren.tools import sandbox
 from wren.tools import search as search_module
 from wren.tools import shell as shell_module
 from wren.tools.files import glob_to_regex
 from wren.tools.registry import DECLINED
-from wren.commands import plain_call
+from wren.commands import plain_call, run_command
 from wren.messages import ToolUseBlock
 from wren.tools.shell import command_word
 
@@ -505,13 +510,13 @@ def test_shell_runs_in_the_working_directory_and_returns_output(tools, user):
     result = ok(tools.run("shell", {"description": WHY, "command": "ls src"}))
     assert result.content == "app\nnotes.txt"
     assert result.summary == "2 lines"
-    assert user.seen[0].title == "Run a shell command" and user.seen[0].detail == "ls src"
+    assert user.seen[0].title.startswith("Run a shell command") and user.seen[0].detail == "ls src"
 
 
 @posix_only
 def test_shell_reports_a_failing_command_without_calling_it_a_tool_error(tools):
     result = ok(tools.run("shell", {"description": WHY, "command": "echo oops >&2; exit 3"}))
-    assert result.content == "oops\n\n[Exit code 3]"
+    assert result.content.startswith("oops\n\n[Exit code 3]")  # then, on macOS, a note about the sandbox
     assert result.summary == "exit 3 · 1 line"
 
 
@@ -587,3 +592,115 @@ def test_shell_refuses_an_empty_command_and_a_silly_timeout(tools, user):
     assert "command is empty" in err(tools.run("shell", {"description": WHY, "command": "  "})).content
     assert "less than or equal to 600" in err(tools.run("shell", {"description": WHY, "command": "true", "timeout": 9999})).content
     assert user.seen == []
+
+
+# --- Auto mode and the sandbox -------------------------------------------------------
+# The sandbox tests run real commands under macOS's sandbox-exec, and are
+# skipped where it doesn't exist.
+
+sandbox_only = pytest.mark.skipif(not sandbox.available(), reason="needs macOS's sandbox-exec")
+
+
+@pytest.mark.parametrize(
+    "path, contained",
+    [
+        ("src/new.py", True),
+        ("envrc.txt", True),
+        (".github/workflows/ci.yml", True),  # runs on GitHub's machines, not yours
+        (".envrc", False),  # direnv runs it when you cd into the folder
+        (".vscode/tasks.json", False),  # editors run tasks when the folder opens
+        ("sub/.claude/settings.json", False),  # another agent's hooks, in any folder
+    ],
+)
+def test_an_edit_is_contained_unless_it_could_run_by_itself(tools, user, path, contained):
+    ok(tools.run("write_file", {"path": path, "content": "x"}))
+    assert user.seen[0].contained is contained
+
+
+def test_auto_mode_allows_contained_actions_and_asks_about_the_rest(tools, user, project):
+    tools.permissions.auto = True
+    user.decision = Decision.DENY
+    ok(tools.run("write_file", {"path": "a.txt", "content": "1"}))
+    ok(tools.run("edit_file", {"path": "a.txt", "old_string": "1", "new_string": "2"}))
+    assert user.seen == [] and (project / "a.txt").read_text() == "2"
+
+    assert err(tools.run("write_file", {"path": ".envrc", "content": "x"})).content == DECLINED
+    outside = {"description": WHY, "command": "true", "outside_sandbox": True}
+    assert err(tools.run("shell", outside)).content == DECLINED
+    assert len(user.seen) == 2 and not (project / ".envrc").exists()
+
+
+@posix_only
+def test_auto_mode_asks_about_every_command_where_there_is_no_sandbox(tools, user, monkeypatch):
+    monkeypatch.setattr(sandbox, "available", lambda: False)
+    tools.permissions.auto = True
+    ok(tools.run("shell", {"description": WHY, "command": "true"}))
+    assert user.seen[0].title == "Run a shell command" and not user.seen[0].contained
+
+
+def test_the_auto_command_switches_the_mode_and_permissions_describes_it(tools):
+    agent = Agent(FakeProvider(), "sys", 100, tools)
+    assert "Wren asks before every edit and command" in run_command(agent, "/permissions").text
+    assert run_command(agent, "/auto").text.startswith("Auto mode is on.") and tools.permissions.auto
+    shown = run_command(agent, "/permissions").text
+    assert shown.startswith("Auto mode is on.") and "Wren asks before everything else" in shown
+    assert run_command(agent, "/auto").text.startswith("Auto mode is off") and not tools.permissions.auto
+
+
+@sandbox_only
+def test_auto_mode_runs_a_sandboxed_command_without_asking(tools, user, project):
+    tools.permissions.auto = True
+    result = ok(tools.run("shell", {"description": WHY, "command": "echo hi > out.txt && cat out.txt"}))
+    assert result.content == "hi" and user.seen == []
+
+
+@sandbox_only
+def test_a_sandboxed_command_writes_only_in_the_project(tools, project, tmp_path_factory, monkeypatch):
+    # The project is itself in a temp folder, and commands may write to
+    # those, so leave them out: then "elsewhere" really is somewhere else.
+    monkeypatch.setattr(sandbox, "temp_dirs", lambda: [])
+    elsewhere = tmp_path_factory.mktemp("elsewhere")
+    ok(tools.run("shell", {"description": WHY, "command": "touch inside.txt"}))
+    assert (project / "inside.txt").exists()
+
+    for target in [elsewhere / "x.txt", project / ".git" / "sneaky", project / ".envrc"]:
+        result = ok(tools.run("shell", {"description": WHY, "command": f"touch {shlex.quote(str(target))}"}))
+        assert "Operation not permitted" in result.content and not target.exists()
+        assert shell_module.SANDBOX_NOTE in result.content  # so the model knows why
+
+
+@sandbox_only
+def test_a_sandboxed_command_has_no_network(tools):
+    # This connects to the computer itself, so nothing leaves it either way.
+    # Outside the sandbox that's "connection refused"; inside, it isn't allowed at all.
+    code = "import socket; socket.create_connection(('127.0.0.1', 9), 1)"
+    result = ok(tools.run("shell", {"description": WHY, "command": f'{shlex.quote(sys.executable)} -c "{code}"'}))
+    assert "Operation not permitted" in result.content
+
+
+@sandbox_only
+def test_a_sandboxed_command_cannot_read_credentials(tools, tmp_path_factory, monkeypatch):
+    home = tmp_path_factory.mktemp("home")
+    (home / ".ssh").mkdir()
+    (home / ".ssh" / "id_ed25519").write_text("secret")
+    monkeypatch.setenv("HOME", str(home))
+    result = ok(tools.run("shell", {"description": WHY, "command": "cat ~/.ssh/id_ed25519"}))
+    assert "Operation not permitted" in result.content and "secret" not in result.content
+
+
+@sandbox_only
+def test_outside_the_sandbox_is_asked_about_even_in_auto_mode(tools, user, tmp_path_factory):
+    elsewhere = tmp_path_factory.mktemp("elsewhere")
+    tools.permissions.auto = True
+    ok(tools.run("shell", {"description": WHY, "command": f"touch {elsewhere}/x.txt", "outside_sandbox": True}))
+    assert (elsewhere / "x.txt").exists()
+    assert user.seen[0].title == "Run a shell command outside the sandbox" and not user.seen[0].contained
+
+
+@sandbox_only
+def test_always_in_the_sandbox_does_not_cover_outside_it(tools, user):
+    user.decision = Decision.ALWAYS
+    ok(tools.run("shell", {"description": WHY, "command": "true"}))
+    user.decision = Decision.DENY
+    err(tools.run("shell", {"description": WHY, "command": "true", "outside_sandbox": True}))
+    assert [r.scope for r in user.seen] == ["shell:true", "shell-outside:true"]

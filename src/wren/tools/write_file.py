@@ -12,7 +12,7 @@ from __future__ import annotations
 from pydantic import Field
 
 from wren.tools.base import Tool, ToolContext, ToolError, ToolInput, ToolResult
-from wren.tools.files import diff, diff_summary, read_text, resolve_for_writing, shown, write_text
+from wren.tools.files import diff, diff_summary, read_text, resolve_for_writing, runs_by_itself, shown, write_text
 from wren.tools.permissions import FileChange, PermissionRequest
 
 
@@ -22,7 +22,7 @@ class WriteFile(Tool):
         "Create a new text file with the given content, or completely replace an existing one. "
         "Missing parent folders are created. "
         "For a change to part of an existing file, use edit_file instead: it is cheaper and "
-        "can't lose the rest of the file. The user is asked to approve each write."
+        "can't lose the rest of the file. The user may be asked to approve the write."
     )
 
     class Input(ToolInput):
@@ -41,6 +41,7 @@ class WriteFile(Tool):
             scope="edit",
             scope_label="all file edits",
             change=FileChange(path, before, args.content),
+            contained=not runs_by_itself(ctx, path),
         )
 
     def run(self, args: Input, ctx: ToolContext) -> ToolResult:

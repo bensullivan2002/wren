@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterator
 
 from wren.tools.base import ToolContext, ToolError
+from wren.tools.sandbox import PROTECTED
 
 # Folders that are almost never what the model is looking for, and can be
 # enormous. Skipping them keeps listings and searches fast and relevant.
@@ -52,6 +53,17 @@ def resolve_for_writing(ctx: ToolContext, path: str) -> Path:
     if ".git" in target.relative_to(ctx.root).parts:
         raise ToolError(f"'{path}' is inside .git, which Wren's tools never write to. Use git commands instead.")
     return target
+
+
+def runs_by_itself(ctx: ToolContext, path: Path) -> bool:
+    """Whether writing `path` could make something run later, outside
+    Wren's control: a direnv `.envrc`, editor tasks, another agent's hooks
+    (sandbox.PROTECTED). Writing there is allowed, but auto mode still asks.
+
+    This checks every folder in the path, not just the top one as the
+    sandbox does: `sub/.vscode/tasks.json` runs when you open `sub` in an
+    editor. Asking too often here costs a question; too rarely, a hole."""
+    return any(part in PROTECTED for part in path.relative_to(ctx.root).parts)
 
 
 def is_inside(ctx: ToolContext, path: Path) -> bool:
