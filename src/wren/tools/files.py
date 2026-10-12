@@ -72,9 +72,10 @@ def runs_by_itself(ctx: ToolContext, path: Path) -> bool:
     Wren's control: a direnv `.envrc`, editor tasks, another agent's hooks
     (sandbox.PROTECTED). Writing there is allowed, but auto mode still asks.
 
-    This checks every folder in the path, not just the top one as the
-    sandbox does: `sub/.vscode/tasks.json` runs when you open `sub` in an
-    editor. Asking too often here costs a question; too rarely, a hole."""
+    This checks every folder in the path, as the sandbox does:
+    `sub/.vscode/tasks.json` runs when you open `sub` in an editor, and a
+    git worktree in the project has a `.git` of its own. Asking too often
+    here costs a question; too rarely, a hole."""
     return any(part in PROTECTED for part in path.relative_to(ctx.root).parts)
 
 

@@ -903,6 +903,55 @@ def test_a_sandboxed_command_writes_only_in_the_project(
 
 
 @sandbox_only
+def test_a_sandboxed_command_cannot_write_protected_names_in_any_folder(tools, project):
+    # A git worktree in the project is a checkout of its own: its `.git` file
+    # says where its history is, and its `.claude` and `.envrc` run things.
+    worktree = project / ".worktrees" / "fix"
+    worktree.mkdir(parents=True)
+    (worktree / ".git").write_text("gitdir: /repo/.git/worktrees/fix\n")
+    for command in [
+        "echo 'gitdir: /tmp/elsewhere' > .worktrees/fix/.git",
+        "mkdir .worktrees/fix/.claude",
+        "touch .worktrees/fix/.envrc",
+        "mkdir -p src/deep/.vscode",
+    ]:
+        result = ok(tools.run("shell", {"description": WHY, "command": command}))
+        assert "Operation not permitted" in result.content, command
+    assert (worktree / ".git").read_text() == "gitdir: /repo/.git/worktrees/fix\n"
+    assert (
+        not any((worktree / name).exists() for name in [".claude", ".envrc"])
+        and not (project / "src/deep/.vscode").exists()
+    )
+
+    # Names that only start the same way are ordinary files.
+    ok(
+        tools.run(
+            "shell",
+            {
+                "description": WHY,
+                "command": "cd .worktrees/fix && touch .gitignore .github x.py",
+            },
+        )
+    )
+    assert all((worktree / name).exists() for name in [".gitignore", ".github", "x.py"])
+
+
+@sandbox_only
+def test_a_project_inside_a_protected_folder_is_still_writable(tmp_path_factory):
+    # Say Wren is started in an old worktree under .claude/worktrees/: only
+    # the names below the project count, not the folders above it.
+    root = tmp_path_factory.mktemp("home") / ".claude" / "worktrees" / "ci"
+    root.mkdir(parents=True)
+    tools = ToolRegistry(default_tools(), root=root, permissions=Permissions(Answers()))
+    ok(tools.run("shell", {"description": WHY, "command": "touch inside.txt"}))
+    assert (root / "inside.txt").exists()
+    result = ok(tools.run("shell", {"description": WHY, "command": "touch .envrc"}))
+    assert (
+        "Operation not permitted" in result.content and not (root / ".envrc").exists()
+    )
+
+
+@sandbox_only
 def test_a_sandboxed_command_has_no_network(tools):
     # This connects to the computer itself, so nothing leaves it either way.
     # Outside the sandbox that's "connection refused"; inside, it isn't allowed at all.

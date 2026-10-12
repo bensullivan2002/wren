@@ -70,12 +70,12 @@ _PROTECTED = ", ".join(sandbox.PROTECTED)
 # again when a sandboxed command fails, which is when it needs to know.
 _SANDBOX_RULES = (
     "Commands run in a sandbox: they can read files, but can write only inside the working directory "
-    f"and temp folders (not {_PROTECTED}), and have no network. For a command that needs more, such as "
+    f"and temp folders (not {_PROTECTED}, in any folder), and have no network. For a command that needs more, such as "
     "installing packages, git commit or git push, set outside_sandbox; the user is always asked about those. "
 )
 SANDBOX_NOTE = (
     "[This command ran in the sandbox: no network, and writes only inside the working directory and temp "
-    f"folders, not {_PROTECTED}. If that is why it failed, run it again with outside_sandbox set to true. "
+    f"folders, not {_PROTECTED} in any folder. If that is why it failed, run it again with outside_sandbox set to true. "
     "The user will be asked.]"
 )
 

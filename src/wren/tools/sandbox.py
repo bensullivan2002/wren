@@ -11,7 +11,9 @@ What a sandboxed command can do:
   * read files anywhere, except the folders where credentials live
   * write only inside the working directory and the temporary folders,
     and not to the files there that make something run by itself later
-    (PROTECTED: git hooks, direnv, editor tasks, other agents' settings)
+    (PROTECTED: git hooks, direnv, editor tasks, other agents' settings),
+    in any folder of the project: a git worktree inside it, or a
+    subproject, has its own
   * run programs, which inherit the same limits
   * nothing on the network
 
@@ -30,7 +32,10 @@ sandbox-runtime (Apache-2.0) use, trimmed to what a terminal command needs.
 
 Paths are never pasted into the profile's text. They're passed separately
 as parameters (`-D NAME=path`, read with `(param "NAME")`), so a folder
-whose name contains a quote can't change what the profile says.
+whose name contains a quote can't change what the profile says. One rule
+needs a regular expression (protected names at any depth), and there the
+project's path is a parameter too, escaped, and joined to the pattern by
+the profile itself with `string-append`.
 
 On other systems there's no sandbox (yet): `available()` is False, commands
 run as before, and auto mode still asks before every command.
@@ -39,18 +44,26 @@ run as before, and auto mode still asks before every command.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
 
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 
-# Names at the top of a project that make something run later by itself,
-# outside the sandbox: git runs hooks and config-named programs; direnv runs
-# .envrc when you cd in; editors run tasks when a folder opens; other coding
-# agents run hooks from their settings. Sandboxed commands can't write them,
-# and in auto mode, edits to them still ask.
+# Names that make something run later by itself, outside the sandbox: git
+# runs hooks and config-named programs; direnv runs .envrc when you cd in;
+# editors run tasks when a folder opens; other coding agents run hooks from
+# their settings. Sandboxed commands can't write them in any folder of the
+# project, and in auto mode, edits to them still ask.
 PROTECTED = (".git", ".envrc", ".vscode", ".idea", ".claude", ".codex")
+
+# PROTECTED as a regular expression for what follows the project's path:
+# any folders (`/(.*/)?`), then one of the names as a whole folder or file
+# name (`(/|$)` stops `.git` matching `.github` or `.gitignore`).
+_PROTECTED_BELOW = (
+    "/(.*/)?(" + "|".join(re.escape(name) for name in PROTECTED) + ")(/|$)"
+)
 
 # Folders and files in your home directory that hold keys and tokens. With
 # no network a command couldn't send them anywhere, but whatever it prints
@@ -94,10 +107,10 @@ def _params(root: Path) -> dict[str, str]:
     real = os.path.realpath
     home = Path.home()
     params = {"ROOT": real(root)}
+    # The same path for a regular expression, where its dots and brackets
+    # must mean themselves (see the "Writing" rules in _profile).
+    params["ROOT_ESCAPED"] = re.escape(real(root))
     params.update({f"TEMP_{i}": real(path) for i, path in enumerate(temp_dirs())})
-    params.update(
-        {f"PROTECTED_{i}": real(root / name) for i, name in enumerate(PROTECTED)}
-    )
     params.update(
         {f"SECRET_{i}": real(home / name) for i, name in enumerate(CREDENTIALS)}
     )
@@ -126,9 +139,12 @@ def _profile(params: dict[str, str]) -> str:
 
 ; Writing: the project and the temporary folders...
 (allow file-write* (subpath (param "ROOT")) {paths("TEMP_")})
-; ...but not what would run by itself later. This comes after the line
-; above on purpose: when two rules match, the later one wins.
-(deny file-write* {paths("PROTECTED_")})
+; ...but not what would run by itself later, in any folder of the project.
+; `subpath` matches only the start of a path, so this is a regular
+; expression: the project's path, then the protected names below it. It
+; comes after the line above on purpose: when two rules match, the later
+; one wins.
+(deny file-write* (regex (string-append "^" (param "ROOT_ESCAPED") #"{_PROTECTED_BELOW}")))
 
 ; The devices commands write to and check.
 (allow file-write* file-ioctl

@@ -249,7 +249,7 @@ Scopes live in `Permissions.always`, and auto mode in `Permissions.auto`, in mem
 
 - running programs (each inherits the profile);
 - reading anywhere except `sandbox.CREDENTIALS` in the home directory;
-- writing in the project and the temporary folders, except `sandbox.PROTECTED` at the project's top level (a later rule in a profile wins over an earlier one);
+- writing in the project and the temporary folders, except `sandbox.PROTECTED` in any folder of the project, so a git worktree inside it is protected like the project itself. That rule is a regular expression: the profile joins the escaped project path (parameter `ROOT_ESCAPED`) to a fixed pattern with `string-append`. It comes after the allow rule, because a later rule in a profile wins over an earlier one;
 - writing to `/dev/null` and the like; reading system settings; a short list of system services (`mach-lookup`).
 
 No network rule is allowed, so there is no network. Paths are parameters (`-D`), made real with `os.path.realpath` (`/tmp` is `/private/tmp`). A sandboxed command that exits non-zero gets `SANDBOX_NOTE` added to its result, telling the model where it ran and how to ask to leave.
@@ -285,7 +285,7 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 24. **However the app closes, it releases its worker thread.**
 25. **Containment is established by Wren, never claimed by the model.** `contained` comes from the resolved path or from where the command will run; the model can only opt out of it, with `outside_sandbox`.
 26. **What you're asked about is what runs.** The shell's `permission()` and `run()` both decide sandboxing with `_sandboxed(args)`, so a question that says "in the sandbox" can't be followed by an unsandboxed run.
-27. **Paths are never pasted into the sandbox profile.** They're passed as parameters, so a folder's name can't change what the profile says.
+27. **Paths are never pasted into the sandbox profile.** They're passed as parameters, so a folder's name can't change what the profile says. The one regular expression gets the project's path as a parameter too, already escaped.
 
 ## Where the next steps plug in
 
