@@ -717,7 +717,7 @@ Auto mode switches on and off mid-conversation, but the system prompt and the to
 *Why macOS:* the sandbox's tests (step 9) skip anywhere else. *Why two Pythons:* the oldest Wren supports catches newer syntax slipping in, and the newest catches deprecations; the ones between rarely fail alone. Runs are free for a public repository, macOS included.
 *Design details:* the token is read-only. Actions are pinned to a commit, with the release in a comment, because a tag can be moved to other code. A newer push cancels the run it replaces. Jobs time out after 10 or 15 minutes (a hung UI test would otherwise hold a runner for six hours), and `faulthandler_timeout` prints where a hang is.
 *Not chosen:* every Python from 3.10 to 3.14 (ten test jobs for little more). Linux only (the sandbox untested). tox or nox (a second way to describe environments, when uv has one).
-*Unknown until the first run:* whether GitHub's macOS runners allow `sandbox-exec`.
+*Checked on the first run ([PR #14](https://github.com/bensullivan2002/wren/pull/14)):* GitHub's macOS runners allow `sandbox-exec`. All 402 tests ran there, none skipped; Ubuntu skips the 6 that need the sandbox.
 
 ### D109. Ruff lints and formats, at its defaults; the code was reformatted once
 *Issue #11 · you*
