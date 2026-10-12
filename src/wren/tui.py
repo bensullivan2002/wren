@@ -50,6 +50,7 @@ from textual.widgets import Markdown, OptionList, Static, TextArea
 from wren import __version__
 from wren.agent import Agent, Compacted, CompactionStarted, ToolFinished, ToolStarted, TurnFinished
 from wren.commands import (
+    budget_used,
     compaction_note,
     format_call,
     model_list,
@@ -616,8 +617,7 @@ class WrenApp(App):
         tokens = f"{agent.usage.sent_tokens:,} in · {agent.usage.output_tokens:,} out"
         if agent.context_budget:
             # The meter: how close the conversation is to being compacted.
-            percent = round(100 * agent.context_tokens / agent.context_budget)
-            tokens = f"context {percent}% · {tokens}"
+            tokens = f"context {budget_used(agent)} · {tokens}"
         if not self.busy:
             left = "enter send · ctrl+j new line · /help · ctrl+q quit"
         elif self._stop.is_set():

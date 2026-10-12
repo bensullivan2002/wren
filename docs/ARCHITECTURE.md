@@ -102,7 +102,7 @@ Memory lives in the system prompt, which compaction doesn't touch, so it survive
 
 ## Sessions
 
-**Writing.** The agent has an optional `journal` (the `Journal` protocol: `append`, `replace`, `model_changed`, `reset`). Every message joins the history through `Agent._add`, which also tells the journal. `SessionStore` is the journal `cli.py` installs: it appends one JSON line per event to `~/.wren/sessions/<project>/<id>.jsonl`, creating the file (mode `0o600`) at the first message.
+**Writing.** The agent has an optional `journal` (the `Journal` protocol: `append`, `replace`, `model_changed`, `spent`, `reset`). Every message joins the history through `Agent._add`, which also tells the journal. `SessionStore` is the journal `cli.py` installs: it appends one JSON line per event to `~/.wren/sessions/<project>/<id>.jsonl`, creating the file (mode `0o600`) at the first message.
 
 | Line type | Written when | On replay |
 | --- | --- | --- |
@@ -110,12 +110,13 @@ Memory lives in the system prompt, which compaction doesn't touch, so it survive
 | `message` | a message is added | appended to the history |
 | `replaced` | a compaction | the history so far is swapped for the messages it carries |
 | `model` | `/model` | the session's model is updated |
+| `spent` | a model call finishes | its token counts are added to the conversation's totals; its `context_tokens` becomes the conversation's size |
 
 `/clear` makes the next message start a new file; the old one is kept.
 
 **Reading.** `sessions.load` replays a file from the top. A broken last line (a crash mid-write) is ignored; a broken line elsewhere, or a newer format version, is an error. Unknown line types are skipped.
 
-**Resuming** (`commands.resume_session`): point the store at the session's file, then `Agent.restore(messages)`. `restore` ties off a turn that was cut short (the same code as an interruption, with wording that says the tool's outcome is unknown), checks `history_problems`, and refuses the session, keeping the current conversation, if it still isn't valid. The session's model is restored when the provider matches. Permissions, token totals and the system prompt are not restored: the prompt is rebuilt from today's memory files.
+**Resuming** (`commands.resume_session`): point the store at the session's file, then `Agent.restore(messages)`. `restore` ties off a turn that was cut short (the same code as an interruption, with wording that says the tool's outcome is unknown), checks `history_problems`, and refuses the session, keeping the current conversation, if it still isn't valid. The session's model is restored when the provider matches, and so are the conversation's token totals and its measured size. Permissions and the system prompt are not restored: the prompt is rebuilt from today's memory files.
 
 **Entry points.** `wren --resume` starts the front end on the session list; `wren --resume ID` resumes before it starts; `/resume` and `/resume ID` do the same from inside. In the app, the list is a `Picker` and the transcript is redrawn from the history.
 

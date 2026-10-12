@@ -79,7 +79,8 @@ def test_each_message_is_on_disk_as_soon_as_it_happens(tmp_path):
     list(events)
     saved = lines(store)
     assert saved[0]["cwd"] == str((tmp_path / "project").resolve()) and saved[0]["model"] == "scripted"
-    assert [r["role"] for r in saved[1:]] == ["user", "assistant", "user", "assistant"]
+    assert [r["role"] for r in saved if r["type"] == "message"] == ["user", "assistant", "user", "assistant"]
+    assert [r["type"] for r in saved].count("spent") == 2  # one line per model call
     assert load(store.path).messages == agent.messages
 
 
@@ -192,6 +193,46 @@ def test_resuming_brings_the_conversation_back_and_carries_on_in_the_same_file(t
     run(later, "more?")
     assert later_store.path == path and len(load(path).messages) == 6
     assert history_problems(later.messages) == []
+
+
+def test_resuming_restores_the_token_totals_and_the_size_exactly(tmp_path):
+    agent, store = make(tmp_path, [asks(("t1", "shout", {"text": "hi"})), "Done.", "the summary", "after"])
+    run(agent, "go")
+    list(agent.compact())
+    run(agent, "more")
+    assert agent.usage.sent_tokens > 0 and agent.context_tokens > 0
+
+    later, later_store = make(tmp_path, [])
+    resume_session(later, later_store, later_store.find(None))
+    assert later.usage == agent.usage  # every model call, the compaction's included
+    assert later.context_tokens == agent.context_tokens  # the measured size, not a guess
+    assert "0 tokens in" not in run_command(later, "/usage").text
+
+
+def test_a_session_file_with_no_usage_lines_still_resumes_with_an_estimate(tmp_path):
+    agent, store = make(tmp_path, ["a reply of some length"])
+    run(agent, "hello there")
+    kept = [line for line in store.path.read_text().splitlines() if '"type": "spent"' not in line]
+    store.path.write_text("\n".join(kept) + "\n")  # as an older Wren would have written it
+
+    later, later_store = make(tmp_path, [])
+    resume_session(later, later_store, later_store.find(None))
+    assert later.usage.sent_tokens == 0 and later.context_tokens > 0
+
+
+def test_clearing_resets_the_totals_for_the_new_conversation(tmp_path):
+    agent, store = make(tmp_path, ["hello"])
+    run(agent, "hi")
+    agent.reset()
+    assert agent.usage.sent_tokens == 0 and agent.context_tokens == 0
+
+
+def test_a_small_conversation_shows_as_under_one_percent_not_zero(tmp_path):
+    agent, store = make(tmp_path, ["hello"])
+    agent.context_budget = 150_000
+    assert "0 tokens, 0% of" in run_command(agent, "/usage").text  # nothing yet: 0% is true
+    run(agent, "hi")
+    assert "<1% of the 150,000 budget" in run_command(agent, "/usage").text
 
 
 def test_resuming_a_session_that_was_killed_mid_turn_ties_it_off(tmp_path):

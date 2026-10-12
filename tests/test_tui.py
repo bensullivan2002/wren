@@ -343,6 +343,8 @@ async def test_resume_picks_an_earlier_conversation_and_redraws_it(tmp_path):
         assert "read a.txt" in shown and "read_file(path='a.txt')" in shown  # the old turn, tool call and all
         assert "something else entirely" not in shown
         assert len(app.agent.messages) == 4 and app.focused is app.prompt
+        status = str(app.query_one("#status").content)
+        assert "0 in · 0 out" not in status  # the old conversation's totals came back with it
 
 
 async def test_starting_with_resume_opens_the_same_picker(tmp_path):

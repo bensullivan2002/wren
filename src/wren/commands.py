@@ -28,7 +28,7 @@ COMMANDS = """\
 /tools NAME    show exactly what the model is told about one tool
 /history       show the conversation exactly as Wren holds it
 /system        show the system prompt sent with every request
-/usage         tokens used this session, and how full the context is
+/usage         tokens used in this conversation, and how full the context is
 /compact       replace the conversation with a summary of it, to save tokens
 /model         choose a different model (/model NAME switches straight to it)
 /resume        go back to an earlier conversation in this folder (/resume ID)
@@ -151,7 +151,8 @@ def resume_session(agent: Agent, sessions: SessionStore, session: SavedSession) 
     previous = sessions.path
     sessions.continue_in(session)
     try:
-        agent.restore(session.messages)  # raises ValueError, keeping the old history, if it's unusable
+        # Raises ValueError, keeping the old conversation, if it's unusable.
+        agent.restore(session.messages, session.usage, session.context_tokens)
     except ValueError:
         sessions.path = previous
         raise
@@ -200,7 +201,7 @@ def _remember(memory: Memory | None, note: str) -> CommandResult:
 def _usage(agent: Agent) -> str:
     u = agent.usage
     lines = [
-        f"This session: {u.sent_tokens:,} tokens in · {u.output_tokens:,} out",
+        f"This conversation: {u.sent_tokens:,} tokens in · {u.output_tokens:,} out",
         f"  of the input, {u.cache_read_tokens:,} were read from the cache (about a tenth of the price)",
         f"Conversation now: {context_meter(agent)}",
         f"Model asked for: {agent.provider.model}",
@@ -216,8 +217,15 @@ def context_meter(agent: Agent) -> str:
     size = f"{agent.context_tokens:,} tokens"
     if not agent.context_budget:
         return size
+    return f"{size}, {budget_used(agent)} of the {agent.context_budget:,} budget"
+
+
+def budget_used(agent: Agent) -> str:
+    """How much of the context budget is used: "12%". A conversation that
+    exists but rounds to nothing shows "<1%", because "0%" reads as "empty"
+    or "not working"."""
     percent = round(100 * agent.context_tokens / agent.context_budget)
-    return f"{size}, {percent}% of the {agent.context_budget:,} budget"
+    return "<1%" if percent == 0 and agent.context_tokens else f"{percent}%"
 
 
 def compaction_note(event: Compacted) -> str:

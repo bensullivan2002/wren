@@ -1,5 +1,6 @@
 """End-to-end: run the real `wren` program with the fake model and typed input."""
 
+import json
 import os
 import subprocess
 import sys
@@ -131,7 +132,9 @@ def test_a_conversation_is_saved_and_resume_brings_it_back(tmp_path):
 
     resumed = wren("--provider", "fake", "--resume", saved.stem, stdin="/history\nand again\n", cwd=project, env_extra=env)
     assert f"Resumed {saved.stem}" in resumed.stdout and "You said: remember the number 42" in resumed.stdout
-    assert len(saved.read_text().splitlines()) == 5  # meta, then four messages, all in the one file
+    kinds = [json.loads(line)["type"] for line in saved.read_text().splitlines()]
+    # Two turns, all in the one file. Each model call's cost is logged just before its reply.
+    assert kinds == ["meta", "message", "spent", "message", "message", "spent", "message"]
 
     missing = wren("--provider", "fake", "--resume", "nope", stdin="", cwd=project, env_extra=env)
     assert "Couldn't resume" in missing.stdout and "This is a new conversation" in missing.stdout

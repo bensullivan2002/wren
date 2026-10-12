@@ -374,16 +374,17 @@ Each event is one appended line: `meta`, `message`, `replaced` (a compaction), `
 *Not chosen:* rewriting a snapshot of the whole history on each change (simpler to read back; destroyed if interrupted mid-write). A database such as SQLite (robust and queryable, but opaque: you couldn't `cat` a session).
 *Cost:* a compacted conversation's old messages stay in the file. That allows recovery from a bad summary, and means compaction doesn't remove anything from disk.
 
-### D59. The agent reports to a four-method journal, through one method of its own
+### D59. The agent reports to a small journal, through one method of its own
 *Step 7 · design*
 
-`Agent.journal` is anything with `append`, `replace`, `model_changed` and `reset`. All additions to the history go through `Agent._add`.
+`Agent.journal` is anything with `append`, `replace`, `model_changed`, `spent` and `reset`. All additions to the history go through `Agent._add`.
 *Not chosen:* the front end saving the history after each turn (less in the agent, but nothing is saved mid-turn, which is when a crash is likeliest). The agent writing files itself (it would then know about paths and formats).
 
-### D60. Resuming restores the conversation and the model, and nothing else
-*Step 7 · design*
+### D60. Resuming restores the conversation, its model and its token counts; not permissions
+*Step 7 · design · revised*
 
-"Always allow" permissions are not restored: they were granted for one sitting (D23, D50). The system prompt is rebuilt from the memory files as they are now. Session token totals start again. The model is restored when the session's provider is the one in use.
+"Always allow" permissions are not restored: they were granted for one sitting (D23, D50). The system prompt is rebuilt from the memory files as they are now. The model is restored when the session's provider is the one in use.
+*Revised after you reported it:* token totals and the conversation's size were at first not saved, so a resumed conversation showed 0. Each model call now writes a `spent` line, and resuming adds them up. Totals are per conversation: `/clear` resets them.
 
 ### D61. A session cut off mid-turn is tied off on resume, or refused
 *Step 7 · design*

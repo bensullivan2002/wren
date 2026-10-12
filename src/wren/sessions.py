@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from wren import __version__
-from wren.messages import Block, Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock
+from wren.messages import Block, Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock, Usage
 
 FORMAT_VERSION = 1  # bump if the lines change shape in a way old code can't read
 
@@ -57,6 +57,9 @@ class Journal(Protocol):
 
     def model_changed(self, provider: str, model: str) -> None:
         """The conversation moved to a different model."""
+
+    def spent(self, usage: Usage, context_tokens: int) -> None:
+        """A model call finished: what it cost, and how big the conversation now is."""
 
     def reset(self) -> None:
         """The conversation was cleared. Whatever comes next is a new one."""
@@ -119,6 +122,8 @@ class SavedSession:
     model: str
     created: str  # ISO date and time
     title: str  # the first thing the user said, shortened
+    usage: Usage  # what the conversation has cost so far, added up
+    context_tokens: int | None  # its size at the last model call; None if the file doesn't say
 
     @property
     def modified(self) -> datetime:
@@ -134,6 +139,8 @@ def load(path: Path) -> SavedSession:
     messages: list[Message] = []
     meta: dict[str, Any] = {}
     title = ""
+    usage = Usage()
+    context_tokens: int | None = None
     try:
         with path.open(encoding="utf-8") as file:
             for number, line in enumerate(file, 1):
@@ -151,6 +158,14 @@ def load(path: Path) -> SavedSession:
                             title = message.text.strip()
                     elif kind == "replaced":
                         messages = [message_from_json(m) for m in record["messages"]]
+                    elif kind == "spent":
+                        usage += Usage(
+                            record.get("input_tokens", 0),
+                            record.get("output_tokens", 0),
+                            record.get("cache_read_tokens", 0),
+                            record.get("cache_write_tokens", 0),
+                        )
+                        context_tokens = record.get("context_tokens", context_tokens)
                     elif kind == "model":
                         meta.update(provider=record["provider"], model=record["model"])
                     # Any other type is from a newer Wren: skip it, don't fail.
@@ -174,6 +189,8 @@ def load(path: Path) -> SavedSession:
         model=meta.get("model", ""),
         created=meta.get("created", ""),
         title=first_line if len(first_line) <= 70 else first_line[:69] + "…",
+        usage=usage,
+        context_tokens=context_tokens,
     )
 
 
@@ -213,6 +230,22 @@ class SessionStore:
         self.provider, self.model = provider, model
         if self.path is not None:  # otherwise the first line will carry it
             self._write({"type": "model", "provider": provider, "model": model})
+
+    def spent(self, usage: Usage, context_tokens: int) -> None:
+        # Saved so that a resumed conversation knows its totals and its size
+        # straight away. They can't be worked out from the messages: only
+        # the provider's own count is exact (see step 5).
+        if self.path is not None:
+            self._write(
+                {
+                    "type": "spent",
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                    "cache_read_tokens": usage.cache_read_tokens,
+                    "cache_write_tokens": usage.cache_write_tokens,
+                    "context_tokens": context_tokens,
+                }
+            )
 
     def reset(self) -> None:
         self.path = None  # the next message starts a new file

@@ -46,13 +46,14 @@ Step 3 made the history truthful, step 5 made it append-only for the cache's sak
 
 ## Idea 2: the agent is told as little as possible
 
-The agent doesn't know about files. It has a `journal`: any object with four methods.
+The agent doesn't know about files. It has a `journal`: any object with five methods.
 
 ```python
 class Journal(Protocol):
     def append(self, message): ...          # a message was added
     def replace(self, messages): ...        # the history was replaced (a compaction)
     def model_changed(self, provider, model): ...
+    def spent(self, usage, context_tokens): ...   # a model call finished
     def reset(self): ...                    # the conversation was cleared
 ```
 
@@ -116,13 +117,17 @@ One more thing can be damaged: the last line of the file itself, if Wren died mi
 | --- | --- |
 | The conversation, exactly | "Always allow" permissions |
 | The model it was using | The state of your files |
-| | Token totals for the session |
+| Its token totals and its measured size | |
 
 **Permissions aren't restored on purpose.** "Always allow `pytest` this session" was a decision made in one sitting, about one stretch of work. Coming back days later and finding commands running unasked would be a surprise of the wrong kind (D23, D50).
 
 **Files are whatever they are now.** The model's picture of them is from when the session was saved. The resume note says "Files may have changed since", and the edit tool's exact-match rule (step 3) is the real protection: an edit based on a stale picture fails loudly.
 
 **The system prompt is rebuilt from today's memory files,** not saved. It was never part of the history.
+
+**Token totals and size are restored, from the log.** The first version of this step didn't save them, and a resumed conversation showed `context 0%` and `0 in · 0 out`: you spotted it at once. Neither number can be recomputed from the messages. Step 5's lesson was that only the provider's count is exact, so the fix is to write that count down: one `spent` line after every model call, with what the call cost and how big the conversation then was. Replay adds them up.
+
+Two details. Adding a line type needed no version bump, because old readers skip types they don't know (Idea 3 doing its job within a day). And a conversation that's there but tiny now shows `<1%`, not `0%`, which had read as "empty" or "broken".
 
 ## Idea 7: switching models is nearly free to build
 
@@ -190,7 +195,7 @@ The second had been there since step 4. It took a failing test in a different fe
 - **No way to switch saving off.**
 - **Switching models is untested against the real API.** In particular, how a different model treats the old one's reasoning blocks is taken from the documentation.
 - **A redrawn tool call shows less than the original did:** no diff, no command output, just the first line of the result.
-- **The context meter is a rough guess after a resume,** until the first reply measures it.
+- **Sessions saved before the `spent` line existed** resume with totals at zero and an estimated size, until the first reply measures it.
 
 ## Things to try
 

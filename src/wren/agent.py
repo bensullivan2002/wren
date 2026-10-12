@@ -139,7 +139,7 @@ class Agent:
         self.max_steps = max_steps
         self.context_budget = context_budget  # compact when the conversation passes this; 0 = never
         self.messages: list[Message] = []
-        self.usage = Usage()  # running total for this session
+        self.usage = Usage()  # running total for this conversation
         # How big the conversation is now, in tokens: what the next request
         # will send. We don't count it ourselves. Every reply reports how
         # many tokens its request contained, which is an exact measurement
@@ -248,6 +248,8 @@ class Agent:
             # next request will carry.
             self.context_tokens = completed.usage.sent_tokens + completed.usage.output_tokens
             self.answered_by = completed.model
+            if self.journal is not None:
+                self.journal.spent(completed.usage, self.context_tokens)
 
             reply = completed.message
             if not reply.text and not reply.tool_uses:
@@ -332,8 +334,8 @@ class Agent:
             return
         before = self.context_tokens
         yield CompactionStarted(automatic)
+        completed: Completed | None = None
         try:
-            completed: Completed | None = None
             # The same system prompt and tools as every other call, with the
             # request added on the end. Since the beginning matches what was
             # sent last time, this call reads the conversation from the cache.
@@ -356,6 +358,8 @@ class Agent:
             if completed.stop_reason == "max_tokens":
                 raise RuntimeError("the summary was cut off by the max_tokens limit")
         except Exception as e:
+            if completed is not None and self.journal is not None:
+                self.journal.spent(completed.usage, before)  # it cost something even though it failed
             yield Compacted(before, before, error=str(e) or type(e).__name__)
             return
 
@@ -367,11 +371,13 @@ class Agent:
         # The summary's length is a fair first estimate of the new size. The
         # next model call will replace it with a real measurement.
         self.context_tokens = completed.usage.output_tokens
+        if self.journal is not None:
+            self.journal.spent(completed.usage, self.context_tokens)
         yield Compacted(before, self.context_tokens)
 
     # --- Sessions and models -----------------------------------------------------
 
-    def restore(self, messages: list[Message]) -> None:
+    def restore(self, messages: list[Message], usage: Usage | None = None, context_tokens: int | None = None) -> None:
         """Take up a conversation read back from disk.
 
         A saved conversation can stop anywhere: Wren may have been closed,
@@ -389,9 +395,14 @@ class Agent:
         if problems:
             self.messages[:] = previous
             raise ValueError("the saved conversation is not usable: " + "; ".join(problems))
-        # We weren't there for the last model call, so this is a rough guess
-        # (about four characters to a token). The next call measures it.
-        self.context_tokens = sum(_characters(message) for message in self.messages) // 4
+        # The totals and the size as they were when it was saved, if the
+        # session recorded them. If not (an older file), start the totals at
+        # zero and guess the size at about four characters to a token; the
+        # next model call measures it properly.
+        self.usage = usage if usage is not None else Usage()
+        if context_tokens is None:
+            context_tokens = sum(_characters(message) for message in self.messages) // 4
+        self.context_tokens = context_tokens
 
     def set_model(self, model: str) -> None:
         """Switch to a different model, from the next request on.
@@ -406,10 +417,11 @@ class Agent:
             self.journal.model_changed(self.provider.name, model)
 
     def reset(self) -> None:
-        """Forget the conversation (the tools and totals stay), and rebuild
-        the system prompt if we were given a way to."""
+        """Forget the conversation and its totals (the tools stay), and
+        rebuild the system prompt if we were given a way to."""
         self.messages.clear()
         self.context_tokens = 0
+        self.usage = Usage()
         if self.journal is not None:
             self.journal.reset()
         if self._build_system_prompt is not None:
