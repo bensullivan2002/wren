@@ -8,16 +8,23 @@ import tempfile
 from datetime import date
 from pathlib import Path
 
-from wren.config import DEFAULT_MODEL, Config
+from wren.config import API_KEYS, DEFAULT_MODEL, Config
 from wren.settings import UserDefaults
 from wren.prompts import build_system_prompt
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 EMPTY_HOME = Path(tempfile.mkdtemp(prefix="wren-test-home-"))
 
+# Wren runs without your settings and without any provider's variables (its
+# API key, and anything else its SDK reads), so a test gives the same result
+# whatever is set in the shell you run pytest from. The prefixes come from
+# API_KEYS ("ANTHROPIC_API_KEY" gives "ANTHROPIC_"), so a provider added
+# later is covered without anyone remembering to add it here.
+LEFT_OUT = ("WREN_", *sorted({variable.split("_")[0] + "_" for variable, _ in API_KEYS.values()}))
+
 
 def wren(*args, stdin="", cwd=None, env_extra=None):
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("WREN_", "ANTHROPIC_"))}
+    env = {k: v for k, v in os.environ.items() if not k.startswith(LEFT_OUT)}
     # A home directory with nothing in it, so the tests never pick up the
     # developer's own ~/.wren/WREN.md.
     env.update({"PYTHONPATH": str(SRC), "NO_COLOR": "1", "HOME": str(EMPTY_HOME), **(env_extra or {})})

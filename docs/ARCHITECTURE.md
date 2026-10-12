@@ -1,6 +1,6 @@
 # Architecture
 
-*Describes Wren as of **step 8**. This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
+*Describes Wren as of **step 9**. This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
 
 ## The big picture
 
@@ -23,8 +23,10 @@ flowchart LR
     registry -->|"allows(request)?"| perms["<b>Permissions</b><br/>tools/permissions.py"]
     perms -.->|"ask(request)"| ui
     registry --> ro["list_files · read_file · search<br/><i>read-only, never ask</i>"] --> fs[("Your project<br/>(working directory only)")]
-    registry --> rw["edit_file · write_file<br/><i>ask first</i>"] --> fs
-    registry --> sh["shell<br/><i>asks first</i>"] --> os[("Your machine<br/>(not fenced)")]
+    registry --> rw["edit_file · write_file<br/><i>ask first, except ordinary files in auto mode</i>"] --> fs
+    registry --> sh["shell<br/><i>asks first, except sandboxed commands in auto mode</i>"]
+    sh -->|"by default (macOS)"| sb["<b>Sandbox</b><br/>tools/sandbox.py<br/><i>writes: project and temp only<br/>no network</i>"] --> fs
+    sh -->|"outside_sandbox, or no sandbox on this system"| os[("Your machine<br/>(not fenced)")]
 ```
 
 Solid arrows are calls; dotted arrows are what comes back, or a callback. One front end runs at a time: the full-screen app in a terminal, the plain REPL with `--plain` or when input or output is a pipe.
@@ -42,8 +44,9 @@ Solid arrows are calls; dotted arrows are what comes back, or a callback. One fr
 | **Provider** | `providers/` | Translate to a vendor's API and back; stream the reply; ask for caching; report token use; list its models; know their prices | The vendor SDK, the message types |
 | **Tool registry** | `tools/registry.py` | Look up tools, check arguments, get permission, run, turn failures into error results, cap output | The `Tool` interface, `Permissions` |
 | **Tool base** | `tools/base.py` | What a tool is; turn an `Input` model into a schema and into checked arguments | Pydantic |
-| **Permissions** | `tools/permissions.py` | Remember what's "always" allowed this session; otherwise ask, through a callback | Nothing else |
+| **Permissions** | `tools/permissions.py` | Remember what's "always" allowed this session, and whether auto mode is on; otherwise ask, through a callback | Nothing else |
 | **Tools** | `tools/*.py` | Do one job each; describe themselves to the model, and their effects to the user | The working directory (via `ToolContext`) |
+| **Sandbox** | `tools/sandbox.py` | Build the `sandbox-exec` command and Seatbelt profile that fence a shell command (macOS) | Nothing of Wren's (the standard library only) |
 | **App** | `tui.py` | The full-screen front end (Textual): run each turn on a worker thread, draw events as widgets, ask permission questions, stop on Escape | The `Agent`, the event types, Textual |
 | **Run stats** | `stats.py` | Keep a running account since Wren opened: tokens, cost, turns, times, tool calls. Fed events by the app | The event types, `Provider.prices` |
 | **Footer** | `footer.py` | Build the app's footer rows and fit them to the width; read the git branch | The `Agent`, `RunStats`, Rich |
@@ -83,7 +86,7 @@ What happens when you type *"rename helper to assist in util.py"* and press Ente
    1. finds the tool, or returns an error result listing the real ones;
    2. parses the arguments into the tool's `Input`, filling in defaults (`Tool.parse`);
    3. asks the tool what it's about to change (`Tool.permission`). Read-only tools say nothing. `edit_file` works out the edit and returns a diff; an edit that can't work fails here;
-   4. if there's a request, asks `Permissions.allows`. That returns at once if the scope is already "always" allowed, and otherwise calls the front end's `ask_permission`, which shows the request and waits for y / n / a. A no becomes an error result telling the model not to retry;
+   4. if there's a request, asks `Permissions.allows`. That returns at once if auto mode is on and the request is `contained`, or if its scope is already "always" allowed, and otherwise calls the front end's `ask_permission`, which shows the request and waits for y / n / a. A no becomes an error result telling the model not to retry;
    5. calls `tool.run(args, ctx)`, turning any exception into an error result;
    6. caps the output's size.
 7. **All the results go into one user message**, appended to the history, and the loop returns to step 3.
@@ -140,7 +143,7 @@ Each provider stores its own reasoning as a `ReasoningBlock` tagged with its nam
 
 **Reading.** `sessions.load` replays a file from the top. A broken last line (a crash mid-write) is ignored; a broken line elsewhere, or a newer format version, is an error. Unknown line types are skipped.
 
-**Resuming** (`commands.resume_session`): point the store at the session's file, then `Agent.restore(messages)`. `restore` ties off a turn that was cut short (the same code as an interruption, with wording that says the tool's outcome is unknown), checks `history_problems`, and refuses the session, keeping the current conversation, if it still isn't valid. The session's model and effort are restored when the provider matches, and so are the conversation's token totals and its measured size. Permissions and the system prompt are not restored: the prompt is rebuilt from today's memory files.
+**Resuming** (`commands.resume_session`): point the store at the session's file, then `Agent.restore(messages)`. `restore` ties off a turn that was cut short (the same code as an interruption, with wording that says the tool's outcome is unknown), checks `history_problems`, and refuses the session, keeping the current conversation, if it still isn't valid. The session's model and effort are restored when the provider matches, and so are the conversation's token totals and its measured size. Permissions (auto mode included) and the system prompt are not restored: the prompt is rebuilt from today's memory files.
 
 **Entry points.** `wren --resume` starts the front end on the session list; `wren --resume ID` resumes before it starts; `/resume` and `/resume ID` do the same from inside. In the app, the list is a `Picker` and the transcript is redrawn from the history.
 
@@ -224,18 +227,32 @@ The screen is a column: a top-docked logo, a bottom-docked footer, and between t
 
 The theme-coloured bird is a top-docked `Static` outside the transcript, pinned at the top left in new and resumed conversations. Chatting, scrolling, `/clear` and history redraws do not move or recreate it. It is never a model message or session record. The mark is loaded with `importlib.resources` from `wren/wren-terminal.txt`, so installed apps do not depend on the repo's docs or working directory. The branding generator keeps this packaged copy identical to the design asset. Below 20 columns or 30 rows (`LOGO_MIN_WIDTH`, `LOGO_MIN_HEIGHT`), the welcome falls back to `wren`, adapting as the terminal is resized; 30 rows is what the bird, the footer and a full prompt need while leaving the conversation 6 (D96). Plain mode is unchanged.
 
-**The footer** (`FooterRows`) has six fixed rows: settings (model, effort, provider, git branch, folder, session), the context bar against the compaction budget (or, with no budget, the size and why: "compaction off", "window unknown: never compacted", "window not looked up yet"), spending, time, tool calls, and what Wren is doing now. `footer.py` builds them from the agent, the app's `RunStats` and a little app state (busy, git, session); `tui.py` only puts them on screen. A row never wraps: each part has a `keep` score, and `fit` drops the least important parts that don't fit. The footer is redrawn on the app's tick (ten times a second while busy, once a second otherwise), not on every event. Cost comes from each provider's `prices()`, a dated table in US dollars copied from its pricing page, and is shown in pounds at the day's rate from `exchange.py` (in dollars until there is one). The footer is the app's alone; the REPL prints a summary line after each turn instead.
+**The footer** (`FooterRows`) has six fixed rows: settings (model, effort, provider, `auto: on` in auto mode, git branch, folder, session), the context bar against the compaction budget (or, with no budget, the size and why: "compaction off", "window unknown: never compacted", "window not looked up yet"), spending, time, tool calls, and what Wren is doing now. `footer.py` builds them from the agent, the app's `RunStats` and a little app state (busy, git, session); `tui.py` only puts them on screen. A row never wraps: each part has a `keep` score, and `fit` drops the least important parts that don't fit. The footer is redrawn on the app's tick (ten times a second while busy, once a second otherwise), not on every event. Cost comes from each provider's `prices()`, a dated table in US dollars copied from its pricing page, and is shown in pounds at the day's rate from `exchange.py` (in dollars until there is one). The footer is the app's alone; the REPL prints a summary line after each turn instead.
 
-## Permission scopes
+## Permissions, auto mode and the sandbox
 
-| Tool | Asks? | "Always" scope | Covers |
-| --- | --- | --- | --- |
-| `list_files`, `read_file`, `search` | never | | |
-| `edit_file`, `write_file` | yes | `edit` | all file edits (working directory only, never `.git`) |
-| `shell`, simple command | yes | `shell:<first word>` | commands starting with that word |
-| `shell`, with any shell syntax (`;`, `&&`, pipes, `$`, redirects, brackets, line breaks) | every time | none | |
+| Tool | Asks? | In auto mode | "Always" scope | Covers |
+| --- | --- | --- | --- | --- |
+| `list_files`, `read_file`, `search` | never | never | | |
+| `edit_file`, `write_file` | yes | only for a path through `.envrc`, `.vscode`, `.idea`, `.claude` or `.codex` | `edit` | all file edits (working directory only, never `.git`) |
+| `shell`, in the sandbox, simple command | yes | no | `shell:<first word>` | commands in the sandbox starting with that word |
+| `shell`, `outside_sandbox`, simple command | yes | yes | `shell-outside:<first word>` | commands outside the sandbox starting with that word |
+| `shell`, with any shell syntax (`;`, `&&`, pipes, `$`, redirects, brackets, line breaks) | every time | no if sandboxed, else yes | none | |
 
-Scopes live in `Permissions.always`, in memory, until Wren exits. `/permissions` lists them.
+Where there's no sandbox (anything but macOS), every command is unsandboxed, its scope is `shell:<first word>`, and auto mode asks about it.
+
+Scopes live in `Permissions.always`, and auto mode in `Permissions.auto`, in memory, until Wren exits. `/permissions` lists both; `/auto` switches auto mode, and the app's footer shows `auto: on` while it lasts.
+
+**Containment.** `Permissions.allows` lets a request through without asking when `auto` is on and `request.contained` is true. The tool sets `contained`, from facts Wren establishes: the file tools from the resolved path (`files.runs_by_itself`: no part of it is in `sandbox.PROTECTED`), the shell from whether the command will run in the sandbox (`_sandboxed`). The model's only say is `outside_sandbox`, which makes a request *not* contained. The default is `False`, so a tool that doesn't set it is asked about in every mode.
+
+**The sandbox** (`tools/sandbox.py`, macOS only, used when `available()`). `sandbox.command(line, root)` returns `sandbox-exec -p PROFILE -DNAME=path… /bin/sh -c line`, which `shell._run` starts in place of the command line. The profile starts from `(deny default)`, and allows:
+
+- running programs (each inherits the profile);
+- reading anywhere except `sandbox.CREDENTIALS` in the home directory;
+- writing in the project and the temporary folders, except `sandbox.PROTECTED` at the project's top level (a later rule in a profile wins over an earlier one);
+- writing to `/dev/null` and the like; reading system settings; a short list of system services (`mach-lookup`).
+
+No network rule is allowed, so there is no network. Paths are parameters (`-D`), made real with `os.path.realpath` (`/tmp` is `/private/tmp`). A sandboxed command that exits non-zero gets `SANDBOX_NOTE` added to its result, telling the model where it ran and how to ask to leave.
 
 ## Rules that always hold
 
@@ -245,9 +262,9 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 2. **The history is truthful, and append-only between compactions.** Anything a tool did stays in the history, even if the turn was interrupted or failed. Nothing is removed or rewritten except by compaction, which replaces all of it with a summary, and `/clear`.
 3. **Every provider stream ends with exactly one `Completed`.** Zero or more `TextDelta` come first.
 4. **Tools never crash the loop.** Every failure becomes an error result the model can read. Only Ctrl-C escapes.
-5. **Nothing changes without permission.** A tool whose `permission()` returns a request runs only if `Permissions.allows` said yes. With nobody to ask, the answer is no.
+5. **Nothing changes without permission.** A tool whose `permission()` returns a request runs only if `Permissions.allows` said yes: you answered yes, an "always" covers it, or auto mode is on and the request is contained. With nobody to ask, the answer to anything else is no.
 6. **Nobody is asked about a call that can't run.** Arguments are validated, and edits worked out, before the question.
-7. **File tools stay inside the working directory.** Every path is resolved (following `..` and symlinks) *before* it's checked. Writing tools also refuse anything inside `.git`. *(The shell is the exception: it is not fenced. See the journal.)*
+7. **File tools stay inside the working directory.** Every path is resolved (following `..` and symlinks) *before* it's checked. Writing tools also refuse anything inside `.git`. *(The shell is the exception: the sandbox fences what a command writes, but not what it reads, and a command outside the sandbox isn't fenced at all.)*
 8. **No tool result exceeds 50,000 characters.**
 9. **Vendor formats never leak.** Only a provider module sees its vendor's request and response shapes. Adding a provider changes no file outside `providers/`, `config.py` and `cli.py`.
 10. **The agent and the tools never do I/O with the user.** The agent yields events; permission questions go through a callback. Front ends decide what to show.
@@ -266,13 +283,18 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 22. **A restored history is valid or it isn't used.** `restore` ties off loose ends, then `history_problems` must be empty.
 23. **Session files are outside the project and private to the user** (`0o700` folders, `0o600` files).
 24. **However the app closes, it releases its worker thread.**
+25. **Containment is established by Wren, never claimed by the model.** `contained` comes from the resolved path or from where the command will run; the model can only opt out of it, with `outside_sandbox`.
+26. **What you're asked about is what runs.** The shell's `permission()` and `run()` both decide sandboxing with `_sandboxed(args)`, so a question that says "in the sandbox" can't be followed by an unsandboxed run.
+27. **Paths are never pasted into the sandbox profile.** They're passed as parameters, so a folder's name can't change what the profile says.
 
 ## Where the next steps plug in
 
 | Coming in | Plugs in at |
 | --- | --- |
-| Step 9: MCP | More tools in the `ToolRegistry`, provided by other programs; each needs a `permission()` story |
-| Step 9: subagents | A second `Agent` with its own history, run as a tool of the first |
-| Step 9: hooks | Around `ToolRegistry.run` and at turn boundaries in `Agent` |
+| Step 10: MCP | More tools in the `ToolRegistry`, provided by other programs; each needs a `permission()` story (and leaves `contained` false) |
+| Step 10: subagents | A second `Agent` with its own history, run as a tool of the first |
+| Step 10: hooks | Around `ToolRegistry.run` and at turn boundaries in `Agent` |
 | Later: saved permission rules | Loaded into `Permissions.always` at startup |
-| Later: sandboxing | Around `tools/shell.py`'s `_run` |
+| Later: a sandbox on Linux | `sandbox.available()` and `sandbox.command()`, with bubblewrap or Landlock |
+| Later: a reviewer for commands outside the sandbox | `Permissions.allows`, before it asks you |
+| Later: keeping API keys from sandboxed commands | An `env` argument to the `Popen` in `shell._run` (today a command inherits Wren's environment) |

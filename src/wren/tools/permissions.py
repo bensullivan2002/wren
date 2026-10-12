@@ -14,12 +14,22 @@ How it fits together:
   * The registry hands the request to `Permissions.allows()` before running
     the tool.
   * `Permissions` either already knows the answer (you said "always" earlier
-    this session) or asks, through a callback the front end supplies.
+    this session, or auto mode is on and the request is contained) or asks,
+    through a callback the front end supplies.
 
 The callback is what keeps this module free of `input()` and `print()`: the
 REPL decides how a question looks, exactly as it decides how events look.
 
-"Always" answers live in memory and are forgotten when Wren exits.
+Auto mode (`/auto`) is for when asking has stopped working: prompts that
+come every few seconds get approved without being read, and then they
+protect nothing. In auto mode, a request the tool marks as `contained` goes
+ahead without a question: an edit to an ordinary file in the project, or a
+command that runs in the sandbox (sandbox.py). Containment is a fact about
+the request that Wren itself establishes, never the model's claim, so the
+model can't argue its way into it. Everything else is still asked about.
+
+"Always" answers and auto mode live in memory and are forgotten when Wren
+exits.
 """
 
 from __future__ import annotations
@@ -66,6 +76,12 @@ class PermissionRequest:
 
     change: FileChange | None = None  # for file edits: the same change, structured
 
+    # True when this can only change the project, and nothing in it that
+    # would run by itself later: an edit to an ordinary file, or a command
+    # in the sandbox. Auto mode allows these without asking. False, the
+    # default, means it's asked about in every mode.
+    contained: bool = False
+
 
 class Decision(Enum):
     ALLOW = "allow"  # yes, this once
@@ -83,8 +99,11 @@ class Permissions:
         # never turn into an unapproved edit.
         self.ask = ask
         self.always: dict[str, str] = {}  # scope -> its label, for /permissions
+        self.auto = False  # auto mode: contained requests go ahead without asking
 
     def allows(self, request: PermissionRequest) -> bool:
+        if self.auto and request.contained:
+            return True
         if request.scope is not None and request.scope in self.always:
             return True
         if self.ask is None:

@@ -99,6 +99,9 @@ def _settings(agent: Agent, stats: RunStats, state: AppState) -> list[list[Part]
             Part(kv("provider", provider.name), 7),
         ]
     ]
+    if agent.tools.permissions.auto:
+        # Yellow, like "always allowed": edits and commands are going ahead without a question.
+        groups[0].append(Part(kv("auto", "on", "yellow"), 8))
     other = stats.answered_by_another(provider)
     if other:
         groups.append([Part(Text(f"⚠ last reply came from {other}", style="yellow"), 8)])

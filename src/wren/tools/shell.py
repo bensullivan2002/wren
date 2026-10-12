@@ -2,14 +2,17 @@
 
 Tests, git, builds, linters, package managers: nobody can write a dedicated
 tool for each, so a coding agent needs a way to run commands. It is also by
-far the most powerful thing Wren can do, and three facts follow from that.
+far the most powerful thing Wren can do, and four facts follow from that.
 
 1. The fence doesn't apply. The file tools check every path against the
    working directory. A command is just a string handed to your shell, and
-   `rm -rf ~` is a perfectly valid string. We start commands *in* the working
-   directory, but nothing keeps them there. The protection is you: every
-   command is shown to you before it runs. (Real isolation means a sandbox,
-   a container or an OS-level jail, which is a project of its own.)
+   `rm -rf ~` is a perfectly valid string. So on macOS every command runs
+   in a sandbox (sandbox.py): the operating system lets it write only
+   inside the working directory and temp folders, and gives it no network.
+   A command that needs more (installing packages, `git commit`, `git push`)
+   has to ask for `outside_sandbox`, and is always asked about, even in auto
+   mode. Elsewhere there's no sandbox yet, and the protection is you: every
+   command is shown to you before it runs.
 
 2. "Always allow" has to be careful. You can approve a command's first word
    for the session ("always allow `pytest`"). But `pytest; rm -rf ~` also
@@ -47,6 +50,7 @@ from typing import Callable
 
 from pydantic import Field
 
+from wren.tools import sandbox
 from wren.tools.base import Tool, ToolContext, ToolError, ToolInput, ToolResult
 from wren.tools.permissions import PermissionRequest
 
@@ -60,6 +64,21 @@ POLL_SECONDS = 0.2  # how often a running command checks whether to stop
 # line breaks. A command containing any of them is never covered by "always".
 _SHELL_SYNTAX = set(";&|`$<>(){}\n\r\\")
 
+_PROTECTED = ", ".join(sandbox.PROTECTED)
+
+# What the model is told about the sandbox: in the tool's description, and
+# again when a sandboxed command fails, which is when it needs to know.
+_SANDBOX_RULES = (
+    "Commands run in a sandbox: they can read files, but can write only inside the working directory "
+    f"and temp folders (not {_PROTECTED}), and have no network. For a command that needs more, such as "
+    "installing packages, git commit or git push, set outside_sandbox; the user is always asked about those. "
+)
+SANDBOX_NOTE = (
+    "[This command ran in the sandbox: no network, and writes only inside the working directory and temp "
+    f"folders, not {_PROTECTED}. If that is why it failed, run it again with outside_sandbox set to true. "
+    "The user will be asked.]"
+)
+
 
 class Shell(Tool):
     name = "shell"
@@ -70,8 +89,9 @@ class Shell(Tool):
         "chain with && when you need to. Commands get no keyboard input, so avoid anything interactive, "
         f"and are stopped after the timeout ({DEFAULT_TIMEOUT} seconds unless you set it). "
         "Don't start servers or other programs that never exit. "
-        "Prefer list_files, read_file, search and edit_file to ls, cat, grep and sed: their output is "
-        "shaped for you and they need less approval. The user is asked to approve commands, and sees "
+        + (_SANDBOX_RULES if sandbox.available() else "")
+        + "Prefer list_files, read_file, search and edit_file to ls, cat, grep and sed: their output is "
+        "shaped for you and they need less approval. The user may be asked to approve a command, and sees "
         "your description first: without a clear one they can't judge the command, and will likely decline."
     )
 
@@ -89,21 +109,39 @@ class Shell(Tool):
         timeout: int = Field(
             DEFAULT_TIMEOUT, ge=1, le=MAX_TIMEOUT, description="Seconds to wait before stopping the command."
         )
+        outside_sandbox: bool = Field(
+            False,
+            description=(
+                "Run without the sandbox, with network access and everything the user can do. "
+                "Only for a command the sandbox would stop. The user is always asked first."
+            ),
+        )
 
     def permission(self, args: Input, ctx: ToolContext) -> PermissionRequest:
         if not args.command.strip():
             raise ToolError("command is empty.")
         word = command_word(args.command)
+        if not sandbox.available():  # nothing to be inside or outside of
+            title, scope, label = "Run a shell command", f"shell:{word}", f"commands starting with `{word}`"
+        elif args.outside_sandbox:
+            # Its own scope: "always allow `uv`" in the sandbox mustn't cover `uv` outside it.
+            title, scope = "Run a shell command outside the sandbox", f"shell-outside:{word}"
+            label = f"commands starting with `{word}`, outside the sandbox"
+        else:
+            title, scope, label = "Run a shell command in the sandbox", f"shell:{word}", f"commands starting with `{word}`"
         return PermissionRequest(
-            title="Run a shell command",
+            title=title,
             explanation=args.description.strip(),
             detail=args.command,
-            scope=f"shell:{word}" if word else None,
-            scope_label=f"commands starting with `{word}`" if word else "",
+            scope=scope if word else None,
+            scope_label=label if word else "",
+            contained=_sandboxed(args),
         )
 
     def run(self, args: Input, ctx: ToolContext) -> ToolResult:
-        output, exit_code, stopped = _run(args.command, ctx.root, args.timeout, ctx.should_stop)
+        sandboxed = _sandboxed(args)
+        command = sandbox.command(args.command, ctx.root) if sandboxed else args.command
+        output, exit_code, stopped = _run(command, ctx.root, args.timeout, ctx.should_stop)
 
         # For a command, the end of the output is usually what matters (the
         # error, the test summary), so when it's too long we keep the tail.
@@ -125,8 +163,19 @@ class Shell(Tool):
         if exit_code != 0:
             # Not marked as an error: the tool worked, and a failing test run
             # is exactly the information the model asked for.
-            return ToolResult(f"{content}\n\n[Exit code {exit_code}]", summary=f"exit {exit_code} · {size}")
+            content += f"\n\n[Exit code {exit_code}]"
+            # The sandbox's refusals look like any other failure ("Operation
+            # not permitted", "Could not resolve host"), so say it was there.
+            if sandboxed:
+                content += f"\n{SANDBOX_NOTE}"
+            return ToolResult(content, summary=f"exit {exit_code} · {size}")
         return ToolResult(content, summary=size)
+
+
+def _sandboxed(args: Shell.Input) -> bool:
+    """Whether this call runs in the sandbox. permission() and run() both
+    ask, so what you're asked about is what runs."""
+    return sandbox.available() and not args.outside_sandbox
 
 
 def command_word(command: str) -> str | None:
@@ -144,13 +193,17 @@ def command_word(command: str) -> str | None:
     return words[0]
 
 
-def _run(command: str, cwd, timeout: int, should_stop: Callable[[], bool]) -> tuple[str, int, str | None]:
-    """Run `command` in a shell. Returns (output, exit code, why it was
-    stopped early: "timeout", "cancelled", or None if it finished)."""
+def _run(
+    command: str | list[str], cwd, timeout: int, should_stop: Callable[[], bool]
+) -> tuple[str, int, str | None]:
+    """Run `command`: a command line for the shell, or a list of arguments
+    (the sandboxed form, which starts its own shell inside the sandbox).
+    Returns (output, exit code, why it was stopped early: "timeout",
+    "cancelled", or None if it finished)."""
     posix = os.name == "posix"
     process = subprocess.Popen(
         command,
-        shell=True,
+        shell=isinstance(command, str),
         cwd=cwd,
         stdin=subprocess.DEVNULL,  # anything that tries to read input gets "end of file" at once
         stdout=subprocess.PIPE,

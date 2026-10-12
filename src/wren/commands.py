@@ -25,6 +25,8 @@ from wren.sessions import SavedSession, SessionError, SessionStore
 from wren.messages import Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock
 from wren.providers import PROVIDERS, make_provider
 from wren.tools import ToolError
+from wren.tools.sandbox import PROTECTED
+from wren.tools.sandbox import available as sandbox_available
 
 COMMANDS = """\
 /help          show this list
@@ -39,6 +41,7 @@ COMMANDS = """\
 /effort        choose how hard the model works on each reply (/effort LEVEL)
 /resume        go back to an earlier conversation in this folder (/resume ID)
 /permissions   show what you've said Wren may always do this session
+/auto          switch auto mode on or off: no questions for edits, or for commands in the sandbox
 /memory        show which memory files (WREN.md, AGENTS.md) are loaded
 /remember X    add the note X to the project's memory file
 /clear         start a fresh conversation (the old one stays saved)
@@ -122,6 +125,8 @@ def run_command(
         return CommandResult(_history(agent), panel=True)
     if name == "/permissions":
         return CommandResult(_permissions(agent), panel=True)
+    if name == "/auto":
+        return CommandResult(_auto(agent))
     if name == "/tools":
         return _tools(agent, args[0] if args else None)
     return CommandResult(f"unknown command {name}  (try /help)", is_error=True)
@@ -484,11 +489,37 @@ def compaction_note(event: Compacted) -> str:
     )
 
 
+def _auto(agent: Agent) -> str:
+    permissions = agent.tools.permissions
+    permissions.auto = not permissions.auto
+    if not permissions.auto:
+        return "Auto mode is off: Wren asks before edits and commands again."
+    return f"Auto mode is on. {_auto_rules()} /auto again turns it off."
+
+
+def _auto_rules() -> str:
+    """What auto mode allows, in words. Shared by /auto and /permissions."""
+    protected = ", ".join(name for name in PROTECTED if name != ".git")  # Wren never writes .git at all
+    if not sandbox_available():
+        return (
+            "Edits to files in this project go ahead without asking. There's no sandbox on this system, "
+            f"so Wren still asks before every command, and before edits in {protected}."
+        )
+    return (
+        "Edits to files in this project, and commands in the sandbox (no network, writes only inside "
+        "the project), go ahead without asking. Wren still asks before a command outside the sandbox "
+        f"(installing packages, git commit or push), and before edits in {protected}."
+    )
+
+
 def _permissions(agent: Agent) -> str:
-    always = agent.tools.permissions.always
-    if not always:
-        return "Nothing is always allowed: Wren asks before every edit and command."
-    return "Allowed without asking, until you quit:\n" + "\n".join(f"  {label}" for label in always.values())
+    permissions = agent.tools.permissions
+    auto = f"Auto mode is on. {_auto_rules()}\n\n" if permissions.auto else ""
+    if not permissions.always:
+        asks = "everything else" if permissions.auto else "every edit and command"
+        return f"{auto}Nothing is always allowed: Wren asks before {asks}."
+    labels = "\n".join(f"  {label}" for label in permissions.always.values())
+    return f"{auto}Allowed without asking, until you quit:\n{labels}"
 
 
 def _history(agent: Agent) -> str:

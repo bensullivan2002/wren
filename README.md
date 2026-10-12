@@ -7,7 +7,7 @@
 
 A small, readable coding-agent harness for the terminal, built step by step so every part can be understood.
 
-> **Status: step 8 of the roadmap.** Wren is a full-screen terminal app that chats with Claude or OpenAI's models, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first. It saves every conversation so you can resume it, switches models mid-conversation, reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable. The shell is not sandboxed, so read what you approve.
+> **Status: step 9 of the roadmap.** Wren is a full-screen terminal app that chats with Claude or OpenAI's models, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first, or not, in auto mode. On macOS its commands run in a sandbox: no network, and writes only inside the project. It saves every conversation so you can resume it, switches models mid-conversation, reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable.
 
 ## Quickstart
 
@@ -58,7 +58,7 @@ Escape stops Wren at once in most cases. Anything it had already done stays done
 
 ### Permission
 
-Wren asks before every file edit and every shell command, and shows you exactly what it will do. For a command, it first says in plain English what the command is for, in Wren's own words, with the command itself underneath: read the description to understand it, and the command to check it.
+Wren asks before every file edit and every shell command (unless you turn on auto mode, below), and shows you exactly what it will do. For a command, it first says in plain English what the command is for, in Wren's own words, with the command itself underneath: read the description to understand it, and the command to check it.
 
 | Answer | Meaning |
 | ------ | ------- |
@@ -67,6 +67,12 @@ Wren asks before every file edit and every shell command, and shows you exactly 
 | `a`    | Yes, and don't ask again this session for this kind of thing: all file edits, or commands starting with the same word |
 
 `a` is only offered for simple commands: anything with `;`, `&&`, pipes, `$` or redirects is asked about every time. "Always" answers are forgotten when you quit. Reading, listing and searching never ask.
+
+**The sandbox (macOS).** Every command runs in a sandbox the operating system enforces: it can read your files (but not `~/.ssh`, `~/.aws` and other places keys live), write only inside the project and temporary folders, and has no network. It can't write `.git`, `.envrc`, `.vscode`, `.idea`, `.claude` or `.codex`, because git, direnv, editors and other agents run things from those later, outside the sandbox. So `git status` and `git diff` work there; `git commit` doesn't. A command that needs more (installing packages, committing, pushing) is run outside the sandbox, and the question says so: "Run a shell command outside the sandbox". On other systems there's no sandbox yet.
+
+**Auto mode.** `/auto` stops the questions for things that can only change the project: edits to its files, and commands in the sandbox. Wren still asks before a command outside the sandbox, and before an edit to `.envrc`, `.vscode`, `.idea`, `.claude` or `.codex`. The footer shows `auto: on` while it lasts; `/auto` again turns it off, and quitting forgets it. Without a sandbox, auto mode still asks about every command.
+
+Two things auto mode doesn't protect against: what Wren writes for later (a test or a `Makefile` runs outside the sandbox when *you* run it), and edits to memory files such as `WREN.md`, which steer future conversations. Read the changes before you run or commit them.
 
 | Command         | What it does                                          |
 | --------------- | ----------------------------------------------------- |
@@ -82,6 +88,7 @@ Wren asks before every file edit and every shell command, and shows you exactly 
 | `/effort`       | Choose how hard the model works (`/effort LEVEL`)     |
 | `/resume`       | Go back to an earlier conversation in this folder     |
 | `/permissions`  | Show what you've said Wren may always do this session |
+| `/auto`         | Switch auto mode on or off                            |
 | `/memory`       | Show which memory files are loaded                    |
 | `/remember X`   | Add the note X to the project's memory file           |
 | `/clear`        | Start a fresh conversation (the old one stays saved)  |
@@ -158,7 +165,7 @@ Every request re-sends the whole conversation, so a long session costs more with
 | `write_file` | Create a file, or replace one completely (asks first)           |
 | `shell`      | Run a command: tests, git, builds (asks first)                  |
 
-The file tools are confined to the working directory, skip folders like `.git`, `node_modules` and `.venv` when listing and searching, and never write inside `.git`. **`shell` is not confined:** a command runs as you, with everything you can reach. The permission prompt is the safeguard.
+The file tools are confined to the working directory, skip folders like `.git`, `node_modules` and `.venv` when listing and searching, and never write inside `.git`. **`shell` is confined only by the sandbox** (macOS): a command can read most of what you can, and one run outside the sandbox, or on a system without one, can do anything you can. The permission prompt is the safeguard for those.
 
 ## Configuration
 
@@ -193,6 +200,7 @@ The docs are written to teach, not just to reference:
   6. [Memory: instructions that outlast a conversation](docs/journal/06-memory.md)
   7. [Sessions, and switching models](docs/journal/07-sessions.md)
   8. [A second provider: OpenAI](docs/journal/08-openai.md)
+  9. [Auto mode, and a sandbox to make it safe](docs/journal/09-auto-mode.md)
 
 ## Roadmap
 
@@ -204,7 +212,8 @@ The docs are written to teach, not just to reference:
 - [x] **6. Project memory**: standing instructions from `WREN.md` or `AGENTS.md`, per project and personal, with `/remember`
 - [x] **7. Sessions**: conversations saved as they happen, a picker to resume them, and model switching
 - [x] **8. A second provider**: OpenAI, through the same interface as Claude
-- [ ] **9. Extensions**: subagents, MCP servers, hooks
+- [x] **9. Auto mode**: a sandbox for commands (macOS), and `/auto` to stop asking about what it contains
+- [ ] **10. Extensions**: subagents, MCP servers, hooks
 
 ## Development
 
@@ -238,7 +247,8 @@ src/wren/
   tools/
     base.py         the Tool interface; Pydantic inputs -> schema and checked arguments
     registry.py     looks up, checks, gets permission for, runs and caps every tool call
-    permissions.py  what needs asking, and what's "always" allowed this session
+    permissions.py  what needs asking, what's "always" allowed this session, and auto mode
+    sandbox.py      the macOS sandbox commands run in (sandbox-exec and its profile)
     files.py        path fencing, folder walking, glob matching, safe text read/write, diffs
     list_files.py   ┐
     read_file.py    ├ read-only tools

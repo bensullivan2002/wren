@@ -19,13 +19,15 @@ Wren is a coding-agent harness for the terminal, built step by step by Claude wi
 
 ## Status
 
-Steps 1 to 8 are done (see the roadmap in README.md). Step 8 was an unplanned addition, an OpenAI provider (D69); extensions moved to step 9.
+Steps 1 to 9 are done (see the roadmap in README.md). Steps 8 and 9 were unplanned additions: an OpenAI provider (D69), then auto mode with a macOS sandbox for commands (D100–D107). Extensions moved to step 10.
+
+**Auto mode (step 9) is untried with a real model.** Ask Ben how a real model copes with `outside_sandbox` (journal 09, "Things to try" 7). He confirmed the sandbox stays on in normal mode too (D101). A `--auto` flag is wanted, as its own piece of work: issue #9.
 
 **First thing next session: ask Ben how the OpenAI provider behaved with a real key.** It is tested only against a stand-in client built from the SDK's types (journal 08). Likely trouble spots, in order: replaying reasoning items between tool calls (`store: False`), an `/effort` level the model rejects, and the model-list filter. Fix what he finds first.
 
 Confirmed by Ben against the real Anthropic API: `/usage`, `/compact`, `/history`, the model picker, and effort (a controlled low-versus-high comparison). Still unconfirmed there: tool loops with reasoning blocks (D45), cache reads showing in `/usage`, and resuming after a model switch.
 
-**Then: step 9, extensions.** It is three separate pieces; the first question for Ben is which to build first, and each should be its own commit and journal entry:
+**Then: step 10, extensions.** It is three separate pieces; the first question for Ben is which to build first, and each should be its own commit and journal entry:
 
 - **MCP** (tools from other programs). Questions: stdio servers only, or HTTP too; hand-written client or the official `mcp` Python SDK (it is async: see D34); where servers are configured; and how permissions work for tools Wren did not write (every MCP tool call should ask, with "always" per tool). Check the current MCP spec first.
 - **Subagents** (a task handed to a fresh conversation). Questions: which tools a subagent gets, whether it can ask the user for permission, how its result returns, whether it may use a different (cheaper) model or provider, and whether they run in parallel (D34 again).
@@ -52,7 +54,8 @@ Carried over, for whenever they fit (see "Known limits" in journals 03 and 04):
 - App gaps: expanding cut-off diffs and output, queueing a message while Wren works, showing a tool request as it's written (needs a provider event).
 
 - Saving "always allow" rules between sessions (D23 left this out on purpose).
-- The shell is not sandboxed, and "always allow `git`" covers every git subcommand (D28, D29).
+- The sandbox is macOS only, and its known gaps are in journal 09: commands inherit API keys, reads are broad, protected names are top-level only, memory files aren't protected. Follow-ups offered: strip keys from the environment, a Linux sandbox, a reviewer model for commands outside the sandbox. "Always allow `git`" outside the sandbox still covers every git subcommand (D28).
+- Any new tool that changes things leaves `PermissionRequest.contained` false unless Wren itself can establish containment (ARCHITECTURE invariant 25). MCP tools in particular.
 - The tool-writing conventions are in `docs/ARCHITECTURE.md` ("Anatomy of a tool"): a nested Pydantic `Input(ToolInput)`, `permission()` for anything that changes things, and tests that use a fake asker.
 - A front-end feature must work in both front ends or be clearly optional: `tui.py` and `repl.py` implement the same contract (ARCHITECTURE.md, "the front-end contract"). Nothing Textual-specific goes in `agent.py`, `tools/` or `commands.py`.
 - The history is append-only between compactions, and requests are always built the same way (ARCHITECTURE invariants 2 and 16). Don't edit or reorder earlier messages, the system prompt or the tool list mid-session: it breaks prompt caching and can invalidate the model's reasoning blocks. `ReasoningBlock.data` is opaque: only its provider reads it.

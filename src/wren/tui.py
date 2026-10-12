@@ -88,6 +88,7 @@ KEYS_HELP = """\
 Commands open in a panel above the prompt. Escape closes it.
 Enter sends your message; Ctrl+J starts a new line in it.
 Wren asks before it edits a file or runs a command: y, n, or a for "always".
+/auto stops most of the questions: see /permissions for what still asks.
 Escape stops Wren while it's working. Whatever it had already done stays done,
 and stays in the conversation. Ctrl+Q quits.
 Select text with the mouse and press Ctrl+C to copy it."""
