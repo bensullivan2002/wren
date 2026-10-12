@@ -66,8 +66,6 @@ def screen_text(app):
     """Everything in the conversation, as plain text."""
     parts = []
     for widget in app.transcript.query("*"):
-        if widget.id == "welcome":
-            continue  # decoration, not conversation; tested separately below
         if isinstance(widget, Markdown):
             parts.append(widget.source)
         elif isinstance(widget, Static):
@@ -87,17 +85,19 @@ def question(app):
     return found.first() if found else None
 
 
-# --- Welcome ------------------------------------------------------------------------
+# --- Pinned logo --------------------------------------------------------------------
 
 
-async def test_new_conversation_shows_the_logo_without_adding_it_to_history(tmp_path):
+async def test_logo_is_pinned_top_left_without_adding_it_to_history(tmp_path):
     app = make_app(tmp_path, ["Hello"])
     async with app.run_test(size=(80, 24)) as pilot:
-        welcome = app.query_one("#welcome", Static)
-        await until(pilot, lambda: welcome.region.height == 8, "the eight-row logo to be laid out")
-        assert str(welcome.content) == TERMINAL_LOGO
-        assert welcome.region.y >= app.transcript.region.y
-        assert welcome.region.bottom <= app.transcript.region.bottom
+        logo = app.query_one("#logo", Static)
+        await until(pilot, lambda: logo.region.height == 8, "the eight-row logo to be laid out")
+        assert str(logo.content) == TERMINAL_LOGO
+        assert (logo.region.x, logo.region.y) == (0, 0)
+        assert logo.content_region.x == 1  # the same left padding as the header
+        assert logo.region.bottom <= app.query_one("#header").region.y
+        assert not app.transcript.query("#logo") and screen_text(app) == ""
         assert app.agent.messages == [] and app.focused is app.prompt
 
         await say(app, pilot, "hi")
@@ -106,24 +106,60 @@ async def test_new_conversation_shows_the_logo_without_adding_it_to_history(tmp_
     assert history_problems(app.agent.messages) == []
 
 
+async def test_logo_stays_fixed_while_chat_scrolls_and_command_panel_opens(tmp_path):
+    reply = "\n\n".join(f"Paragraph {i}" for i in range(30))
+    app = make_app(tmp_path, [reply])
+    async with app.run_test(size=(80, 24)) as pilot:
+        logo = app.query_one("#logo", Static)
+        pinned_region = logo.region
+        await say(app, pilot, "hi")
+        await finished(app, pilot)
+        await until(pilot, lambda: app.transcript.max_scroll_y > 0, "the long reply to overflow")
+        assert logo.region == pinned_region
+
+        app.transcript.scroll_home(animate=False)
+        await until(pilot, lambda: app.transcript.scroll_y == 0, "the start of the conversation")
+        assert logo.region == pinned_region
+        app.to_the_end()
+        await until(pilot, lambda: app.transcript.scroll_y == app.transcript.max_scroll_y, "the end again")
+        assert logo.region == pinned_region
+
+        await say(app, pilot, "/help")
+        await until(pilot, lambda: app.panel.is_open, "the help panel")
+        assert logo.region == pinned_region
+        assert app.panel.region.y >= logo.region.bottom
+        assert app.prompt.region.bottom <= app.screen.region.bottom
+        app.prompt.insert("\n".join("Another input line" for _ in range(20)))
+        await until(pilot, lambda: app.prompt.region.height == 10, "the multiline prompt to reach its cap")
+        assert app.prompt.region.bottom <= app.screen.region.bottom
+        assert app.panel.region.bottom <= app.query_one("#status").region.y
+        assert logo.region == pinned_region
+        await pilot.press("escape")
+        await until(pilot, lambda: not app.panel.is_open, "the help panel to close")
+        assert logo.region == pinned_region and app.focused is app.prompt
+    assert history_problems(app.agent.messages) == []
+
+
 @pytest.mark.parametrize("size", [(18, 24), (80, 16)])
 async def test_small_terminals_use_text_and_restore_the_bird_after_resizing(tmp_path, size):
     app = make_app(tmp_path)
     async with app.run_test(size=size) as pilot:
-        welcome = app.query_one("#welcome", Static)
-        assert str(welcome.content) == "wren"
+        logo = app.query_one("#logo", Static)
+        assert str(logo.content) == "wren" and logo.region.y == 0
         await pilot.resize_terminal(80, 24)
-        await until(pilot, lambda: str(welcome.content) == TERMINAL_LOGO, "the bird after enlarging")
+        await until(pilot, lambda: str(logo.content) == TERMINAL_LOGO, "the bird after enlarging")
         await pilot.resize_terminal(*size)
-        await until(pilot, lambda: str(welcome.content) == "wren", "the compact logo after shrinking")
-        assert app.focused is app.prompt
+        await until(pilot, lambda: str(logo.content) == "wren", "the compact logo after shrinking")
+        assert logo.region.y == 0 and app.focused is app.prompt
+        assert app.prompt.region.bottom <= app.screen.region.bottom
 
 
-async def test_existing_history_opens_without_a_welcome_banner(tmp_path):
+async def test_existing_history_opens_with_the_same_pinned_logo(tmp_path):
     app = make_app(tmp_path, ["An earlier answer"])
     list(app.agent.run_turn("An earlier question"))
     async with app.run_test() as pilot:
-        assert not app.query("#welcome")
+        assert str(app.query_one("#logo", Static).content) == TERMINAL_LOGO
+        assert not app.transcript.query("#logo")
         assert "An earlier answer" in screen_text(app)
         assert len(app.agent.messages) == 2
     assert history_problems(app.agent.messages) == []
@@ -408,6 +444,7 @@ async def test_a_permission_question_closes_the_panel_and_takes_the_keyboard(tmp
 async def test_slash_commands_that_change_things_leave_a_note_and_clear_empties_the_screen(tmp_path):
     app = make_app(tmp_path, ["Hello"])
     async with app.run_test() as pilot:
+        logo = app.query_one("#logo", Static)
         await say(app, pilot, "/nonsense")
         await pilot.pause()
         assert "unknown command /nonsense" in screen_text(app) and not app.panel.is_open
@@ -417,8 +454,9 @@ async def test_slash_commands_that_change_things_leave_a_note_and_clear_empties_
         await say(app, pilot, "/clear")
         await pilot.pause()
         assert screen_text(app) == "Conversation cleared." and app.agent.messages == []
-        assert len(app.query("#welcome")) == 1
-        assert str(app.query_one("#welcome", Static).content) == TERMINAL_LOGO
+        assert len(app.query("#logo")) == 1
+        assert app.query_one("#logo", Static) is logo  # /clear did not recreate it
+        assert str(logo.content) == TERMINAL_LOGO and logo.region.y == 0
 
 
 async def test_compact_runs_in_the_background_and_reports_what_it_saved(tmp_path):

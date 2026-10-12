@@ -43,7 +43,7 @@ from rich.text import Text
 from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.geometry import Size
 from textual.message import Message as TextualMessage
 from textual.widget import Widget
@@ -253,9 +253,11 @@ class WrenApp(App):
     # Textual styles widgets with CSS, like a web page. `$accent` and friends
     # are colours from the current theme, so this follows light and dark.
     CSS = """
+    #logo { dock: top; height: auto; padding: 0 1; color: $accent; text-wrap: nowrap; }
     #header { height: 1; padding: 0 1; background: $panel; color: $text-muted; text-wrap: nowrap; text-overflow: ellipsis; }
+    #body { height: 1fr; }
+    #chat { height: 1fr; }
     #transcript { height: 1fr; padding: 0 1; }
-    #welcome { height: auto; margin: 1 0; color: $accent; text-wrap: nowrap; }
     #status { height: 1; padding: 0 1; color: $text-muted; }
     #prompt { height: auto; max-height: 10; border: round $accent; }
     .user { margin: 1 0 0 0; padding: 0 1; background: $boost; color: $text; }
@@ -309,12 +311,17 @@ class WrenApp(App):
 
     def compose(self) -> ComposeResult:
         """Say what's on screen, top to bottom. Called once, at startup."""
-        provider, tools = self.agent.provider, self.agent.tools
+        # A screen-level widget, outside scrollback and history redraws.
+        yield Static(self._logo_text(), id="logo", markup=False)
         yield Static(self._header_text(), id="header", markup=False)
-        yield VerticalScroll(id="transcript")
-        yield CommandPanel()
-        yield Static("", id="status", markup=False)
-        yield Prompt(id="prompt", placeholder="Ask Wren something, or /help", show_line_numbers=False)
+        # The panel shares only the space left after reserving the pinned
+        # logo, status and prompt, even when the prompt grows to several lines.
+        with Vertical(id="body"):
+            with Vertical(id="chat"):
+                yield VerticalScroll(id="transcript")
+                yield CommandPanel()
+            yield Static("", id="status", markup=False)
+            yield Prompt(id="prompt", placeholder="Ask Wren something, or /help", show_line_numbers=False)
 
     def _header_text(self) -> str:
         provider, tools = self.agent.provider, self.agent.tools
@@ -336,7 +343,7 @@ class WrenApp(App):
         # on a question or a command, so the program can actually exit.
         self._stop.set()
 
-    def _welcome_text(self, size: Size | None = None) -> str:
+    def _logo_text(self, size: Size | None = None) -> str:
         # Don't squeeze an eight-row bird into a short or narrow terminal.
         size = self.size if size is None else size
         if size.width < 20 or size.height < 20:
@@ -345,15 +352,12 @@ class WrenApp(App):
 
     def on_resize(self, event: events.Resize) -> None:
         # Our handler runs before Textual updates the app's stored size.
-        for welcome in self.query("#welcome"):
-            welcome.update(self._welcome_text(event.size))
+        for logo in self.query("#logo"):
+            logo.update(self._logo_text(event.size))
 
     async def _draw_conversation(self) -> None:
-        """Show the logo for a new conversation, or redraw a resumed history."""
+        """Redraw history without touching the pinned logo."""
         await self.transcript.remove_children()
-        if not self.agent.messages:
-            # Decoration only: never add it to model history or saved sessions.
-            await self.add(Static(self._welcome_text(), id="welcome", markup=False))
         await self._announce_memory()
         if self.notice:
             await self.note(self.notice)

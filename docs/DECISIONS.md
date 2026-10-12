@@ -510,8 +510,15 @@ You asked for commands to open the way they do in Claude Code and Codex: inline,
 *Not chosen:* a full-screen modal (it hides the conversation you may be asking about).
 
 ### D81. New TUI conversations show the terminal Wren logo
-*Branding follow-up · you*
+*Branding follow-up · you · placement superseded by D82*
 
 You expected the logo to appear after restarting Wren. The original logo PR shipped assets and README branding only; the follow-up puts the bird in the scrolling transcript at startup and after `/clear`.
 *Design details:* the welcome is a widget, not a model message or saved session record. Existing histories resume without a new banner. The mark is bundled as package data and kept in sync by the branding generator, so installation and working directory do not matter. It inherits the theme's accent and falls back to `wren` below 20 columns or 20 rows, updating on resize.
 *Not chosen:* a permanent eight-row header (less room for the conversation), a repo-relative asset path (breaks installed apps), or a logo in plain/piped output (decoration in scripts).
+
+### D82. Pin the TUI logo at the top left
+*Branding follow-up · you*
+
+You asked for the logo to be pinned like Claude and Codex, rather than scrolling away. This supersedes D81's placement: a top-docked screen widget appears above the header in every conversation, including resumed ones. `/clear` and history redraws touch only the transcript, leaving the same logo widget in place.
+*Design details:* reserve the logo's space outside a flexible body, and reserve the status and prompt outside the body's flexible chat area. The command panel's percentage height is relative to that chat area, so opening `/help` with a multiline input does not push the prompt off-screen. Theme colour, packaged asset, small-terminal fallback, and absence from model history and plain output are unchanged.
+*Cost:* the full bird reserves eight rows, plus the existing one-line header. Below 20 columns or 20 rows it becomes the single-line `wren` fallback.
