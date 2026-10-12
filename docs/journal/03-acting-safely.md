@@ -247,6 +247,26 @@ Notice which way this errs. It doesn't try to work out whether `echo "a; b"` is 
 
 "Always" is kept in memory only. Saving it between sessions is the industry norm, and it's left for a later step.
 
+### A prompt you can't read isn't a safeguard (added later)
+
+The first version of the shell prompt showed the command and nothing else. In real use that failed in a specific way: asked to approve `grep -rl TODO src | xargs sed -i '' -e 's/TODO/DONE/g'`, you either learn to read shell or learn to press `y`. The second is what people do, and then the prompt protects nothing.
+
+So the shell tool now takes a required `description`: one plain-English sentence saying what the command does and why, written by the model. It leads the prompt:
+
+```
+Run a shell command
+Wren says: Replace every TODO marker with DONE in the Python files under src.
+That is Wren's description. What will actually run is:
+$ grep -rl TODO src --include='*.py' | xargs sed -i '' -e 's/TODO/DONE/g'
+```
+
+Two things about the design:
+
+- **The description is a claim, not a fact.** The model wrote it, and a model can be wrong, or be misled by something it read. So it's labelled as Wren's, and the command is always shown under it. The sentence helps you read the command. It doesn't replace reading it.
+- **It's required, in the schema.** An optional field gets skipped. The tool's description tells the model why it matters: without a clear one, the user can't judge the command and will likely decline.
+
+The same thinking changed how tool calls appear in the conversation: `Read src/app.py`, not `read_file(path='src/app.py')` (`plain_call` in `commands.py`). `/history` still shows every call exactly as it was made.
+
 ### Idea 9: "no" is a result too
 
 When you decline, the model gets a tool result like any other, marked as an error:

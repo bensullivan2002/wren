@@ -147,7 +147,7 @@ class FakeProvider:
         elif command == "search" and arg:
             call = ("search", {"pattern": arg})
         elif command == "run" and arg:
-            call = ("shell", {"command": arg})
+            call = ("shell", {"description": "Run the command you typed after 'run'.", "command": arg})
         elif command == "write" and " " in arg:
             path, _, text = arg.partition(" ")
             call = ("write_file", {"path": path, "content": text + "\n"})

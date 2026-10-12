@@ -29,7 +29,7 @@ from wren.commands import (
     compaction_note,
     default_effort,
     effort_list,
-    format_call,
+    plain_call,
     model_list,
     provider_choices,
     run_command,
@@ -160,7 +160,8 @@ class Repl:
         elif isinstance(event, ToolStarted):
             # Printed without a newline, so the result can finish the line
             # (unless a permission prompt comes in between).
-            self.say(cyan("  ▸ ") + dim(format_call(event.call)), end="")
+            headline, detail = plain_call(event.call)
+            self.say(cyan("  ▸ ") + headline + (dim(f"  {detail}") if detail else ""), end="")
             self._mid_line = True
 
         elif isinstance(event, ToolFinished):
@@ -204,6 +205,11 @@ class Repl:
         """
         self._end_line()
         self.say(yellow(f"    {request.title}"))
+        if request.explanation:
+            # The model's own words, labelled as such, and never shown
+            # without the thing itself underneath.
+            self.say(f"    Wren says: {request.explanation}")
+            self.say(dim("    That is Wren's description. What will actually run is:"))
         lines = request.detail.splitlines()
         for line in lines[:MAX_DETAIL_LINES]:
             self.say("    " + dim("│ ") + _colour_diff_line(line))

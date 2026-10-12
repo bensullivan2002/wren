@@ -23,6 +23,14 @@ far the most powerful thing Wren can do, and three facts follow from that.
    is also the one tool slow enough to need stopping part-way, so it checks
    `ctx.should_stop` a few times a second while it waits.
 
+4. A command can be unreadable. `grep -rl TODO src | xargs sed -i ...` is a
+   fine thing to run and a hopeless thing to be asked about: approving what
+   you can't read isn't approval. So the model has to say, in plain English,
+   what each command is for, and that sentence leads the permission prompt.
+   It's the model's own claim, and a model can be wrong or misled, so the
+   command itself is always shown with it. The sentence is there to help
+   you read the command, not to be believed in its place.
+
 Each command runs in a fresh shell: `cd` and variables don't carry over to
 the next call. That's simpler and more predictable than keeping one shell
 session alive, at the cost of the model writing `cd sub && make` sometimes.
@@ -63,10 +71,20 @@ class Shell(Tool):
         f"and are stopped after the timeout ({DEFAULT_TIMEOUT} seconds unless you set it). "
         "Don't start servers or other programs that never exit. "
         "Prefer list_files, read_file, search and edit_file to ls, cat, grep and sed: their output is "
-        "shaped for you and they need less approval. The user is asked to approve commands."
+        "shaped for you and they need less approval. The user is asked to approve commands, and sees "
+        "your description first: without a clear one they can't judge the command, and will likely decline."
     )
 
     class Input(ToolInput):
+        description: str = Field(
+            min_length=5,
+            description=(
+                "What this command does and why, in one plain-English sentence that someone who "
+                "doesn't read shell could act on. Say what it will change, if anything. "
+                "For example: 'Count the lines in every Python file under src, to find the largest.' "
+                "or 'Delete the build folder so the next build starts clean.'"
+            ),
+        )
         command: str = Field(description="The command line to run.")
         timeout: int = Field(
             DEFAULT_TIMEOUT, ge=1, le=MAX_TIMEOUT, description="Seconds to wait before stopping the command."
@@ -78,6 +96,7 @@ class Shell(Tool):
         word = command_word(args.command)
         return PermissionRequest(
             title="Run a shell command",
+            explanation=args.description.strip(),
             detail=args.command,
             scope=f"shell:{word}" if word else None,
             scope_label=f"commands starting with `{word}`" if word else "",

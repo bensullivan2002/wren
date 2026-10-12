@@ -420,6 +420,35 @@ def _describe(message: Message) -> str:
 # --- Text both front ends show ------------------------------------------------
 
 
+def plain_call(call: ToolUseBlock) -> tuple[str, str]:
+    """A tool call as a person would say it: (headline, detail).
+
+    "Read src/app.py" is easier to follow at a glance than
+    read_file(path='src/app.py'), and for a shell command the difference is
+    larger still: the headline is the model's own sentence about what the
+    command is for, and the detail is the command. /history still shows
+    every call exactly as it was made.
+    """
+    args = call.input if isinstance(call.input, dict) else {}
+    path, pattern = args.get("path"), args.get("pattern")
+    if call.name == "shell" and isinstance(args.get("command"), str):
+        said = args.get("description")
+        headline = shorten(" ".join(str(said).split()), 110) if said else "Run a command"
+        return headline, "$ " + shorten(" ".join(args["command"].split()), 200)
+    if call.name == "read_file" and path:
+        start = args.get("offset")
+        return f"Read {path}" + (f" from line {start}" if start else ""), ""
+    if call.name == "list_files":
+        return f"List {pattern or '*'}" + (f" in {path}" if path else ""), ""
+    if call.name == "search" and pattern:
+        return f"Search for {shorten(repr(pattern), 60)}" + (f" in {path}" if path else ""), ""
+    if call.name == "edit_file" and path:
+        return f"Edit {path}", ""
+    if call.name == "write_file" and path:
+        return f"Write {path}", ""
+    return format_call(call), ""  # a tool we have no words for: show the call itself
+
+
 def format_call(call: ToolUseBlock) -> str:
     """A tool call written like a Python call: read_file(path='app.py')."""
     args = ", ".join(f"{key}={shorten(repr(value), 60)}" for key, value in call.input.items())

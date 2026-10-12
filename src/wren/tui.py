@@ -56,7 +56,7 @@ from wren.commands import (
     compaction_note,
     default_effort,
     effort_list,
-    format_call,
+    plain_call,
     model_list,
     provider_choices,
     resume_session,
@@ -131,11 +131,16 @@ class ToolCallView(Static):
     """One tool call: a line saying what was asked, then what came of it."""
 
     def __init__(self, call: ToolUseBlock) -> None:
-        self.call_text = format_call(call)
+        # In plain English ("Read src/app.py"), with the literal command
+        # underneath when there is one. /history shows the call as made.
+        self.headline, self.detail = plain_call(call)
         super().__init__(self._line("…", "dim"), markup=False, classes="tool")
 
     def _line(self, outcome: str, style: str) -> Text:
-        return Text.assemble(("▸ ", "cyan"), (self.call_text, "dim"), "  ", (outcome, style))
+        line = Text.assemble(("▸ ", "cyan"), self.headline, "  ", (outcome, style))
+        if self.detail:
+            line = Text("\n").join([line, Text(self.detail, style="dim")])
+        return line
 
     def finish(self, call: ToolUseBlock, result: ToolResult) -> None:
         """Show the result: a summary always, plus the detail worth seeing."""
@@ -172,10 +177,18 @@ class PermissionPrompt(Widget, can_focus=True):
     def compose(self) -> ComposeResult:
         request = self.request
         yield Static(Text(request.title, style="bold yellow"), markup=False)
+        if request.explanation:
+            # The model's own account of what this is for, so that a long
+            # command can be judged by someone who doesn't read shell. It's
+            # labelled as the model's, and the command is right underneath:
+            # a description can be wrong, and the command is what runs.
+            yield Static(Text.assemble(("Wren says: ", "bold"), request.explanation), markup=False)
+            yield Static(Text("That is Wren's description. What will actually run is:", style="dim"), markup=False)
         if request.change is not None:
             yield Static(change_text(request.change, request.change.path.name), markup=False, classes="detail")
         else:
-            yield Static(Text(request.detail), markup=False, classes="detail")
+            command = request.explanation != ""  # only commands come with an explanation
+            yield Static(Text(("$ " if command else "") + request.detail), markup=False, classes="detail")
         choices = Text.assemble(("y", "bold"), " yes   ")
         if request.scope is not None:
             choices.append_text(Text.assemble(("a", "bold"), f" always allow {request.scope_label} this session   "))
@@ -260,12 +273,18 @@ class WrenApp(App):
     #transcript { height: 1fr; padding: 0 1; }
     #status { height: 1; padding: 0 1; color: $text-muted; }
     #prompt { height: auto; max-height: 10; border: round $accent; }
-    .user { margin: 1 0 0 0; padding: 0 1; background: $boost; color: $text; }
-    .assistant { margin: 1 0 0 0; padding: 0; background: transparent; }
-    .tool { margin: 0 0 0 2; }
-    .note { margin: 1 0 0 0; color: $text-muted; }
-    .error { margin: 1 0 0 0; color: $error; }
-    .output { margin: 1 0 0 0; }
+    /* Three voices, told apart by the bar down the left edge:
+         you          accent bar, tinted band, bold
+         the model    green bar
+         the harness  grey bar, muted text (tool calls, notes)
+       so a glance down the left margin shows who said what. */
+    .user { margin: 2 0 0 0; padding: 0 1; border-left: outer $accent; background: $accent 12%; color: $text; text-style: bold; }
+    .assistant { margin: 1 0 0 0; padding: 0 0 0 1; border-left: outer $success; background: transparent; }
+    .assistant > *:last-child { margin-bottom: 0; }
+    .tool { margin: 0; padding: 0 0 0 1; border-left: outer $surface-lighten-3; }
+    .note { margin: 1 0 0 0; padding: 0 0 0 1; border-left: outer $surface-lighten-3; color: $text-muted; }
+    .error { margin: 1 0 0 0; padding: 0 0 0 1; border-left: outer $error; color: $error; }
+    .output { margin: 1 0 0 0; padding: 0 0 0 1; border-left: outer $surface-lighten-3; }
     .permission { height: auto; margin: 1 0 0 2; padding: 0 1; border: round $warning; }
     .permission:focus { border: heavy $warning; }
     .permission .detail { margin: 0 0 1 0; }
@@ -384,7 +403,7 @@ class WrenApp(App):
             if message.text == COMPACTED_NOTE:
                 await self.note(message.text)
             elif message.text:
-                await self.add(Static(message.text, markup=False, classes="user"))
+                await self.add(Static(Text.assemble(("› ", "bold"), message.text), markup=False, classes="user"))
         else:
             if message.text:
                 await self.add(Markdown(message.text, classes="assistant"))
@@ -455,7 +474,7 @@ class WrenApp(App):
             self.notify("Wren is still working. Press Escape to stop it first.")
         else:
             self.prompt.clear()
-            await self.add(Static(text, markup=False, classes="user"))
+            await self.add(Static(Text.assemble(("› ", "bold"), text), markup=False, classes="user"))
             self.to_the_end()  # you've spoken: come back to the present, wherever you'd scrolled to
             self.busy = True
             self._stop.clear()

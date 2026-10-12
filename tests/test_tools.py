@@ -14,6 +14,8 @@ from wren.tools import search as search_module
 from wren.tools import shell as shell_module
 from wren.tools.files import glob_to_regex
 from wren.tools.registry import DECLINED
+from wren.commands import plain_call
+from wren.messages import ToolUseBlock
 from wren.tools.shell import command_word
 
 
@@ -337,7 +339,7 @@ def test_a_declined_action_does_not_happen_and_the_model_is_told(tools, user, pr
 
 def test_with_nobody_to_ask_the_answer_is_no(project):
     tools = ToolRegistry(default_tools(), root=project)  # no Permissions given
-    err(tools.run("shell", {"command": "echo hi"}))
+    err(tools.run("shell", {"description": WHY, "command": "echo hi"}))
     err(tools.run("write_file", {"path": "new.txt", "content": "hi"}))
     assert not (project / "new.txt").exists()
 
@@ -349,9 +351,9 @@ def test_always_stops_the_asking_for_that_scope_only(tools, user):
     ok(tools.run("edit_file", {"path": "a.txt", "old_string": "1", "new_string": "3"}))
     assert len(user.seen) == 1  # asked once; edits and writes share the "edit" scope
 
-    ok(tools.run("shell", {"command": "echo one"}))
-    ok(tools.run("shell", {"command": "echo two"}))
-    ok(tools.run("shell", {"command": "true"}))
+    ok(tools.run("shell", {"description": WHY, "command": "echo one"}))
+    ok(tools.run("shell", {"description": WHY, "command": "echo two"}))
+    ok(tools.run("shell", {"description": WHY, "command": "true"}))
     assert [r.scope for r in user.seen] == ["edit", "shell:echo", "shell:true"]
     assert tools.permissions.always == {
         "edit": "all file edits",
@@ -362,9 +364,9 @@ def test_always_stops_the_asking_for_that_scope_only(tools, user):
 
 def test_always_for_a_command_does_not_cover_a_chained_command(tools, user, project):
     user.decision = Decision.ALWAYS
-    ok(tools.run("shell", {"command": "echo hi"}))
+    ok(tools.run("shell", {"description": WHY, "command": "echo hi"}))
     user.decision = Decision.DENY
-    err(tools.run("shell", {"command": "echo hi; touch sneaky.txt"}))
+    err(tools.run("shell", {"description": WHY, "command": "echo hi; touch sneaky.txt"}))
     assert user.seen[-1].scope is None  # "always" isn't even offered for it
     assert not (project / "sneaky.txt").exists()
 
@@ -493,12 +495,14 @@ def test_write_file_cannot_escape_through_a_symlinked_folder(tools, project, tmp
 # --- shell ----------------------------------------------------------------------
 # These run real commands, so they stick to ones every POSIX shell has.
 
+WHY = "A sentence saying what the command is for."
+
 posix_only = pytest.mark.skipif(os.name != "posix", reason="uses POSIX shell commands")
 
 
 @posix_only
 def test_shell_runs_in_the_working_directory_and_returns_output(tools, user):
-    result = ok(tools.run("shell", {"command": "ls src"}))
+    result = ok(tools.run("shell", {"description": WHY, "command": "ls src"}))
     assert result.content == "app\nnotes.txt"
     assert result.summary == "2 lines"
     assert user.seen[0].title == "Run a shell command" and user.seen[0].detail == "ls src"
@@ -506,14 +510,14 @@ def test_shell_runs_in_the_working_directory_and_returns_output(tools, user):
 
 @posix_only
 def test_shell_reports_a_failing_command_without_calling_it_a_tool_error(tools):
-    result = ok(tools.run("shell", {"command": "echo oops >&2; exit 3"}))
+    result = ok(tools.run("shell", {"description": WHY, "command": "echo oops >&2; exit 3"}))
     assert result.content == "oops\n\n[Exit code 3]"
     assert result.summary == "exit 3 · 1 line"
 
 
 @posix_only
 def test_shell_says_when_there_is_no_output(tools):
-    result = ok(tools.run("shell", {"command": "true"}))
+    result = ok(tools.run("shell", {"description": WHY, "command": "true"}))
     assert (result.content, result.summary) == ("(no output)", "no output")
 
 
@@ -521,20 +525,20 @@ def test_shell_says_when_there_is_no_output(tools):
 def test_shell_stops_a_command_that_runs_too_long_and_keeps_its_output(tools):
     # `sleep` runs as a child of the shell, so this also checks the whole
     # process group is killed: otherwise the test would hang for 30 seconds.
-    result = err(tools.run("shell", {"command": "echo started; sleep 30", "timeout": 1}))
+    result = err(tools.run("shell", {"description": WHY, "command": "echo started; sleep 30", "timeout": 1}))
     assert result.content.startswith("started")
     assert "still running after 1 seconds" in result.content
 
 
 @posix_only
 def test_shell_commands_get_no_keyboard_input(tools):
-    assert ok(tools.run("shell", {"command": "cat"})).content == "(no output)"  # returns at once
+    assert ok(tools.run("shell", {"description": WHY, "command": "cat"})).content == "(no output)"  # returns at once
 
 
 @posix_only
 def test_shell_keeps_the_end_of_very_long_output(tools, monkeypatch):
     monkeypatch.setattr(shell_module, "MAX_OUTPUT_CHARS", 20)
-    result = ok(tools.run("shell", {"command": "seq 1 100"}))
+    result = ok(tools.run("shell", {"description": WHY, "command": "seq 1 100"}))
     assert "showing the last 20 of" in result.content and result.content.endswith("99\n100")
 
 
@@ -542,11 +546,44 @@ def test_shell_keeps_the_end_of_very_long_output(tools, monkeypatch):
 def test_shell_gives_up_early_when_asked_to_stop(tools):
     # A front end that can cancel (the full-screen app's Escape) sets this hook.
     tools.context.should_stop = lambda: True
-    result = err(tools.run("shell", {"command": "echo started; sleep 30"}))
+    result = err(tools.run("shell", {"description": WHY, "command": "echo started; sleep 30"}))
     assert result.content.startswith("started") and "Stopped by the user" in result.content
 
 
+def test_shell_must_be_told_what_the_command_is_for(tools, user):
+    missing = err(tools.run("shell", {"command": "true"}))
+    assert "missing required argument 'description'" in missing.content
+    assert "'description'" in err(tools.run("shell", {"description": "x", "command": "true"})).content  # too short to mean anything
+    assert user.seen == []  # refused before the user is troubled
+
+    ok(tools.run("shell", {"description": "Do nothing, successfully.", "command": "true"}))
+    assert user.seen[0].explanation == "Do nothing, successfully." and user.seen[0].detail == "true"
+
+
+def test_only_commands_carry_an_explanation(tools, user):
+    ok(tools.run("write_file", {"path": "n.txt", "content": "x"}))
+    assert user.seen[0].explanation == ""  # a diff explains itself
+
+
+def test_tool_calls_are_described_in_plain_english():
+    def said(name, **args):
+        return plain_call(ToolUseBlock("t", name, args))
+
+    assert said("read_file", path="a.py") == ("Read a.py", "")
+    assert said("read_file", path="a.py", offset=40) == ("Read a.py from line 40", "")
+    assert said("list_files") == ("List *", "")
+    assert said("list_files", pattern="**/*.py", path="src") == ("List **/*.py in src", "")
+    assert said("search", pattern="def main") == ("Search for 'def main'", "")
+    assert said("edit_file", path="a.py", old_string="x", new_string="y") == ("Edit a.py", "")
+    assert said("write_file", path="a.py", content="x") == ("Write a.py", "")
+    assert said("shell", description="Count the Python files.", command="find . -name '*.py'\n | wc -l") == (
+        "Count the Python files.",
+        "$ find . -name '*.py' | wc -l",
+    )
+    assert said("some_new_tool", x=1) == ("some_new_tool(x=1)", "")  # no words for it: the call itself
+
+
 def test_shell_refuses_an_empty_command_and_a_silly_timeout(tools, user):
-    assert "command is empty" in err(tools.run("shell", {"command": "  "})).content
-    assert "less than or equal to 600" in err(tools.run("shell", {"command": "true", "timeout": 9999})).content
+    assert "command is empty" in err(tools.run("shell", {"description": WHY, "command": "  "})).content
+    assert "less than or equal to 600" in err(tools.run("shell", {"description": WHY, "command": "true", "timeout": 9999})).content
     assert user.seen == []

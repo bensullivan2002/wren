@@ -217,7 +217,7 @@ async def test_a_read_only_tool_runs_without_asking_and_shows_a_summary(tmp_path
     async with app.run_test() as pilot:
         await say(app, pilot, "read a.txt")
         await finished(app, pilot)
-        assert "read_file(path='a.txt')  → 2 lines" in screen_text(app)
+        assert "▸ Read a.txt  → 2 lines" in screen_text(app)
 
 
 async def test_an_edit_asks_first_and_y_lets_it_happen(tmp_path):
@@ -239,6 +239,36 @@ async def test_an_edit_asks_first_and_y_lets_it_happen(tmp_path):
         assert question(app) is None and app.focused is app.prompt
         after = screen_text(app)
         assert "→ a.txt +1 −1" in after and "-one" in after  # the diff stays in the conversation
+
+
+async def test_a_command_is_asked_about_in_plain_english_with_the_command_itself_underneath(tmp_path):
+    command = "grep -rl TODO src | xargs sed -i '' -e 's/TODO/DONE/g'"
+    why = "Replace every TODO marker with DONE in the files under src."
+    app = make_app(tmp_path, [asks(("t1", "shell", {"description": why, "command": command})), "Left alone."])
+    async with app.run_test(size=(110, 30)) as pilot:
+        await say(app, pilot, "tidy the markers")
+        await until(pilot, lambda: question(app), "the permission question")
+        shown = screen_text(app)
+        assert f"Wren says: {why}" in shown  # what it's for, in words
+        assert "That is Wren's description. What will actually run is:" in shown  # ...labelled as a claim
+        assert f"$ {command}" in shown  # ...and never without the thing itself
+        assert shown.index("Wren says:") < shown.rindex(f"$ {command}")  # description first, command under it
+        await pilot.press("n")
+        await finished(app, pilot)
+
+
+async def test_your_messages_the_models_and_the_harnesss_are_styled_apart(tmp_path):
+    (tmp_path / "a.txt").write_text("one\n")
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await say(app, pilot, "read a.txt")
+        await finished(app, pilot)
+        yours = app.transcript.query(".user").first()
+        models = app.transcript.query(".assistant").first()
+        harness = app.transcript.query(".tool").first()
+        assert str(yours.content).startswith("› read a.txt")
+        bars = {w.styles.border_left[1].hex for w in (yours, models, harness)}
+        assert len(bars) == 3  # three voices, three colours down the left edge
 
 
 async def test_n_declines_and_the_model_is_told(tmp_path):
@@ -280,7 +310,8 @@ async def test_a_command_shows_the_end_of_its_output_and_always_is_not_offered_f
         assert question(app) is not None
         await pilot.press("y")
         await finished(app, pilot)
-        assert "→ 2 lines\none\ntwo" in screen_text(app)
+        # In words first, then the command as it was run, then the end of its output.
+        assert "▸ Run the command you typed after 'run'.  → 2 lines\n$ echo one; echo two\none\ntwo" in screen_text(app)
 
 
 async def test_a_question_in_a_long_conversation_appears_on_screen_not_above_it(tmp_path):
@@ -583,7 +614,7 @@ async def test_resume_picks_an_earlier_conversation_and_redraws_it(tmp_path):
         await until(pilot, lambda: "Resumed" in screen_text(app), "the old conversation")
 
         shown = screen_text(app)
-        assert "read a.txt" in shown and "read_file(path='a.txt')" in shown  # the old turn, tool call and all
+        assert "read a.txt" in shown and "▸ Read a.txt" in shown  # the old turn, tool call and all
         assert "something else entirely" not in shown
         assert len(app.agent.messages) == 4 and app.focused is app.prompt
         status = str(app.query_one("#status").content)

@@ -522,3 +522,17 @@ You expected the logo to appear after restarting Wren. The original logo PR ship
 You asked for the logo to be pinned like Claude and Codex, rather than scrolling away. This supersedes D81's placement: a top-docked screen widget appears above the header in every conversation, including resumed ones. `/clear` and history redraws touch only the transcript, leaving the same logo widget in place.
 *Design details:* reserve the logo's space outside a flexible body, and reserve the status and prompt outside the body's flexible chat area. The command panel's percentage height is relative to that chat area, so opening `/help` with a multiline input does not push the prompt off-screen. Theme colour, packaged asset, small-terminal fallback, and absence from model history and plain output are unchanged.
 *Cost:* the full bird reserves eight rows, plus the existing one-line header. Below 20 columns or 20 rows it becomes the single-line `wren` fallback.
+
+### D83. Shell commands must come with a plain-English description
+*Step 8 · you*
+
+You pointed out that being asked to approve a long chained command is meaningless. The shell tool now requires a `description`: one sentence, written by the model, saying what the command does and why. The permission prompt leads with it, labelled "Wren says", and always shows the command itself underneath.
+*Why labelled:* it is the model's claim about its own action, and a model can be wrong or misled. The command is what runs.
+*Not chosen:* an optional description (models skip optional fields). Having Wren explain the command itself by parsing it (shell is too varied to parse reliably). A second model call to explain each command (slower, costs more, and is still a model's claim). Descriptions on edits too (a diff already shows exactly what changes).
+*Cost:* a few more output tokens per command, and a description is only as honest as the model that wrote it.
+
+### D84. The transcript speaks in plain English and marks who is speaking
+*Step 8 · you*
+
+You asked for clearer separation between blocks, above all between your input and everything else. Your messages, the model's and the harness's now each have a distinct bar down the left edge, and yours sit on a tinted band. Tool calls are worded as actions ("Read src/app.py"), with a shell command's description as the headline and the command beneath; `/history` shows the calls as made.
+*Not chosen:* boxes around every message (heavy, and they waste width). Labels such as "You:" and "Wren:" on each block (noisier than colour, though more accessible: worth revisiting if the colours don't read well in your terminal).

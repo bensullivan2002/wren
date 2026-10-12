@@ -158,6 +158,18 @@ In real use, every permission question made the conversation jump to its very to
 
 The fix (`WrenApp.ask`) is to take the focus without scrolling, `widget.focus(scroll_visible=False)`, then pin the conversation to its end again, once immediately and once after the layout has caught up. The headless tests had missed it because they used conversations too short to scroll. There's now a test with a long one that checks the scroll position. **A UI test that never scrolls can't catch a scrolling bug.**
 
+### Three voices
+
+A conversation has three speakers: you, the model, and the harness (tool calls, notes, errors). At first they were told apart mostly by position, and a long session read as one wall of text. Now each has a bar down the left edge:
+
+| Who | Looks like |
+| --- | --- |
+| You | an accent-coloured bar, a tinted band, bold, starting `›` |
+| The model | a green bar |
+| The harness | a grey bar and muted text (red for errors) |
+
+A glance down the left margin shows who said what, and your own messages, the points where the conversation turns, are the easiest thing on screen to find. It's all CSS on three classes (`.user`, `.assistant`, `.tool`/`.note`), which is a fair advertisement for styling by class: no widget code changed.
+
 ### The command panel: what isn't conversation doesn't go in the conversation
 
 At first, the output of `/usage` or `/history` was added to the transcript like everything else. It piled up between the real messages, and a long `/history` pushed the conversation off the screen.

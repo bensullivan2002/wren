@@ -56,7 +56,7 @@ Escape stops Wren at once in most cases. Anything it had already done stays done
 
 ### Permission
 
-Wren asks before every file edit and every shell command, and shows you exactly what it will do.
+Wren asks before every file edit and every shell command, and shows you exactly what it will do. For a command, it first says in plain English what the command is for, in Wren's own words, with the command itself underneath: read the description to understand it, and the command to check it.
 
 | Answer | Meaning |
 | ------ | ------- |

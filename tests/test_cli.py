@@ -43,7 +43,7 @@ def test_the_fake_model_drives_a_real_tool_call(tmp_path):
     (tmp_path / "hello.txt").write_text("first line\nsecond line\n")
     result = wren("--provider", "fake", stdin="read hello.txt\n", cwd=tmp_path)
 
-    assert "▸ read_file(path='hello.txt')  → 2 lines" in result.stdout
+    assert "▸ Read hello.txt  → 2 lines" in result.stdout  # said in words, not as a function call
     assert "The first line is:      1\tfirst line" in result.stdout
     assert "2 model calls" in result.stdout
 
@@ -68,6 +68,8 @@ def test_an_edit_is_shown_as_a_diff_and_happens_once_approved(tmp_path):
 def test_a_declined_command_does_not_run(tmp_path):
     result = wren("--provider", "fake", stdin="run touch made.txt\nn\n", cwd=tmp_path)
     assert "Run a shell command" in result.stdout and "│ touch made.txt" in result.stdout
+    assert "Wren says: Run the command you typed after 'run'." in result.stdout
+    assert "That is Wren's description. What will actually run is:" in result.stdout
     assert "✗ declined" in result.stdout
     assert not (tmp_path / "made.txt").exists()
 

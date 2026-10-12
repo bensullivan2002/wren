@@ -51,6 +51,12 @@ class PermissionRequest:
     title: str  # one line: "Edit src/app.py", "Run a shell command"
     detail: str  # the specifics: a diff, or the command itself
 
+    # What this is for, in plain English, where the detail alone wouldn't
+    # tell a person (a long shell command, say). It is THE MODEL'S OWN
+    # ACCOUNT of what it's doing, so front ends must show it as such, and
+    # always beside the detail: the detail is what will actually happen.
+    explanation: str = ""
+
     # What "always" would cover. A scope is a plain string key such as "edit"
     # or "shell:pytest"; two requests with the same scope are "the same kind
     # of thing". None means there's no safe way to generalise this request,
