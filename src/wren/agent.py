@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from dataclasses import dataclass
-from typing import Generator, Iterator, Union
+from typing import Callable, Generator, Iterator, Union
 
 from wren.config import DEFAULT_MAX_STEPS
 from wren.messages import Completed, Message, TextBlock, TextDelta, ToolResultBlock, ToolUseBlock, Usage
@@ -103,14 +103,19 @@ class Agent:
     def __init__(
         self,
         provider: Provider,
-        system_prompt: str,
+        system_prompt: str | Callable[[], str],
         max_tokens: int,
         tools: ToolRegistry | None = None,
         max_steps: int = DEFAULT_MAX_STEPS,
         context_budget: int = 0,
     ) -> None:
         self.provider = provider
-        self.system_prompt = system_prompt
+        # The system prompt can be given as a function that builds it. Then
+        # it's built now, and again each time the conversation is reset: the
+        # point at which a changed memory file can be picked up for free,
+        # since a new conversation starts a new cache anyway.
+        self._build_system_prompt = system_prompt if callable(system_prompt) else None
+        self.system_prompt: str = system_prompt() if callable(system_prompt) else system_prompt
         self.max_tokens = max_tokens
         self.tools = tools if tools is not None else ToolRegistry()
         self.max_steps = max_steps
@@ -321,6 +326,9 @@ class Agent:
         yield Compacted(before, self.context_tokens)
 
     def reset(self) -> None:
-        """Forget the conversation (the system prompt, tools and totals stay)."""
+        """Forget the conversation (the tools and totals stay), and rebuild
+        the system prompt if we were given a way to."""
         self.messages.clear()
         self.context_tokens = 0
+        if self._build_system_prompt is not None:
+            self.system_prompt = self._build_system_prompt()

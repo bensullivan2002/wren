@@ -26,6 +26,7 @@ from typing import Any, Callable, TextIO
 from wren import __version__
 from wren.agent import Agent, Compacted, CompactionStarted, ToolFinished, ToolStarted, TurnFinished
 from wren.commands import compaction_note, format_call, run_command
+from wren.memory import Memory
 from wren.messages import Completed, TextDelta
 from wren.tools import Decision, PermissionRequest
 
@@ -66,8 +67,9 @@ and stays in the conversation. Ctrl-D quits."""
 
 
 class Repl:
-    def __init__(self, agent: Agent, out: TextIO = sys.stdout) -> None:
+    def __init__(self, agent: Agent, out: TextIO = sys.stdout, memory: Memory | None = None) -> None:
         self.agent = agent
+        self.memory = memory
         self.out = out
         self._mid_line = False  # True when streamed text didn't end with a newline
 
@@ -78,6 +80,11 @@ class Repl:
         provider, tools = self.agent.provider, self.agent.tools
         self.say(f"{bold('wren')} {__version__} {dim(f'· {provider.name} · {provider.model} · {len(tools)} tools')}")
         self.say(dim("Type a message, /help for commands, Ctrl-D to quit."))
+        if self.memory and self.memory.files:
+            # Said up front, every time: these files steer the model, and in
+            # a project you've just cloned you didn't write them.
+            names = ", ".join(self.memory.shown(file.path) for file in self.memory.files)
+            self.say(dim(f"Instructions loaded from: {names}  (/memory for details)"))
 
         while True:
             self.say()
@@ -199,7 +206,7 @@ class Repl:
 
     def command(self, line: str) -> bool:
         """Run a slash command. Returns False when the REPL should exit."""
-        result = run_command(self.agent, line, KEYS_HELP)
+        result = run_command(self.agent, line, KEYS_HELP, self.memory)
         if result.compact:
             try:
                 for event in self.agent.compact():

@@ -50,6 +50,7 @@ from textual.widgets import Markdown, Static, TextArea
 from wren import __version__
 from wren.agent import Agent, Compacted, CompactionStarted, ToolFinished, ToolStarted, TurnFinished
 from wren.commands import compaction_note, format_call, run_command
+from wren.memory import Memory
 from wren.messages import Completed, TextDelta, ToolUseBlock
 from wren.tools import Decision, PermissionRequest, ToolResult
 from wren.tools.files import diff
@@ -196,9 +197,10 @@ class WrenApp(App):
         Binding("ctrl+d", "quit", "Quit"),
     ]
 
-    def __init__(self, agent: Agent) -> None:
+    def __init__(self, agent: Agent, memory: Memory | None = None) -> None:
         super().__init__()
         self.agent = agent
+        self.memory = memory
         self.busy = False  # True while a turn is running
         # Set (by Escape) to ask the worker thread to stop. A threading.Event
         # is a flag that's safe for one thread to set and another to read.
@@ -234,6 +236,14 @@ class WrenApp(App):
         self.set_interval(0.1, self._tick)
         self._show_status()
         self.prompt.focus()
+        self.call_after_refresh(self._announce_memory)
+
+    async def _announce_memory(self) -> None:
+        # Said up front, every time: these files steer the model, and in a
+        # project you've just cloned you didn't write them.
+        if self.memory and self.memory.files:
+            names = ", ".join(self.memory.shown(file.path) for file in self.memory.files)
+            await self.note(f"Instructions loaded from: {names}  (/memory for details)")
 
     @property
     def transcript(self) -> VerticalScroll:
@@ -275,7 +285,7 @@ class WrenApp(App):
         if self.busy and line.split()[0].lower() == "/compact":
             self.notify("Wren is still working. Compact when it has finished.")
             return
-        result = run_command(self.agent, line, KEYS_HELP)
+        result = run_command(self.agent, line, KEYS_HELP, self.memory)
         if result.compact:
             self.busy = True
             self._stop.clear()
@@ -287,6 +297,7 @@ class WrenApp(App):
             return
         if result.cleared:
             await self.transcript.remove_children()
+            await self._announce_memory()  # re-read for the new conversation
         if result.text:
             await self.note(result.text, "error" if result.is_error else "output")
 

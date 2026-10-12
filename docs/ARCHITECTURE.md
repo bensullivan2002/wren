@@ -1,6 +1,6 @@
 # Architecture
 
-*Describes Wren as of **step 5**. This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
+*Describes Wren as of **step 6**. This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
 
 ## The big picture
 
@@ -34,7 +34,8 @@ Solid arrows are calls; dotted arrows are what comes back, or a callback. One fr
 | --- | --- | --- | --- |
 | **Entry point** | `cli.py` | Parse flags, load config, build everything, pick and start a front end | Everything (the only file that does) |
 | **Config** | `config.py` | Decide each setting: flag, then env var, then default | Nothing else |
-| **Prompts** | `prompts.py` | The system prompt (who the model is, how to work, plus live facts: folder, OS, date) and the compaction prompt | Nothing else |
+| **Prompts** | `prompts.py` | The system prompt (who the model is, how to work, the memory files, plus live facts: folder, OS, date) and the compaction prompt | Nothing else |
+| **Memory** | `memory.py` | Find and read the memory files (`WREN.md`, `AGENTS.md`); render them for the prompt; append `/remember` notes | The file helpers |
 | **Agent** | `agent.py` | Own the conversation; run the agent loop; keep history valid and truthful; track its size and compact it | A `Provider`, a `ToolRegistry`, the message types |
 | **Messages** | `messages.py` | Provider-neutral types; the history rules (`history_problems`) | Nothing else |
 | **Provider** | `providers/` | Translate to a vendor's API and back; stream the reply; ask for caching; report token use | The vendor SDK, the message types |
@@ -44,7 +45,7 @@ Solid arrows are calls; dotted arrows are what comes back, or a callback. One fr
 | **Tools** | `tools/*.py` | Do one job each; describe themselves to the model, and their effects to the user | The working directory (via `ToolContext`) |
 | **App** | `tui.py` | The full-screen front end (Textual): run each turn on a worker thread, draw events as widgets, ask permission questions, stop on Escape | The `Agent`, the event types, Textual |
 | **REPL** | `repl.py` | The plain front end: read a line, print events, ask permission questions with `input()` | The `Agent`, the event types |
-| **Commands** | `commands.py` | Slash commands, returning text for either front end to show | The `Agent` |
+| **Commands** | `commands.py` | Slash commands, returning text for either front end to show | The `Agent`, `Memory` |
 
 The rule behind this table: **each part knows as little as possible about the others.** The agent never prints and never touches files. Tools don't know there's a model, and never call `input()`. Nothing outside `providers/anthropic.py` knows what Anthropic's JSON looks like. Nothing outside `tui.py` knows about Textual. That's what lets us swap the model, have two interfaces, add tools, or test any part alone.
 
@@ -84,6 +85,19 @@ What happens when you type *"rename helper to assist in util.py"* and press Ente
 8. **If the loop reaches `max_steps`,** the agent appends a short assistant note saying it stopped, and yields `TurnFinished(hit_step_limit=True)`.
 
 **If the turn is cut short** between steps 2 and 8 (Escape or Ctrl-C, a network error, a bad API key), nothing is deleted. `Agent._close_unfinished_turn` ties off the loose ends: every unanswered tool request gets a result (the real one if the tool finished, otherwise a note that it was cut short or never ran), and a closing assistant note records where and why the turn stopped, after any text that had already streamed.
+
+## Memory files
+
+At the start of a conversation, `Memory.load` reads, in this order:
+
+1. `~/.wren/WREN.md` (personal);
+2. for each folder from the top of the git repository down to the working directory: `WREN.md`, or `AGENTS.md` if that folder has no `WREN.md`. Outside a repository, only the working directory.
+
+Empty files are skipped; each is capped at 20,000 characters. `Memory.render` wraps them in a `<memory>` section, each file labelled with its path and scope, under a header saying how to weigh them and that they can't grant permission. `build_system_prompt` places that section between the fixed text and the environment.
+
+`cli.py` gives the agent a *function* that builds the system prompt. The agent calls it when it's created and on `reset()` (`/clear`), and at no other time, so the prompt is fixed for the length of a conversation. Both front ends announce the loaded files at startup. `/remember` appends to the project file nearest the working directory (creating `WREN.md` if there is none); the change is seen from the next conversation.
+
+Memory lives in the system prompt, which compaction doesn't touch, so it survives compaction unchanged.
 
 ## Context: size, caching and compaction
 
@@ -168,12 +182,14 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 14. **Compaction is all or nothing.** It either replaces the whole history with a summary or leaves it exactly as it was.
 15. **Reasoning blocks are returned as they came:** same data, same position. Only the provider that produced one looks inside it.
 16. **Requests are built identically every time,** with new content only at the end, so the cached prefix stays valid.
+17. **The system prompt is fixed for the length of a conversation.** Memory files are read when a conversation starts, and not again until the next.
+18. **Memory files can't grant permission.** They are text in the prompt; the permission check in the registry doesn't read them.
+19. **Memory is looked for only in the home directory's `.wren/`, and from the working directory up to the top of its git repository.**
 
 ## Where the next steps plug in
 
 | Coming in | Plugs in at |
 | --- | --- |
-| Step 6: project memory | A `WREN.md` loaded into the prompt; where it goes matters for caching (invariant 16) |
-| Step 7: sessions | Saving and loading `agent.messages`; the app would redraw the transcript from them |
+| Step 7: sessions | Saving and loading `agent.messages`, including `ReasoningBlock`s; a resumed session rebuilds its system prompt from today's memory files |
 | Later: saved permission rules | Loaded into `Permissions.always` at startup |
 | Later: sandboxing | Around `tools/shell.py`'s `_run` |

@@ -15,6 +15,7 @@ import pytest
 from textual.widgets import Markdown, Static
 
 from wren.agent import INTERRUPTED_NOTE, Agent
+from wren.memory import Memory
 from wren.messages import Message, TextBlock, ToolUseBlock, history_problems
 from wren.providers.fake import FakeProvider
 from wren.tools import Permissions, ToolRegistry, default_tools
@@ -22,11 +23,11 @@ from wren.tools.permissions import FileChange
 from wren.tui import PermissionPrompt, WrenApp, change_text
 
 
-def make_app(tmp_path, replies=None):
+def make_app(tmp_path, replies=None, memory=None):
     """An app on a throwaway project. With no `replies`, the fake model is in
     demo mode, where typing `read x`, `write x text` or `run cmd` asks for a tool."""
     tools = ToolRegistry(default_tools(), root=tmp_path, permissions=Permissions())
-    return WrenApp(Agent(FakeProvider(replies), "sys", 100, tools))
+    return WrenApp(Agent(FakeProvider(replies), "sys", 100, tools), memory)
 
 
 def asks(*calls):
@@ -276,6 +277,18 @@ async def test_compact_runs_in_the_background_and_reports_what_it_saved(tmp_path
         assert len(app.agent.messages) == 2 and "pretend summary" in app.agent.messages[1].text
         assert "context " in str(app.query_one("#status").content)  # the meter
         assert app.focused is app.prompt
+
+
+async def test_loaded_memory_files_are_announced_and_remember_adds_to_them(tmp_path):
+    (tmp_path / "home").mkdir()
+    (tmp_path / "WREN.md").write_text("Be brief.\n")
+    app = make_app(tmp_path, memory=Memory(tmp_path, home=tmp_path / "home"))
+    async with app.run_test() as pilot:
+        await until(pilot, lambda: "Instructions loaded from: WREN.md" in screen_text(app), "the announcement")
+        await say(app, pilot, "/remember use tabs")
+        await pilot.pause()
+        assert "Added to WREN.md" in screen_text(app)
+    assert (tmp_path / "WREN.md").read_text() == "Be brief.\n- use tabs\n"
 
 
 async def test_quit_command_exits(tmp_path):

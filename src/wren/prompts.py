@@ -2,7 +2,8 @@
 
 The model knows nothing about where it's running: not your operating system,
 not your folder, not even today's date. The harness has to tell it. So the
-system prompt has two parts: who the model should be (fixed text), and an
+system prompt has three parts: who the model should be (fixed text), the
+project's memory files if there are any (see memory.py), and an
 <environment> section that the harness fills in from the real world.
 
 The tools' own descriptions are sent separately (see tools/), so this prompt
@@ -81,7 +82,7 @@ COMPACTED_NOTE = (
 )
 
 
-def build_system_prompt(cwd: Path | None = None, today: date | None = None) -> str:
+def build_system_prompt(cwd: Path | None = None, today: date | None = None, memory: str = "") -> str:
     cwd = cwd or Path.cwd()
     today = today or date.today()
     environment = "\n".join(
@@ -93,4 +94,6 @@ def build_system_prompt(cwd: Path | None = None, today: date | None = None) -> s
             "</environment>",
         ]
     )
-    return f"{IDENTITY}\n\n{environment}"
+    # Ordered from what changes least to what changes most. The cache
+    # matches from the front, so the stable text should come first.
+    return "\n\n".join(part for part in (IDENTITY, memory, environment) if part)

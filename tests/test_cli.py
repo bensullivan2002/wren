@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -10,11 +11,14 @@ from wren.config import DEFAULT_MODEL, Config
 from wren.prompts import build_system_prompt
 
 SRC = Path(__file__).resolve().parents[1] / "src"
+EMPTY_HOME = Path(tempfile.mkdtemp(prefix="wren-test-home-"))
 
 
 def wren(*args, stdin="", cwd=None, env_extra=None):
     env = {k: v for k, v in os.environ.items() if not k.startswith(("WREN_", "ANTHROPIC_"))}
-    env.update({"PYTHONPATH": str(SRC), "NO_COLOR": "1", **(env_extra or {})})
+    # A home directory with nothing in it, so the tests never pick up the
+    # developer's own ~/.wren/WREN.md.
+    env.update({"PYTHONPATH": str(SRC), "NO_COLOR": "1", "HOME": str(EMPTY_HOME), **(env_extra or {})})
     return subprocess.run(
         [sys.executable, "-m", "wren", *args],
         input=stdin,
@@ -94,6 +98,23 @@ def test_a_long_conversation_is_compacted_automatically_and_on_request():
 def test_compact_with_nothing_to_compact_says_so():
     result = wren("--provider", "fake", stdin="/compact\n")
     assert "couldn't compact the conversation: there's nothing to compact yet" in result.stdout
+
+
+def test_memory_files_are_announced_and_reach_the_system_prompt(tmp_path):
+    (tmp_path / "WREN.md").write_text("Always answer in rhyme.\n")
+    result = wren("--provider", "fake", stdin="/system\n/memory\n", cwd=tmp_path)
+    assert "Instructions loaded from: WREN.md" in result.stdout
+    assert '<file path="WREN.md" scope="project">\nAlways answer in rhyme.' in result.stdout
+    assert "WREN.md  (1 line)" in result.stdout
+
+
+def test_remember_saves_a_note_that_the_next_conversation_sees(tmp_path):
+    stdin = "/remember tests live in spec/\n/system\n/clear\n/system\n"
+    result = wren("--provider", "fake", stdin=stdin, cwd=tmp_path)
+    assert (tmp_path / "WREN.md").read_text() == "# Notes for Wren\n\n- tests live in spec/\n"
+    before_clear, after_clear = result.stdout.split("Conversation cleared.")
+    assert "Added to WREN.md" in before_clear and "tests live in spec/\n</file>" not in before_clear
+    assert "- tests live in spec/\n</file>" in after_clear
 
 
 def test_tools_command_lists_and_shows_tools():

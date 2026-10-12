@@ -25,6 +25,7 @@ from pathlib import Path
 from wren import __version__
 from wren.agent import Agent
 from wren.config import Config
+from wren.memory import Memory
 from wren.prompts import build_system_prompt
 from wren.providers import PROVIDERS, make_provider
 from wren.repl import Repl
@@ -75,15 +76,21 @@ def main(argv: list[str] | None = None) -> int:
     provider = make_provider(config.provider, config.model)
     permissions = Permissions()
     tools = ToolRegistry(default_tools(), root=root, permissions=permissions)
-    agent = Agent(
-        provider, build_system_prompt(root), config.max_tokens, tools, config.max_steps, config.context_budget
-    )
+    memory = Memory(root)
+
+    def system_prompt() -> str:
+        # Called now, and again whenever the conversation is cleared, so a
+        # memory file edited mid-session is picked up by the next conversation.
+        memory.load()
+        return build_system_prompt(root, memory=memory.render())
+
+    agent = Agent(provider, system_prompt, config.max_tokens, tools, config.max_steps, config.context_budget)
 
     # A full-screen app needs a real terminal at both ends. When input or
     # output is a pipe or a file (`echo hi | wren`, the tests), fall back to
     # the plain REPL, which only needs lines of text.
     if args.plain or not (sys.stdin.isatty() and sys.stdout.isatty()):
-        repl = Repl(agent)
+        repl = Repl(agent, memory=memory)
         # The one loop in the wiring: tools need to ask the user, and the
         # front end is the part that talks to the user. Until this line,
         # Permissions has nobody to ask, and so refuses everything.
@@ -93,5 +100,5 @@ def main(argv: list[str] | None = None) -> int:
         # Imported here so that plain mode never loads Textual at all.
         from wren.tui import WrenApp
 
-        WrenApp(agent).run()  # wires itself to the same hooks in its __init__
+        WrenApp(agent, memory).run()  # wires itself to the same hooks in its __init__
     return 0

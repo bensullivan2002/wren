@@ -19,16 +19,17 @@ Wren is a coding-agent harness for the terminal, built step by step by Claude wi
 
 ## Status
 
-Steps 1 to 5 are done (see the roadmap in README.md).
+Steps 1 to 6 are done (see the roadmap in README.md).
 
-**First thing next session: ask Ben whether he has run Wren against the real API yet, and how it went.** Three things are tested only against stand-ins and need a real session to confirm (journal 05, "Known limits"): reasoning blocks surviving a tool loop (D45), prompt caching actually hitting (`/usage` should show cache reads from the second call on), and a real compaction's summary quality. Also ask how the app feels in his terminal. Fix what he finds before step 6.
+**First thing next session: ask Ben how real use is going.** He has confirmed `/usage`, `/compact` and `/history` work. Still worth asking about: tool loops against the real API (reasoning blocks, D45), whether `/usage` shows cache reads, and whether a `WREN.md` is actually followed. Fix what he finds before step 7.
 
-**Then: step 6, project memory** (a `WREN.md` per project, loaded into every conversation). Questions to put to Ben:
+**Then: step 7, sessions** (save the conversation to disk, list past sessions, resume one). Questions to put to Ben:
 
-- Where it's loaded from: the working directory only, or also parent folders and a personal file in the home directory (check how Claude Code's CLAUDE.md and the AGENTS.md convention do it, and whether to read those names too).
-- Whether Wren may write to it (a `/remember` command, or the model editing it through the normal permissioned edit tool), or it's the user's file only.
-- Where it goes in the request. It must not break caching (ARCHITECTURE invariant 16): the system prompt is stable per session, so loading it once at startup is safe; reloading mid-session is not free.
-- Whether saved "always allow" permission rules (deferred in D23) belong in this step, in a separate settings file.
+- Format and place: one JSON Lines file per session, appended as events happen, under `~/.wren/sessions/` (per project) or inside the project? Check how Claude Code and others store transcripts before presenting.
+- What resuming restores: the history only, or also the "always allow" permissions (probably not: D23, D50)? What to say to the model about time having passed and files having changed.
+- How to resume: `wren --resume` / `--continue` flags, a `/resume` picker in the app, or both.
+- What to do with `ReasoningBlock`s on disk (they are provider-specific, D45) and with sessions saved by a different model or provider.
+- Whether the app should redraw the old transcript on resume.
 
 Things Ben has decided that aren't obvious from the code:
 
@@ -39,6 +40,7 @@ Things Ben has decided that aren't obvious from the code:
 Carried over, for whenever they fit (see "Known limits" in journals 03 and 04):
 
 - An async core (D34) if parallel tools or subagents need it; Escape can lag while waiting for the model's first words.
+- Memory gaps: loading a subfolder's `WREN.md` on demand, imports, auto memory (D49), saved permission rules (D50).
 - Context gaps: trimming old tool results before resorting to a summary (D40), compacting inside a very long turn (D47), keeping recent messages verbatim (D42 explains why not), showing cost in money.
 - App gaps: expanding cut-off diffs and output, queueing a message while Wren works, showing a tool request as it's written (needs a provider event).
 
@@ -47,6 +49,7 @@ Carried over, for whenever they fit (see "Known limits" in journals 03 and 04):
 - The tool-writing conventions are in `docs/ARCHITECTURE.md` ("Anatomy of a tool"): a nested Pydantic `Input(ToolInput)`, `permission()` for anything that changes things, and tests that use a fake asker.
 - A front-end feature must work in both front ends or be clearly optional: `tui.py` and `repl.py` implement the same contract (ARCHITECTURE.md, "the front-end contract"). Nothing Textual-specific goes in `agent.py`, `tools/` or `commands.py`.
 - The history is append-only between compactions, and requests are always built the same way (ARCHITECTURE invariants 2 and 16). Don't edit or reorder earlier messages, the system prompt or the tool list mid-session: it breaks prompt caching and can invalidate the model's reasoning blocks. `ReasoningBlock.data` is opaque: only its provider reads it.
+- The system prompt is fixed for a conversation (invariant 17): memory is read at the start and on `/clear` only. Memory files are untrusted text (D53): never let one grant a permission or change what the registry enforces.
 - In `tui.py`, only the app thread touches widgets, and text from the model, files or commands is never passed as markup. UI tests wait on conditions (`until`), never fixed sleeps.
 
 ## Commands

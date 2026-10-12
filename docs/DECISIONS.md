@@ -297,3 +297,49 @@ Up from 8,192. The model's thinking counts against this limit, so the old value 
 
 Automatic compaction is checked at the start of a turn, when the history is whole. Every step that can fail comes before the single line that replaces the history, so a failure or an interruption leaves it untouched; a failed automatic compaction lets the turn go ahead.
 *Cost:* a single very long turn can overshoot the budget. The budget is a cost target, well below the model's real limit.
+
+---
+
+### D48. Memory is `WREN.md`, else `AGENTS.md`, plus a personal file
+*Step 6 · you*
+
+Wren loads `~/.wren/WREN.md`, then for each folder from the project's root down to the working directory, `WREN.md` or, where there is none, `AGENTS.md`. All are joined, most general first.
+*Why:* it mirrors Claude Code's scheme, gives you a place for preferences that apply everywhere, and makes repositories already set up for other agents work with no extra file.
+*Not chosen:* `WREN.md` in the working directory only (simplest, but nothing personal and nothing from a monorepo's root). `AGENTS.md` only (one file for every agent, but nowhere for Wren-specific or personal notes).
+
+### D49. Memory is the user's file; `/remember` appends; the model edits it only with permission
+*Step 6 · you*
+
+`/remember <note>` adds a line to the project's memory file. The model can change the file through the ordinary edit tools, which ask first and show a diff.
+*Not chosen:* read-only (most predictable, but capturing a lesson means leaving Wren). Auto memory, where Wren keeps notes unprompted (useful; a bigger step in trust, and more to build and prune).
+
+### D50. Saved permission rules are not part of this step
+*Step 6 · you*
+
+"Always allow" stays per-session (D23).
+*Why:* it needs a settings file and rule matching of its own, and a project file that grants permissions is what a hostile repository would ship. Better as a separate, deliberate step.
+
+### D51. The search for project files stops at the top of the git repository
+*Step 6 · design*
+
+Wren looks in the working directory and the folders above it as far as the one containing `.git`; outside a repository, only the working directory.
+*Not chosen:* walking up to the filesystem root, as Claude Code does (it would load a stray `WREN.md` or `AGENTS.md` from a shared parent such as `/tmp`). Subfolders below the working directory aren't loaded either; doing that on demand is a later refinement.
+
+### D52. Memory goes in the system prompt, read once per conversation
+*Step 6 · design*
+
+The files are rendered into the system prompt when a conversation starts and when it's cleared. Edits to a file, including `/remember`, apply from the next conversation.
+*Why:* the system prompt is at the front of every request, and the prompt cache matches from the front (D44). Re-reading memory per request would make every request after a change a cache miss; the system prompt also survives compaction, so memory does too.
+*Not chosen:* injecting memory as a message (it would be summarised away by compaction). Reloading on every turn.
+
+### D53. Memory files are treated as instructions from outside
+*Step 6 · design*
+
+A cloned repository's `AGENTS.md` enters the prompt unread by the user. So: loaded files are announced at startup and listed by `/memory`; each is labelled in the prompt with its path and scope; the header tells the model they are guidance and cannot approve anything; each file is capped at 20,000 characters. None of that is enforcement. The enforcement is the permission check (D23, D26), which a file can't influence.
+
+### D54. `/remember` writes to the project file in use, even an `AGENTS.md`
+*Step 6 · design*
+
+The note goes to the project memory file nearest the working directory, and a new `WREN.md` is created only if there is none at all.
+*Why:* a new `WREN.md` beside an existing `AGENTS.md` would shadow it (D48), and the project's instructions would silently stop loading.
+*Cost:* `/remember` may add a line to a file shared with other tools and people. It says which file it wrote.

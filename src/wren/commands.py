@@ -16,7 +16,9 @@ import textwrap
 from dataclasses import dataclass
 
 from wren.agent import Agent, Compacted
+from wren.memory import Memory
 from wren.messages import Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock
+from wren.tools import ToolError
 
 COMMANDS = """\
 /help          show this list
@@ -27,6 +29,8 @@ COMMANDS = """\
 /usage         tokens used this session, and how full the context is
 /compact       replace the conversation with a summary of it, to save tokens
 /permissions   show what you've said Wren may always do this session
+/memory        show which memory files (WREN.md, AGENTS.md) are loaded
+/remember X    add the note X to the project's memory file
 /clear         start a fresh conversation
 /quit          exit"""
 
@@ -40,11 +44,16 @@ class CommandResult:
     cleared: bool = False  # the conversation was reset; a front end with a transcript should empty it
 
 
-def run_command(agent: Agent, line: str, keys_help: str = "") -> CommandResult:
+def run_command(agent: Agent, line: str, keys_help: str = "", memory: Memory | None = None) -> CommandResult:
     """Run one slash command. `keys_help` is the front end's own note about
     its keys (Ctrl-C, Escape...), added to the end of /help."""
     name, *args = line.split()
     name = name.lower()
+
+    if name == "/memory":
+        return CommandResult(memory.describe() if memory else "Memory files are switched off.")
+    if name == "/remember":
+        return _remember(memory, line.partition(" ")[2].strip())
 
     if name in ("/quit", "/exit"):
         return CommandResult(quit=True)
@@ -82,6 +91,21 @@ def _tools(agent: Agent, name: str | None) -> CommandResult:
     spec = tool.spec()
     return CommandResult(
         json.dumps({"name": spec.name, "description": spec.description, "input_schema": spec.input_schema}, indent=2)
+    )
+
+
+def _remember(memory: Memory | None, note: str) -> CommandResult:
+    if memory is None:
+        return CommandResult("Memory files are switched off.", is_error=True)
+    if not note:
+        return CommandResult("Say what to remember: /remember run the tests with make check", is_error=True)
+    try:
+        path = memory.remember(note)
+    except (OSError, ToolError) as e:
+        return CommandResult(f"couldn't save that: {e}", is_error=True)
+    return CommandResult(
+        f"Added to {memory.shown(path)}. It's on disk now, and Wren will see it from the next "
+        "conversation on (/clear, or restart)."
     )
 
 

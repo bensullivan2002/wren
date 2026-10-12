@@ -2,7 +2,7 @@
 
 A small, readable coding-agent harness for the terminal, built step by step so every part can be understood.
 
-> **Status: step 5 of the roadmap.** Wren is a full-screen terminal app that chats with Claude, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first. It caches what it re-sends and compacts long conversations to keep them affordable. The shell is not sandboxed, so read what you approve.
+> **Status: step 6 of the roadmap.** Wren is a full-screen terminal app that chats with Claude, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first. It reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable. The shell is not sandboxed, so read what you approve.
 
 ## Quickstart
 
@@ -67,8 +67,26 @@ Wren asks before every file edit and every shell command, and shows you exactly 
 | `/usage`        | Tokens used this session, and how full the context is |
 | `/compact`      | Replace the conversation with a summary, to save tokens |
 | `/permissions`  | Show what you've said Wren may always do this session |
+| `/memory`       | Show which memory files are loaded                    |
+| `/remember X`   | Add the note X to the project's memory file           |
 | `/clear`        | Start a fresh conversation                            |
 | `/quit`         | Exit                                                  |
+
+### Memory: standing instructions
+
+Wren reads instructions from files at the start of every conversation and puts them in its system prompt:
+
+| File | For |
+| --- | --- |
+| `~/.wren/WREN.md` | Your preferences, in every project |
+| `WREN.md` in the project | How to build and test, conventions, what to leave alone |
+| `AGENTS.md` in the project | The same, under the [open-standard](https://agents.md) name; used where a folder has no `WREN.md` |
+
+Project files are looked for in the working directory and each folder above it, up to the top of the git repository. Where files disagree, the more specific one wins, and what you say in the conversation wins over all of them. Keep them short: they're sent with every request.
+
+`/remember run the tests with make check` adds a line to the project's file. Changes take effect in the next conversation (`/clear`, or restart). Wren tells you at startup which files it loaded; `/memory` lists them.
+
+**These files steer the model, and in a repository you've cloned, you didn't write them.** They can't approve anything: every edit and command still asks you first.
 
 ### Long conversations
 
@@ -117,6 +135,7 @@ The docs are written to teach, not just to reference:
   3. [Acting safely: edits, commands and permission](docs/journal/03-acting-safely.md)
   4. [A full-screen interface](docs/journal/04-terminal-ui.md)
   5. [Context: what a long conversation costs](docs/journal/05-context.md)
+  6. [Memory: instructions that outlast a conversation](docs/journal/06-memory.md)
 
 ## Roadmap
 
@@ -125,7 +144,7 @@ The docs are written to teach, not just to reference:
 - [x] **3. Acting safely**: typed tool inputs (Pydantic), editing files and running commands, behind permission prompts
 - [x] **4. A better terminal UI**: a full-screen app with rendered markdown, diffs, in-place permission questions, and Escape to stop
 - [x] **5. Context management**: prompt caching, a context meter, and compaction at a token budget
-- [ ] **6. Project memory**: a `WREN.md` file of standing instructions per project
+- [x] **6. Project memory**: standing instructions from `WREN.md` or `AGENTS.md`, per project and personal, with `/remember`
 - [ ] **7. Sessions**: save, list and resume conversations
 - [ ] **8. Extensions**: subagents, MCP servers, hooks
 
@@ -142,6 +161,7 @@ src/wren/
   cli.py            entry point: flags -> config -> provider + tools -> agent -> a front end
   config.py         settings and where they come from
   prompts.py        the system prompt, and the prompt used to compact a conversation
+  memory.py         finds and loads WREN.md / AGENTS.md; /remember
   agent.py          owns the conversation; runs the agent loop; compacts it
   messages.py       provider-neutral message types, and the history rules
   tui.py            the full-screen front end (Textual)
