@@ -52,6 +52,13 @@ class Provider(Protocol):
         May make a network call. Best first, if there's a natural order."""
         ...
 
+    def context_window(self) -> int | None:
+        """The most tokens the current model takes in one request, if known.
+        None means unknown, never guessed. May make a network call. Where the
+        number came from (the API, or documentation with a date) is in the
+        provider's `context_window_source`, for showing beside it."""
+        ...
+
     def prices(self) -> Prices | None:
         """What the current model charges, if known. No API reports prices,
         so they're copied from the provider's pricing page and can go out of

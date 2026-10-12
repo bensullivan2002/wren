@@ -56,6 +56,7 @@ class FakeProvider:
         self.model = "demo" if replies is None else "scripted"
         self.effort = effort
         self.delay = delay  # seconds between words, to make streaming visible
+        self.window: int | None = 200_000  # a made-up context window; tests change it
         self.calls: list[dict] = []  # what we were sent, for test assertions
         self._next_id = 0
 
@@ -78,6 +79,13 @@ class FakeProvider:
         if self.model == "demo-large":
             return None
         return Prices(input=Decimal(3), output=Decimal(15), cache_read=Decimal("0.3"), cache_write=Decimal("3.75"))
+
+    context_window_source = "made up: it's the fake provider"
+
+    def context_window(self) -> int | None:
+        # "demo-large" also plays a model whose window isn't known, so that
+        # Wren not compacting by itself can be seen offline too.
+        return None if self.model == "demo-large" else self.window
 
     def stream(
         self,

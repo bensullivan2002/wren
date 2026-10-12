@@ -56,11 +56,20 @@ API_KEYS = {
 # thinking, which current models do before answering and which can't be
 # switched off. It's a ceiling, not a cost: you pay for what's written.
 DEFAULT_MAX_TOKENS = 32_000
-DEFAULT_MAX_STEPS = 25  # the most model calls in one turn, before Wren stops and checks in
-# How large the conversation may grow before Wren compacts it (see
-# Agent.compact). The model could take far more (a million tokens); this is
-# about cost, since every request re-sends the lot. 0 turns it off.
-DEFAULT_CONTEXT_BUDGET = 150_000
+# The most model calls in one turn, before Wren stops and checks in. 0 means
+# no limit: a turn runs until the model stops asking for tools, or you stop
+# it with Escape. Set a limit with --max-steps or WREN_MAX_STEPS.
+DEFAULT_MAX_STEPS = 0
+# When Wren compacts the conversation (see Agent.compact and
+# Agent.context_budget): just short of the model's context window, the most
+# it can take in one request. "Just short" leaves room for two things:
+#   * one reply (max_tokens), since a provider counts the reply against the
+#     window too, and the summarising call needs room to write its summary;
+#   * this share of the window, because compaction only happens between
+#     turns, and a long turn keeps growing the conversation until it ends.
+# A model whose window isn't known isn't compacted automatically. The
+# --context-budget flag can only lower the budget: it's a cap, for cost.
+COMPACTION_MARGIN = 0.10
 
 
 @dataclass
@@ -69,7 +78,9 @@ class Config:
     model: str = DEFAULT_MODEL
     max_tokens: int = DEFAULT_MAX_TOKENS
     max_steps: int = DEFAULT_MAX_STEPS
-    context_budget: int = DEFAULT_CONTEXT_BUDGET
+    # --context-budget: a cap on when compaction happens. None: no cap (compact
+    # just short of the model's window); 0: never compact automatically.
+    context_budget: int | None = None
     effort: str | None = None  # None: whatever the model does by default
 
     @classmethod
@@ -100,12 +111,15 @@ class Config:
             provider=provider,
             model=model,
             max_tokens=max_tokens or int(env.get("WREN_MAX_TOKENS") or DEFAULT_MAX_TOKENS),
-            max_steps=max_steps or int(env.get("WREN_MAX_STEPS") or DEFAULT_MAX_STEPS),
+            # `is not None`, not `or`, here and for the budget: 0 is a real
+            # choice (no step limit; never compact).
+            max_steps=(
+                max_steps if max_steps is not None else int(env.get("WREN_MAX_STEPS") or DEFAULT_MAX_STEPS)
+            ),
             effort=effort,
-            # `is not None`, not `or`: 0 is a real choice here (never compact).
             context_budget=(
                 context_budget
                 if context_budget is not None
-                else int(env.get("WREN_CONTEXT_BUDGET") or DEFAULT_CONTEXT_BUDGET)
+                else (int(env["WREN_CONTEXT_BUDGET"]) if env.get("WREN_CONTEXT_BUDGET") else None)
             ),
         )

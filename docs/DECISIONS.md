@@ -261,6 +261,7 @@ When the conversation is too large, Wren asks the model to summarise it (`COMPAC
 
 Wren compacts between turns once the conversation passes a budget: 150,000 tokens by default (the same default Anthropic's own feature uses), set with `--context-budget`, and 0 turns it off. `/compact` does it on request. A meter shows how close the budget is.
 *Not chosen:* manual only (predictable, but easy to forget). Automatic only (no way to compact early at a natural break, which is when a summary loses least).
+*Since D99:* there's no fixed default. The budget is just short of the model's own window, and `--context-budget` is a cap that can only lower it.
 
 ### D42. Compaction replaces everything; no recent messages are kept verbatim
 *Step 5 · design*
@@ -296,7 +297,7 @@ Up from 8,192. The model's thinking counts against this limit, so the old value 
 *Step 5 · design*
 
 Automatic compaction is checked at the start of a turn, when the history is whole. Every step that can fail comes before the single line that replaces the history, so a failure or an interruption leaves it untouched; a failed automatic compaction lets the turn go ahead.
-*Cost:* a single very long turn can overshoot the budget. The budget is a cost target, well below the model's real limit.
+*Cost:* a single very long turn can overshoot the budget. The budget is a cost target, well below the model's real limit. (Since D99 the budget sits near the window, and the 10% margin is there for such a turn.)
 
 ---
 
@@ -566,6 +567,7 @@ You asked for a footer like [claude-hud](https://github.com/jarrodwatts/claude-h
 
 The bar fills towards `context_budget` (150,000 by default), where Wren compacts, not towards the model's real context window. It answers "how long until compaction?", which is the limit you meet first.
 *Not chosen:* the model's window (a per-model table to maintain, and the bar would never get past the budget anyway).
+*Since D99:* the bar still measures against the budget, but the budget is now worked out from the model's window.
 
 ### D89. Cost in pounds, from a dated price table per provider
 *Step 8 follow-up · you*
@@ -602,7 +604,7 @@ Each part of a row has a `keep` score from 1 to 9. In a narrow terminal, `footer
 - **tool errors:** a "no" from you isn't counted. The tool didn't fail; you declined.
 - **files changed:** distinct files that a tool changed successfully.
 - **"last reply came from X":** shown when the model the provider reports doesn't start with the one asked for. Providers answer with dated names (asked `x`, answered `x-2026-09-01`), so this is a heuristic.
-- **step n/25:** model calls in this turn, the number the step limit counts.
+- **step n/25:** model calls in this turn, the number the step limit counts. With no limit (the default since D98) it's just `step n`.
 - **first word:** from sending a request to its first text, for the latest model call that wrote any.
 
 The footer is redrawn ten times a second while Wren works, and once a second otherwise, not on every event: a fast reply sends dozens of fragments a second.
@@ -632,3 +634,20 @@ The first time the app opens each day, a worker thread asks [Frankfurter](https:
 *Failure:* at most one try a day. If it fails, the last saved rate is used, however old. With no rate ever, costs are shown in dollars (`$0.42`) rather than converted at a made-up rate.
 *Design details:* `exchange.py` takes the fetch and today's date as arguments, so tests never touch the network. The app does no lookup unless given an `ExchangeRate`, which only `cli.py` does. The file is written to a temporary file and renamed into place, so two Wrens starting at once can't leave it half-written. A rate outside 0–10 is not believed.
 *Not chosen:* a fixed rate in `config.py` (goes stale silently). A lookup every run (needless calls when the bank's rate changes once a day). A paid or keyed service (one more secret to manage).
+
+### D98. No step limit by default
+*Step 8 follow-up · you · replaces D16's default*
+
+A turn now runs until the model stops asking for tools, or you press Escape. `--max-steps N` (or `WREN_MAX_STEPS`) still sets a limit, which ends the turn with D16's note; 0 means no limit, as 0 means "never" for `--context-budget`. The footer shows `step n`, or `step n/N` when a limit is set.
+*Why:* your call. Escape already stops a runaway turn at any point, and Claude Code doesn't cap an interactive turn by default either (its `--max-turns` is opt-in, for scripted runs).
+*Cost:* a confused model can loop, spending money, until you notice and stop it.
+
+### D99. Compact just short of the model's context window
+*Step 8 follow-up · you (the formula, the unknown case, the cap, the sources) · design (the lookup and the wording) · replaces D41's default*
+
+Wren compacts at the model's window, less `--max-tokens` (room for one reply), less 10% of the window. For OpenAI's 1,050,000-token models and 32,000-token replies, that's 913,000 tokens. The old fixed 150,000 suited a 200,000-token model (the formula gives 148,000 there), but compacted a million-token model at 15% of its window.
+*Your choices:* the formula above. If a model's window isn't known, Wren never compacts by itself; a cap still applies if one is set. `--context-budget` / `WREN_CONTEXT_BUDGET` stays as that cap: it can only lower the budget, and 0 means never compact by itself. OpenAI's numbers come from its model pages, downloaded and read rather than recalled.
+*Sources (evidence, not assertion):* Anthropic's API reports each model's window (`max_input_tokens` from `models.retrieve`), so Wren asks it. OpenAI's API doesn't (its `Model` has only id, created, owner and shutdown date), so `DOCUMENTED_CONTEXT_WINDOWS` is a table copied from `developers.openai.com/api/docs/models/<model>`, checked 12 October 2026: all ten models list a 1,050,000-token window and 128,000 max output. `/usage` shows the window with its source beside it.
+*Design details:* the agent asks once per (provider, model): at the start of a turn, and in the app from a worker at start-up and after a model change, so the bar appears before the first message. A failed lookup stores nothing and is retried next turn; an answer that arrives after the model changed is dropped. With no budget, the footer says why instead of a bar ("window not looked up yet", "window unknown: never compacted", "compaction off"), and `/usage` spells out how the figure was worked out. The REPL gets the `/usage` lines; the footer is the app's only.
+*Not chosen:* a flat 90% of the window (ignores the reply, which can be 32,000 tokens or more). Compacting right at the window less the reply (one long turn of tool output overflows it). Falling back to 150,000 for an unknown model (a made-up number presented as the model's).
+*Cost:* long conversations now run far longer before compacting, and every request re-sends them. Several models charge more for long prompts (D89: Haiku 5.5 over 100k, several OpenAI models over 272k), so those prices now apply more often. A cap brings back the old behaviour: `--context-budget 150000`.

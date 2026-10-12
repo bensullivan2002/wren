@@ -229,10 +229,32 @@ def test_clearing_resets_the_totals_for_the_new_conversation(tmp_path):
 
 def test_a_small_conversation_shows_as_under_one_percent_not_zero(tmp_path):
     agent, store = make(tmp_path, ["hello"])
-    agent.context_budget = 150_000
+    agent.context_cap = 150_000
     assert "0 tokens, 0% of" in run_command(agent, "/usage").text  # nothing yet: 0% is true
     run(agent, "hi")
     assert "<1% of the 150,000 budget" in run_command(agent, "/usage").text
+
+
+def test_usage_says_where_the_window_came_from_and_how_the_budget_follows(tmp_path):
+    agent, store = make(tmp_path, ["hello"])
+    assert "Context window: not looked up yet" in run_command(agent, "/usage").text
+    run(agent, "hi")
+    shown = run_command(agent, "/usage").text
+    assert "Context window: 200,000 tokens  (made up: it's the fake provider)" in shown
+    margin = 20_000
+    budget = 200_000 - agent.max_tokens - margin
+    assert f"Compacts at: {budget:,} tokens: the window, less {agent.max_tokens:,} for a reply and 20,000 (10%)" in shown
+
+    agent.context_cap = 1_000
+    assert "Compacts at: 1,000 tokens, your --context-budget" in run_command(agent, "/usage").text
+    agent.context_cap = 0
+    assert "Compacts: never by itself (--context-budget 0)" in run_command(agent, "/usage").text
+    agent.context_cap = None
+    agent.provider.window = None
+    agent.set_model("other")
+    agent.look_up_context_window()
+    shown = run_command(agent, "/usage").text
+    assert "Context window: not known for other" in shown and "since the window isn't known" in shown
 
 
 def test_resuming_a_session_that_was_killed_mid_turn_ties_it_off(tmp_path):

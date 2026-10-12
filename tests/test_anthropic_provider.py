@@ -215,6 +215,16 @@ def test_effort_levels_come_from_what_the_api_says_the_model_supports():
     assert AnthropicProvider("unknown-shape", client=client).efforts() == []
 
 
+def test_the_context_window_is_what_the_api_reports_and_unknown_if_it_reports_none():
+    from types import SimpleNamespace as NS
+
+    known = {"big": NS(max_input_tokens=1_000_000), "silent": NS()}
+    client = NS(models=NS(retrieve=lambda model: known[model]))
+    assert AnthropicProvider("big", client=client).context_window() == 1_000_000
+    assert AnthropicProvider("silent", client=client).context_window() is None
+    assert "Anthropic API" in AnthropicProvider.context_window_source
+
+
 def test_documented_default_effort_is_given_for_known_models_and_never_guessed():
     assert AnthropicProvider("claude-opus-5-5", client=object()).default_effort() == "medium"
     assert AnthropicProvider("claude-sonnet-5-5", client=object()).default_effort() == "high"

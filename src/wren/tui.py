@@ -375,6 +375,7 @@ class WrenApp(App):
         # For the footer. The stats count from now: "since Wren opened".
         self.stats = RunStats()
         self.git: GitState | None = None
+        self._windows_asked: set[tuple[str, str]] = set()  # see _maybe_look_up_window
         # A session file exists before the first message only if it was
         # resumed (`wren --resume ID`): a new conversation gets one when it starts.
         self.resumed = sessions is not None and sessions.current_id is not None
@@ -420,6 +421,7 @@ class WrenApp(App):
         self._show_status()
         self.refresh_git()
         self._maybe_look_up_rate()
+        self._maybe_look_up_window()
         self.prompt.focus()
         await self._draw_conversation()
 
@@ -854,6 +856,8 @@ class WrenApp(App):
         self._frame += 1
         if self.busy or self._frame % 10 == 0:
             self._show_status()
+        if not self.busy and self._frame % 10 == 0:
+            self._maybe_look_up_window()  # the model may have changed: /model, /provider, /resume
         if not self.busy and self._frame % GIT_EVERY == 0:
             self.refresh_git()  # you may have switched branch or committed in another terminal
             self._maybe_look_up_rate()  # Wren may have been open past midnight
@@ -887,6 +891,23 @@ class WrenApp(App):
         call. The footer reads the new rate at its next redraw."""
         assert self.exchange is not None
         self.exchange.look_up()
+
+    def _maybe_look_up_window(self) -> None:
+        # The agent looks the window up itself at the start of a turn. Doing
+        # it here as well means the context bar is right before then: at
+        # startup, after a resume, after a change of model. Once per model,
+        # claimed here on the app thread so two ticks can't start two
+        # lookups; if one fails, the next turn tries again.
+        model = (self.agent.provider.name, self.agent.provider.model)
+        if not self.agent.context_window_checked and model not in self._windows_asked:
+            self._windows_asked.add(model)
+            self.look_up_window()
+
+    @work(thread=True, exclusive=True, group="window")
+    def look_up_window(self) -> None:
+        """Find out the model's context window. ON A WORKER THREAD: for some
+        providers it's a network call. The footer reads it at its next redraw."""
+        self.agent.look_up_context_window()
 
 
 # --- Small helpers ------------------------------------------------------------------

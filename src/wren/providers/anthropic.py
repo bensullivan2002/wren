@@ -116,6 +116,13 @@ class AnthropicProvider:
     def prices(self) -> Prices | None:
         return DOCUMENTED_PRICES.get(self.model)
 
+    def context_window(self) -> int | None:
+        # Reported by the API for each model, so there's no table here to go
+        # stale. (The agent asks once per model, not on every request.)
+        return getattr(self.client.models.retrieve(self.model), "max_input_tokens", None)
+
+    context_window_source = "as reported by the Anthropic API"
+
     def models(self) -> list[str]:
         # Asked of the API, not written down here: a list in the code would
         # be out of date within months. The SDK pages through the results;

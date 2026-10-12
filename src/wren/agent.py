@@ -20,9 +20,11 @@ A third fact arrives with long conversations.
 
 3. Because everything is re-sent every time, the conversation's size is a
    running cost: a file read once is paid for again on every later call.
-   So the agent keeps track of how big the conversation has become, and
-   when it passes a budget, asks the model to summarise it and carries on
-   from the summary. That's compaction: see `compact`.
+   And it can't grow for ever: each model has a context window, the most
+   it can take in one request. So the agent keeps track of how big the
+   conversation has become, and when it nears the window (the budget: see
+   `context_budget`), asks the model to summarise it and carries on from
+   the summary. That's compaction: see `compact`.
 
 The agent knows nothing about terminals. It yields events, and whoever is
 driving it (a front end) decides how to show them.
@@ -30,11 +32,12 @@ driving it (a front end) decides how to show them.
 
 from __future__ import annotations
 
+import itertools
 from contextlib import closing
 from dataclasses import dataclass, field
 from typing import Callable, Generator, Iterator, Union
 
-from wren.config import DEFAULT_MAX_STEPS
+from wren.config import COMPACTION_MARGIN, DEFAULT_MAX_STEPS
 from wren.messages import (
     Completed,
     Message,
@@ -129,7 +132,7 @@ class Agent:
         max_tokens: int,
         tools: ToolRegistry | None = None,
         max_steps: int = DEFAULT_MAX_STEPS,
-        context_budget: int = 0,
+        context_cap: int | None = None,
     ) -> None:
         self.provider = provider
         # The system prompt can be given as a function that builds it. Then
@@ -140,8 +143,16 @@ class Agent:
         self.system_prompt: str = system_prompt() if callable(system_prompt) else system_prompt
         self.max_tokens = max_tokens
         self.tools = tools if tools is not None else ToolRegistry()
-        self.max_steps = max_steps
-        self.context_budget = context_budget  # compact when the conversation passes this; 0 = never
+        self.max_steps = max_steps  # the most model calls in one turn; 0 = no limit
+        # The user's cap on the budget (--context-budget). None: no cap; 0:
+        # never compact automatically. See `context_budget`.
+        self.context_cap = context_cap
+        # The current model's context window once the provider has been asked:
+        # ((provider name, model), window or None if it doesn't know). Kept
+        # with the model it's for, so a switch of model (however it happens)
+        # can't leave the old model's window in place. One tuple, assigned in
+        # one go, because a front end's worker thread may set it.
+        self._window: tuple[tuple[str, str], int | None] | None = None
         self.messages: list[Message] = []
         self.usage = Usage()  # running total for this conversation
         # How big the conversation is now, in tokens: what the next request
@@ -173,8 +184,9 @@ class Agent:
         """
         # Between turns is the one moment the history is whole and nothing is
         # in flight, so that's when we tidy it. (Within a long turn it can
-        # still grow past the budget. That's fine: the budget is about cost,
-        # and the model's real limit is several times higher.)
+        # still grow past the budget: that's what the budget's margin below
+        # the window is for.)
+        self.look_up_context_window()
         if self.context_budget and self.context_tokens >= self.context_budget:
             yield from self.compact(automatic=True)
 
@@ -245,7 +257,10 @@ class Agent:
 
     def _loop(self) -> Generator[AgentEvent, None, TurnFinished]:
         turn_usage = Usage()
-        for step in range(1, self.max_steps + 1):
+        # With no limit, count 1, 2, 3... for ever: the turn ends when a reply
+        # asks for no tools, or when you stop it (Escape, Ctrl-C).
+        steps = range(1, self.max_steps + 1) if self.max_steps else itertools.count(1)
+        for step in steps:
             completed = yield from self._call_model()
             turn_usage += completed.usage
             self.usage += completed.usage
@@ -320,6 +335,58 @@ class Agent:
         return self._results
 
     # --- Compaction -----------------------------------------------------------
+
+    def look_up_context_window(self) -> None:
+        """Ask the provider for the current model's context window, unless
+        we already have. It may be a network call, so a front end with a
+        screen to keep moving calls this from a worker thread; `run_turn`
+        calls it too. Never raises: if the provider can't be reached, the
+        window stays unknown and the next turn asks again."""
+        model = (self.provider.name, self.provider.model)
+        if self._window is not None and self._window[0] == model:
+            return
+        try:
+            window = self.provider.context_window()
+        except Exception:
+            return  # unknown for now; no automatic compaction until it's known
+        if (self.provider.name, self.provider.model) == model:  # not switched while we asked
+            self._window = (model, window)
+
+    @property
+    def context_window_checked(self) -> bool:
+        """Whether the provider has been asked about the current model's
+        window (whether or not it knew)."""
+        return self._window is not None and self._window[0] == (self.provider.name, self.provider.model)
+
+    @property
+    def context_window(self) -> int | None:
+        """The current model's context window, or None if it isn't known
+        (yet, or at all)."""
+        found = self._window  # read once: a worker thread may replace it meanwhile
+        if found is None or found[0] != (self.provider.name, self.provider.model):
+            return None
+        return found[1]
+
+    @property
+    def context_budget(self) -> int:
+        """How big the conversation may grow before it's compacted, in
+        tokens. 0 means it isn't compacted automatically.
+
+        Just short of the model's window: the window, less room for a reply,
+        less a margin (config.COMPACTION_MARGIN explains both). With a
+        200,000-token window and 32,000-token replies, that's 148,000.
+        The user's cap, if set, can only bring it lower. If the window isn't
+        known, only the cap applies; with neither, it's 0.
+        """
+        if self.context_cap == 0:
+            return 0
+        budgets = []
+        window = self.context_window
+        if window:
+            budgets.append(window - self.max_tokens - int(window * COMPACTION_MARGIN))
+        if self.context_cap:
+            budgets.append(self.context_cap)
+        return min(budgets, default=0)
 
     def compact(self, automatic: bool = False) -> Iterator[AgentEvent]:
         """Replace the conversation with the model's own summary of it.

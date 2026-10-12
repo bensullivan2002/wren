@@ -43,7 +43,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--provider", choices=PROVIDERS, help="model provider (env: WREN_PROVIDER)")
     parser.add_argument("--model", help="model name, e.g. claude-opus-5-5 (env: WREN_MODEL)")
     parser.add_argument("--max-tokens", type=int, help="longest reply allowed (env: WREN_MAX_TOKENS)")
-    parser.add_argument("--max-steps", type=int, help="most model calls in one turn (env: WREN_MAX_STEPS)")
+    parser.add_argument(
+        "--max-steps", type=int, help="most model calls in one turn; 0 or unset = no limit (env: WREN_MAX_STEPS)"
+    )
     parser.add_argument(
         "--effort",
         help="how hard the model works on each reply, e.g. low, medium, high; "
@@ -52,7 +54,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--context-budget",
         type=int,
-        help="compact the conversation once it passes this many tokens; 0 = never (env: WREN_CONTEXT_BUDGET)",
+        help="compact the conversation by this many tokens at the latest (by default, Wren compacts just short "
+        "of the model's context window); 0 = never compact automatically (env: WREN_CONTEXT_BUDGET)",
     )
     parser.add_argument(
         "--resume",
@@ -104,7 +107,9 @@ def main(argv: list[str] | None = None) -> int:
         memory.load()
         return build_system_prompt(root, memory=memory.render())
 
-    agent = Agent(provider, system_prompt, config.max_tokens, tools, config.max_steps, config.context_budget)
+    agent = Agent(
+        provider, system_prompt, config.max_tokens, tools, config.max_steps, context_cap=config.context_budget
+    )
 
     # From here on, every message is written to a session file as it's added.
     sessions = SessionStore(root, provider.name, provider.model, effort=provider.effort)

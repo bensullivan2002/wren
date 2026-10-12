@@ -129,6 +129,31 @@ A single long turn can run past the budget before the next check. That's accepta
 
 The summarising call re-sends the same system prompt and tools, with the request on the end. Because that beginning matches the previous request, the whole conversation is read **from the cache**: summarising 150,000 tokens costs about what 15,000 would. Idea 2 paying for Idea 4.
 
+### Follow-up: compacting near the model's window
+
+The fixed 150,000 suited a 200,000-token model. Today's models hold a million tokens or more, so Wren was summarising (and losing detail) when only 15% of the window was used. Now the budget is worked out from the model's own window (D99):
+
+```python
+window - max_tokens - int(window * COMPACTION_MARGIN)   # 1,050,000 - 32,000 - 105,000 = 913,000
+```
+
+Each part has a job. `max_tokens` leaves room for the model's next reply. The 10% margin is for the case above: a single long turn that grows the conversation before the next check. `--context-budget` is now a cap that can only make compaction earlier, for example to keep requests cheaper.
+
+The interesting part is where the window comes from, because the two providers answer differently:
+
+| Question | Anthropic | OpenAI |
+| --- | --- | --- |
+| How big is this model's window? | reported (`max_input_tokens`) | **not reported**: copied from its model pages, with the date |
+
+The same pattern as effort levels in step 8: ask where the API can answer, use a dated table where it can't, and say "unknown" rather than guess. An unknown window means no automatic compaction, and the footer says so instead of drawing a bar against a made-up number. `/usage` shows the window with its source:
+
+```text
+Context window: 1,050,000 tokens  (per OpenAI's model pages, …, checked 12 October 2026)
+Compacts at: 913,000 tokens: the window, less 32,000 for a reply and 105,000 (10%) for a long turn to grow into
+```
+
+Asking Anthropic is a network call, and the footer redraws ten times a second, so the footer must never make it. The agent asks once per model and keeps the answer; the app asks from a worker thread, and the turn asks again if that failed. The trade-off is cost: a conversation can now grow much larger before it's summarised, and every request re-sends all of it.
+
 ## Idea 7: the sealed envelope (a bug fix)
 
 Current Claude models think before they answer, and it can't be switched off. The API returns that thinking as blocks alongside the text, often with the content empty or encrypted, and expects them **sent back unchanged** on the next request. The model's later steps build on that reasoning, and the API may reject a conversation whose reasoning has been stripped or altered.

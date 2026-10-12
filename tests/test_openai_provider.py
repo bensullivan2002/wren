@@ -272,6 +272,15 @@ def test_documented_default_effort_is_given_where_known_and_never_guessed():
     assert "documentation" in OpenAIProvider.default_effort_source
 
 
+def test_the_context_window_comes_from_the_documented_table_and_is_never_guessed():
+    from wren.providers.openai import DOCUMENTED_CONTEXT_WINDOWS, DOCUMENTED_PRICES
+
+    assert OpenAIProvider("gpt-6.1-sol", client=object()).context_window() == 1_050_000
+    assert OpenAIProvider("gpt-some-future-model", client=object()).context_window() is None
+    assert set(DOCUMENTED_PRICES) <= set(DOCUMENTED_CONTEXT_WINDOWS)  # every priced model has a window
+    assert "checked" in OpenAIProvider.context_window_source
+
+
 # --- Through the agent: nothing else in Wren needed to change ------------------------------
 
 

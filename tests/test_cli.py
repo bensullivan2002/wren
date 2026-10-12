@@ -192,6 +192,9 @@ def test_config_precedence_flag_then_env_then_default():
     assert Config.load(model="from-flag", env=env).model == "from-flag"
     assert Config.load(env=env).model == "from-env"
     assert Config.load(env=env).max_steps == 7
+    # No step limit unless one is asked for; 0 is a real value ("no limit") from a flag.
+    assert Config.load(env={}).max_steps == 0
+    assert Config.load(max_steps=0, env=env).max_steps == 0
     assert Config.load(env={}).model == DEFAULT_MODEL
     # The default model follows the provider: a Claude name means nothing to OpenAI.
     assert Config.load(provider="openai", env={}).model == "gpt-6.1-sol"
@@ -199,7 +202,9 @@ def test_config_precedence_flag_then_env_then_default():
     # 0 is a real value for the budget ("never compact"), from a flag or the environment.
     assert Config.load(context_budget=0, env={"WREN_CONTEXT_BUDGET": "5"}).context_budget == 0
     assert Config.load(env={"WREN_CONTEXT_BUDGET": "0"}).context_budget == 0
-    assert Config.load(env={}).context_budget == 150_000
+    assert Config.load(env={"WREN_CONTEXT_BUDGET": "90000"}).context_budget == 90_000
+    # Unset: no cap, so the budget comes from the model's window (Agent.context_budget).
+    assert Config.load(env={}).context_budget is None
     assert Config.load(env={"WREN_EFFORT": "low"}).effort == "low"
     assert Config.load(effort="high", env={"WREN_EFFORT": "low"}).effort == "high"
 

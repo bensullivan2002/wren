@@ -145,7 +145,7 @@ Project files are looked for in the working directory and each folder above it, 
 Every request re-sends the whole conversation, so a long session costs more with each step. Wren does two things about it:
 
 - **Caching.** The part of each request that was sent before is billed at about a tenth of the price. Nothing to configure. `/usage` shows how much was read from the cache.
-- **Compaction.** When the conversation passes the context budget (150,000 tokens by default), Wren asks the model to summarise it and carries on from the summary. The footer's context bar shows how close you are (`context: ▰▱▱▱▱▱▱▱▱▱ 12% · 18k/150k`). Run `/compact` to do it at a moment you choose, such as after finishing a task. A summary loses detail: Wren may need to re-read files afterwards.
+- **Compaction.** When the conversation nears the model's context window, Wren asks the model to summarise it and carries on from the summary. It compacts at the window less room for one reply (`--max-tokens`) and a 10% margin: for a 1,050,000-token window and 32,000-token replies, at 913,000. The footer's context bar shows how close you are (`context: ▰▱▱▱▱▱▱▱▱▱ 2% · 18k/913k`), and `/usage` shows the window and where the figure came from: the Anthropic API reports it; for OpenAI it's from OpenAI's model pages. If a model's window isn't known, Wren doesn't compact by itself. Run `/compact` to do it at a moment you choose, such as after finishing a task. A summary loses detail: Wren may need to re-read files afterwards.
 
 ### Tools
 
@@ -169,13 +169,13 @@ Each setting can come from a flag, an environment variable, or the default, in t
 | `--provider`   | `WREN_PROVIDER`      | `anthropic` (or `openai`, `fake`) |
 | `--model`      | `WREN_MODEL`         | your saved default, else the provider's |
 | `--max-tokens` | `WREN_MAX_TOKENS`    | `32000`             |
-| `--max-steps`  | `WREN_MAX_STEPS`     | `25`                |
-| `--context-budget` | `WREN_CONTEXT_BUDGET` | `150000`       |
+| `--max-steps`  | `WREN_MAX_STEPS`     | no limit            |
+| `--context-budget` | `WREN_CONTEXT_BUDGET` | none: just short of the model's window |
 | `--effort`     | `WREN_EFFORT`        | your saved default, else `xhigh` (for the default model); another model: its own |
 | `--resume [ID]` |                     |                     |
 | `--plain`      |                      | off                 |
 
-`--max-tokens` limits one reply, including the model's private thinking. `--max-steps` limits how many times Wren calls the model in one turn before it stops and checks in with you. `--context-budget` is how large the conversation may grow before Wren compacts it; 0 means never.
+`--max-tokens` limits one reply, including the model's private thinking. `--max-steps` limits how many times Wren calls the model in one turn before it stops and checks in with you; by default there's no limit (0 means the same), and Escape stops a turn at any point. `--context-budget` caps how large the conversation may grow before Wren compacts it, for example to keep long conversations cheaper. It can only bring compaction earlier than the window would; 0 means never compact by itself (`/compact` still works).
 
 ## How it works
 

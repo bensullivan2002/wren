@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from wren.agent import Agent, Compacted
-from wren.config import API_KEYS, default_choice
+from wren.config import API_KEYS, COMPACTION_MARGIN, default_choice
 from wren.memory import Memory
 from wren.settings import UserDefaults
 from wren.sessions import SavedSession, SessionError, SessionStore
@@ -409,6 +409,7 @@ def _usage(agent: Agent) -> str:
         f"This conversation: {u.sent_tokens:,} tokens in · {u.output_tokens:,} out",
         f"  of the input, {u.cache_read_tokens:,} were read from the cache (billed at a fraction of the price)",
         f"Conversation now: {context_meter(agent)}",
+        *_budget_explained(agent),
         "",
         f"Model asked for: {agent.provider.model}",
         # This line is the provider's word, not ours. If /model is really
@@ -424,16 +425,53 @@ def _usage(agent: Agent) -> str:
 def context_meter(agent: Agent) -> str:
     """How big the conversation is, against the budget: "12,400 tokens, 8% of 150,000"."""
     size = f"{agent.context_tokens:,} tokens"
-    if not agent.context_budget:
+    budget = agent.context_budget  # read once: a worker may look up the window meanwhile
+    if not budget:
         return size
-    return f"{size}, {budget_used(agent)} of the {agent.context_budget:,} budget"
+    return f"{size}, {budget_used(agent, budget)} of the {budget:,} budget"
 
 
-def budget_used(agent: Agent) -> str:
-    """How much of the context budget is used: "12%". A conversation that
-    exists but rounds to nothing shows "<1%", because "0%" reads as "empty"
-    or "not working"."""
-    percent = round(100 * agent.context_tokens / agent.context_budget)
+def no_budget_reason(agent: Agent) -> str:
+    """Why there's no budget to measure the conversation against, in a few words."""
+    if agent.context_cap == 0:
+        return "compaction off"
+    if agent.context_window_checked:
+        return "window unknown: never compacted"
+    return "window not looked up yet"
+
+
+def _budget_explained(agent: Agent) -> list[str]:
+    """For /usage: the model's window, where that number came from, and
+    how the budget follows from it."""
+    # Budget before window: a window found meanwhile can't then be missing below.
+    budget, window, cap = agent.context_budget, agent.context_window, agent.context_cap
+    source = getattr(agent.provider, "context_window_source", "")
+    if window:
+        shown = f"Context window: {window:,} tokens" + (f"  ({source})" if source else "")
+    elif agent.context_window_checked:
+        shown = f"Context window: not known for {agent.provider.model}"
+    else:
+        shown = "Context window: not looked up yet (Wren asks at the start of the next turn)"
+    if cap == 0:
+        why = "Compacts: never by itself (--context-budget 0); /compact still works"
+    elif not budget:
+        why = "Compacts: never by itself, since the window isn't known; /compact still works"
+    elif budget == cap:
+        why = f"Compacts at: {budget:,} tokens, your --context-budget"
+    else:
+        margin = int(window * COMPACTION_MARGIN)
+        why = (
+            f"Compacts at: {budget:,} tokens: the window, less {agent.max_tokens:,} for a reply "
+            f"and {margin:,} ({COMPACTION_MARGIN:.0%}) for a long turn to grow into"
+        )
+    return [shown, why]
+
+
+def budget_used(agent: Agent, budget: int) -> str:
+    """How much of the context budget (non-zero, read once by the caller)
+    is used: "12%". A conversation that exists but rounds to nothing shows
+    "<1%", because "0%" reads as "empty" or "not working"."""
+    percent = round(100 * agent.context_tokens / budget)
     return "<1%" if percent == 0 and agent.context_tokens else f"{percent}%"
 
 

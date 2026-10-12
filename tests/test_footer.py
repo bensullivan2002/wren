@@ -360,7 +360,7 @@ def test_a_reply_from_another_model_is_noticed():
 
 def make_agent(tmp_path) -> Agent:
     tools = ToolRegistry(default_tools(), root=tmp_path, permissions=Permissions())
-    return Agent(FakeProvider(), "sys", 100, tools, context_budget=150_000)
+    return Agent(FakeProvider(), "sys", 100, tools, context_cap=150_000)
 
 
 def rows(agent, stats, state=None, width=300) -> list[str]:
@@ -388,6 +388,20 @@ def test_the_idle_footer_shows_the_settings_and_the_keys(tmp_path):
     assert shown[5] == wren.footer.KEY_HINTS
 
 
+def test_with_no_budget_the_context_row_says_why(tmp_path):
+    agent = make_agent(tmp_path)
+    agent.context_cap, agent.context_tokens = None, 42_000
+    assert "context: 42k (window not looked up yet)" in rows(agent, RunStats(Clock()))[1]
+    agent.look_up_context_window()
+    assert "context: ▰" in rows(agent, RunStats(Clock()))[1] and "/180k" in rows(agent, RunStats(Clock()))[1]
+    agent.provider.window = None
+    agent.set_model("demo-fast")
+    agent.look_up_context_window()
+    assert "context: 42k (window unknown: never compacted)" in rows(agent, RunStats(Clock()))[1]
+    agent.context_cap = 0
+    assert "context: 42k (compaction off)" in rows(agent, RunStats(Clock()))[1]
+
+
 def test_a_narrow_terminal_keeps_every_row_on_one_line(tmp_path):
     agent = make_agent(tmp_path)
     for width in (100, 60, 30):
@@ -402,9 +416,11 @@ def test_the_last_row_says_what_wren_is_doing(tmp_path):
     assert "working · esc to stop" in rows(agent, stats, busy)[5]  # busy, but not a turn: /compact
 
     stats.start_turn()
-    assert "step 1/25 · waiting for the model · esc to stop" in rows(agent, stats, busy)[5]
+    assert "step 1 · waiting for the model · esc to stop" in rows(agent, stats, busy)[5]  # no step limit by default
     stats.record(completed(Usage(10)), provider)
     stats.record(ToolStarted(call("read_file", path="a.txt")), provider)
+    assert "step 1 · running read_file(path='a.txt') · esc to stop" in rows(agent, stats, busy)[5]
+    agent.max_steps = 25  # with a limit, the footer shows how close it is
     assert "step 1/25 · running read_file(path='a.txt') · esc to stop" in rows(agent, stats, busy)[5]
     assert "stopping…" in rows(agent, stats, AppState(busy=True, stopping=True))[5]
 

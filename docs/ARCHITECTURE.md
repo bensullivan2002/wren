@@ -73,7 +73,7 @@ One Pydantic `Input` model per tool is the single source for the JSON Schema sen
 What happens when you type *"rename helper to assist in util.py"* and press Enter:
 
 1. **The front end** calls `agent.run_turn(text)` and shows each event it yields. (In the app, that call is on a worker thread: see "The full-screen app" below.)
-2. **`Agent.run_turn`** first checks the conversation's size. If it's over the context budget, it compacts (see "Context" below). Then it appends your message.
+2. **`Agent.run_turn`** first makes sure it knows the model's context window, then checks the conversation's size. If it's over the context budget, it compacts (see "Context" below). Then it appends your message.
 3. **The loop begins.** `_call_model` sends the system prompt, the **entire** history and the **tool specs** to the provider.
 4. **The provider** translates to Anthropic's format, marks the request for caching, and streams the reply. Text arrives as `TextDelta` events, which the REPL prints immediately. One `Completed` event ends the reply, carrying the assembled message, the stop reason and the token counts.
 5. **The agent records the conversation's new size** from the reply's token counts, and **appends the reply** to the history, including any reasoning blocks, untouched. Does it contain tool requests?
@@ -87,7 +87,7 @@ What happens when you type *"rename helper to assist in util.py"* and press Ente
    5. calls `tool.run(args, ctx)`, turning any exception into an error result;
    6. caps the output's size.
 7. **All the results go into one user message**, appended to the history, and the loop returns to step 3.
-8. **If the loop reaches `max_steps`,** the agent appends a short assistant note saying it stopped, and yields `TurnFinished(hit_step_limit=True)`.
+8. **If a step limit is set and the loop reaches `max_steps`,** the agent appends a short assistant note saying it stopped, and yields `TurnFinished(hit_step_limit=True)`.
 
 **If the turn is cut short** between steps 2 and 8 (Escape or Ctrl-C, a network error, a bad API key), nothing is deleted. `Agent._close_unfinished_turn` ties off the loose ends: every unanswered tool request gets a result (the real one if the tool finished, otherwise a note that it was cut short or never ran), and a closing assistant note records where and why the turn stopped, after any text that had already streamed.
 
@@ -106,7 +106,7 @@ Memory lives in the system prompt, which compaction doesn't touch, so it survive
 
 ## Providers
 
-A provider turns Wren's neutral history into one vendor's request, and that vendor's reply back into neutral types. The `Provider` protocol is: `name`, `model`, `effort`, `stream(...)`, `models()`, `efforts()`, `default_effort()`.
+A provider turns Wren's neutral history into one vendor's request, and that vendor's reply back into neutral types. The `Provider` protocol is: `name`, `model`, `effort`, `stream(...)`, `models()`, `efforts()`, `default_effort()`, `context_window()`. `context_window()` returns the current model's window in tokens, or None if it isn't known, and may make a network call. The provider's `context_window_source` says where the number came from, so `/usage` can show it.
 
 | | `anthropic` | `openai` | `fake` |
 | --- | --- | --- | --- |
@@ -116,6 +116,7 @@ A provider turns Wren's neutral history into one vendor's request, and that vend
 | Caching | requested with `cache_control` | automatic | none |
 | Tool arguments | a JSON object | a JSON string, parsed on arrival | a dict |
 | Effort levels | asked of the API, per model | every level offered; the API can't be asked | fixed |
+| Context window | asked of the API (`max_input_tokens`), per model | a dated table from OpenAI's model pages; the API can't be asked | 200,000, or none for `demo-large` |
 | Default model and effort | `claude-opus-5-5`, `xhigh` | `gpt-6.1-sol`, `xhigh` | `demo`, none |
 | Key | `ANTHROPIC_API_KEY` | `OPENAI_API_KEY` | none |
 
@@ -166,10 +167,14 @@ Saving happens in one place, the app's model and effort pickers. A `Picker` buil
 
 **Compaction** (`Agent.compact`) makes one model call, the conversation plus `COMPACT_PROMPT`, and then replaces the whole history with two messages: a note that the earlier part was removed, and the model's summary. It runs:
 
-- automatically at the start of a turn, when `context_tokens >= context_budget` (150,000 by default; 0 disables it);
+- automatically at the start of a turn, when `context_tokens >= context_budget`;
 - when the user runs `/compact`.
 
 It changes nothing unless it has a good summary in hand: a provider error, a reply that calls a tool or is empty, a summary cut off by `max_tokens`, or the user stopping it all leave the history as it was. A failed automatic compaction doesn't stop the turn.
+
+**The budget follows the model's window.** `Agent.context_budget` is a property: the window, less `max_tokens` (room for one reply), less `COMPACTION_MARGIN` (10%) of the window, so a turn that grows the conversation a lot still fits. `context_cap` (`--context-budget`) can only lower it, and a cap of 0 turns automatic compaction off. If the window isn't known, only the cap applies; with no cap either, the budget is 0 and Wren never compacts by itself.
+
+The agent asks for the window with `look_up_context_window()`, once per (provider, model), and keeps the answer in `_window`, a single tuple of the key and the window. It's keyed rather than cleared by `set_model`, because the model can change without it: `/resume` sets it directly, and `/provider` swaps the provider. `run_turn` calls the lookup before its size check. The app also calls it from a worker at start-up and within a second of a model change, so the footer can show the bar before the first message. A lookup that fails stores nothing, so the next turn asks again; one that finishes after the model has changed is dropped.
 
 **Reasoning blocks.** A model's private reasoning arrives as blocks in its reply. Wren stores each as a `ReasoningBlock`: the provider's own data, kept in position and sent back unchanged, and opened by nothing but that provider. Compaction keeps only the summary's text, so the new history contains none.
 
@@ -211,6 +216,7 @@ Textual runs an event loop on the main thread: it redraws, reads keys, and calls
 | worker (one per turn) | `run_turn`: the agent's loop, and everything it calls, including tools and `ask_permission` | **no**: it asks the app thread, with `call_from_thread`, and waits |
 | git worker | `refresh_git`: runs `git status` for the footer | **no**: hands the result over with `call_from_thread` |
 | rate worker | `look_up_rate`: fetches the day's exchange rate | **no**: sets one attribute, which the footer reads at its next redraw |
+| window worker | `look_up_window`: asks the provider for the model's context window | **no**: the agent sets one attribute, which the footer reads at its next redraw |
 
 Three objects cross between them: each event (worker to app, in order, one at a time); a `Future` holding the answer to a permission question (app to worker); and a `threading.Event`, the stop flag (app to worker).
 
@@ -218,7 +224,7 @@ The screen is a column: a top-docked logo, a bottom-docked footer, and between t
 
 The theme-coloured bird is a top-docked `Static` outside the transcript, pinned at the top left in new and resumed conversations. Chatting, scrolling, `/clear` and history redraws do not move or recreate it. It is never a model message or session record. The mark is loaded with `importlib.resources` from `wren/wren-terminal.txt`, so installed apps do not depend on the repo's docs or working directory. The branding generator keeps this packaged copy identical to the design asset. Below 20 columns or 30 rows (`LOGO_MIN_WIDTH`, `LOGO_MIN_HEIGHT`), the welcome falls back to `wren`, adapting as the terminal is resized; 30 rows is what the bird, the footer and a full prompt need while leaving the conversation 6 (D96). Plain mode is unchanged.
 
-**The footer** (`FooterRows`) has six fixed rows: settings (model, effort, provider, git branch, folder, session), the context bar against the compaction budget, spending, time, tool calls, and what Wren is doing now. `footer.py` builds them from the agent, the app's `RunStats` and a little app state (busy, git, session); `tui.py` only puts them on screen. A row never wraps: each part has a `keep` score, and `fit` drops the least important parts that don't fit. The footer is redrawn on the app's tick (ten times a second while busy, once a second otherwise), not on every event. Cost comes from each provider's `prices()`, a dated table in US dollars copied from its pricing page, and is shown in pounds at the day's rate from `exchange.py` (in dollars until there is one). The footer is the app's alone; the REPL prints a summary line after each turn instead.
+**The footer** (`FooterRows`) has six fixed rows: settings (model, effort, provider, git branch, folder, session), the context bar against the compaction budget (or, with no budget, the size and why: "compaction off", "window unknown: never compacted", "window not looked up yet"), spending, time, tool calls, and what Wren is doing now. `footer.py` builds them from the agent, the app's `RunStats` and a little app state (busy, git, session); `tui.py` only puts them on screen. A row never wraps: each part has a `keep` score, and `fit` drops the least important parts that don't fit. The footer is redrawn on the app's tick (ten times a second while busy, once a second otherwise), not on every event. Cost comes from each provider's `prices()`, a dated table in US dollars copied from its pricing page, and is shown in pounds at the day's rate from `exchange.py` (in dollars until there is one). The footer is the app's alone; the REPL prints a summary line after each turn instead.
 
 ## Permission scopes
 

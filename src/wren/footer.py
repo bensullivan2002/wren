@@ -6,7 +6,7 @@ to, what it has spent, and what it's doing.
     cost: £2.71 · burn: £0.12/min │ in: 52k · out: 48k · cache read: 1.1M · cache write: 61k · thinking: 12k
     session: 23:10 · turns: 7 │ this turn: 0:42 · tokens/turn: 38k (avg 31k) │ first word: 1.8s
     tool calls: 24 · read_file 12 · shell 5 · search 4 · edit_file 3 │ files changed: 3 · tool errors: 1
-    ⠹ step 4/25 · running edit_file(path='tui.py', …) · esc to stop
+    ⠹ step 4 · running edit_file(path='tui.py', …) · esc to stop
 
 This module builds those rows; tui.py only puts them on screen. Kept apart
 so they can be tested without running the app, and so tui.py stays about
@@ -39,7 +39,7 @@ from rich.text import Text
 
 from wren import __version__
 from wren.agent import Agent
-from wren.commands import budget_used, format_call, shorten
+from wren.commands import budget_used, format_call, no_budget_reason, shorten
 from wren.stats import RunStats
 
 FOOTER_ROWS = 6
@@ -115,11 +115,12 @@ def _settings(agent: Agent, stats: RunStats, state: AppState) -> list[list[Part]
 
 
 def _context(agent: Agent, stats: RunStats, state: AppState) -> list[list[Part]]:
-    if agent.context_budget:
-        meter = Text.assemble(("context: ", "dim"), bar(agent.context_tokens / agent.context_budget), " ")
-        meter.append(f"{budget_used(agent)} · {tokens(agent.context_tokens)}/{tokens(agent.context_budget)}")
+    budget = agent.context_budget  # read once: it's worked out from the model's window
+    if budget:
+        meter = Text.assemble(("context: ", "dim"), bar(agent.context_tokens / budget), " ")
+        meter.append(f"{budget_used(agent, budget)} · {tokens(agent.context_tokens)}/{tokens(budget)}")
     else:
-        meter = kv("context", f"{tokens(agent.context_tokens)} (no budget: never compacted)")
+        meter = kv("context", f"{tokens(agent.context_tokens)} ({no_budget_reason(agent)})")
     hit = stats.cache_hit()
     allowed = len(agent.tools.permissions.always)
     memory = "off" if state.memory_files is None else str(state.memory_files)
@@ -204,9 +205,10 @@ def _activity(agent: Agent, stats: RunStats, state: AppState) -> list[list[Part]
         doing = Text("running " + shorten(format_call(stats.running_tool), 60))
     else:
         doing = Text("waiting for the model")
+    step = f"step {stats.step}/{agent.max_steps}" if agent.max_steps else f"step {stats.step}"  # no limit: no "/n"
     return [
         [
-            Part(spinner + Text(f"step {stats.step}/{agent.max_steps}"), 9),
+            Part(spinner + Text(step), 9),
             Part(doing, 7),
             Part(Text("esc to stop", style="dim"), 8),
         ]

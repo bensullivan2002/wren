@@ -87,6 +87,14 @@ Two judgment calls in those lines:
 - **We check for tool requests, not just `stop_reason`.** A reply cut off by the length limit has `stop_reason: "max_tokens"`, but can still contain a half-written tool request. Since every request must get a result, we look at the content itself. (A half-written request usually fails validation, which is fine: the model sees the error and tries again.)
 - **There's a step limit** (`--max-steps`, default 25). A confused model could loop forever, spending your money. When the limit hits, Wren stops and says so; you can reply "continue". More on how it stops cleanly in Idea 7.
 
+### Follow-up: no step limit by default
+
+Since step 8 there's no limit unless you set one (D98). Escape stops a runaway turn at any point, which is the job the limit was standing in for, and a fixed 25 also stopped long tasks part-way through. `--max-steps N` still works, and 0 means no limit. The loop picks its counter accordingly:
+
+```python
+steps = range(1, self.max_steps + 1) if self.max_steps else itertools.count(1)
+```
+
 ## Idea 3: a tool's description is a prompt
 
 Look at what the model actually receives about a tool: `/tools read_file` shows you, exactly. It's a name, a paragraph of English and a JSON Schema. **That's all the model ever knows about it.** It never sees the Python.

@@ -114,6 +114,25 @@ DOCUMENTED_PRICES: dict[str, Prices] = {
     "gpt-5.4": _usd("2.50", "0.25", "2.50", "15", long_prompt_over=LONG_PROMPT),
 }
 
+# Each model's context window: the most tokens one request may hold, its
+# reply included. OpenAI's API doesn't report it (a model there is just an
+# id, a date and an owner), so these are copied from each model's page in the
+# docs and can go stale: a model that isn't listed has its window shown as
+# unknown, never guessed. Every page also gives 128,000 max output tokens.
+CONTEXT_WINDOW_SOURCE = "per OpenAI's model pages, https://developers.openai.com/api/docs/models, checked 12 October 2026"
+DOCUMENTED_CONTEXT_WINDOWS: dict[str, int] = {
+    "gpt-6-astra": 1_050_000,
+    "gpt-6.1-sol": 1_050_000,
+    "gpt-6-sol": 1_050_000,
+    "gpt-6-luna": 1_050_000,
+    "gpt-5.6-sol": 1_050_000,
+    "gpt-5.6-terra": 1_050_000,
+    "gpt-5.6-luna": 1_050_000,
+    "gpt-5.6": 1_050_000,
+    "gpt-5.5": 1_050_000,
+    "gpt-5.4": 1_050_000,
+}
+
 # `models.list()` returns everything on the account: image, speech and
 # embedding models too. These fragments mark the ones that can't hold a
 # conversation with tools, so the picker can leave them out.
@@ -147,6 +166,11 @@ class OpenAIProvider:
 
     def prices(self) -> Prices | None:
         return DOCUMENTED_PRICES.get(self.model)
+
+    def context_window(self) -> int | None:
+        return DOCUMENTED_CONTEXT_WINDOWS.get(self.model)
+
+    context_window_source = CONTEXT_WINDOW_SOURCE
 
     def stream(
         self,

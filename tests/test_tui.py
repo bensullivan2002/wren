@@ -336,7 +336,7 @@ async def test_the_footer_follows_a_turn_as_it_happens(tmp_path):
         # The footer catches up on its next tick, a tenth of a second at most.
         await until(pilot, lambda: "running write_file(" in footer_text(app), "the footer to show the tool")
         shown = footer_text(app)
-        assert "step 1/25 · running write_file(" in shown and "esc to stop" in shown
+        assert "step 1 · running write_file(" in shown and "esc to stop" in shown
         assert "this turn: " in shown and "turns: 1" in shown
 
         await pilot.press("y")
@@ -557,7 +557,7 @@ async def test_slash_commands_that_change_things_leave_a_note_and_clear_empties_
 
 async def test_compact_runs_in_the_background_and_reports_what_it_saved(tmp_path):
     app = make_app(tmp_path)
-    app.agent.context_budget = 100_000
+    app.agent.context_cap = 100_000
     async with app.run_test() as pilot:
         await say(app, pilot, "hello")
         await finished(app, pilot)

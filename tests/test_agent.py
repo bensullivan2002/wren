@@ -146,6 +146,18 @@ def test_the_step_limit_stops_a_runaway_loop_and_leaves_valid_history():
     assert history_problems(agent.messages) == []
 
 
+def test_with_no_step_limit_a_turn_runs_until_the_model_is_done():
+    # 30 tool calls: more than the old default limit of 25.
+    long_job = [asks((f"t{i}", "shout", {"text": "again"})) for i in range(30)] + ["All done."]
+    agent, provider = make_agent(long_job, max_steps=0)
+    events = run(agent, "go")
+
+    assert len(provider.calls) == 31
+    assert events[-1].steps == 31 and not events[-1].hit_step_limit
+    assert agent.messages[-1].text == "All done."
+    assert history_problems(agent.messages) == []
+
+
 def test_an_empty_reply_gets_a_placeholder_so_the_history_stays_valid():
     agent, _ = make_agent([Message("assistant", [])])
     run(agent, "hi")
@@ -332,7 +344,7 @@ def test_the_summary_request_reuses_the_same_prefix_so_it_can_be_cached():
 
 def test_compaction_happens_by_itself_between_turns_once_over_budget():
     agent, provider = make_agent(["a reply", "the summary", "an answer"])
-    agent.context_budget = 10  # tiny, so one turn is enough to pass it
+    agent.context_cap = 10  # tiny, so one turn is enough to pass it
     run(agent, "one")
     events = run(agent, "two")
 
@@ -342,10 +354,91 @@ def test_compaction_happens_by_itself_between_turns_once_over_budget():
     assert history_problems(agent.messages) == []
 
 
-def test_no_budget_means_no_automatic_compaction():
-    agent, provider = make_agent(["a", "b"])  # context_budget defaults to 0
+def test_a_cap_of_zero_means_no_automatic_compaction():
+    agent, provider = make_agent(["a", "b"])
+    provider.window = 1  # far smaller than the conversation...
+    agent.context_cap = 0  # ...but compaction is switched off
     run(agent, "one")
     assert not any(isinstance(e, CompactionStarted) for e in run(agent, "two"))
+    assert agent.context_budget == 0
+
+
+# --- The budget: just short of the model's context window ------------------
+
+
+def test_the_budget_is_the_window_less_room_for_a_reply_and_a_margin():
+    agent, provider = make_agent(["a"])  # max_tokens is 100
+    assert agent.context_window is None and agent.context_budget == 0  # not looked up yet
+    run(agent, "one")  # a turn looks it up first
+    assert agent.context_window == 200_000
+    assert agent.context_budget == 200_000 - 100 - 20_000
+
+
+def test_the_cap_can_only_lower_the_budget():
+    agent, provider = make_agent(["a"])
+    run(agent, "one")
+    agent.context_cap = 50_000
+    assert agent.context_budget == 50_000
+    agent.context_cap = 5_000_000  # past the window: the window still decides
+    assert agent.context_budget == 179_900
+
+
+def test_a_model_whose_window_is_unknown_is_compacted_only_by_a_cap():
+    agent, provider = make_agent(["a", "b", "the summary", "c"])
+    provider.window = None
+    run(agent, "one")
+    assert agent.context_window_checked and agent.context_window is None
+    assert agent.context_budget == 0
+    assert not any(isinstance(e, CompactionStarted) for e in run(agent, "two"))
+    agent.context_cap = 10  # a cap still works without a window
+    assert isinstance(run(agent, "three")[0], CompactionStarted)
+
+
+def test_compaction_happens_once_the_conversation_nears_the_window():
+    agent, provider = make_agent(["a reply", "the summary", "an answer"])
+    provider.window = 2_000  # budget: 2,000 - 100 - 200 = 1,700
+    run(agent, "x" * 8_000)  # about 2,000 tokens, by the fake's count
+    assert agent.context_tokens >= agent.context_budget == 1_700
+    events = run(agent, "two")
+    assert isinstance(events[0], CompactionStarted) and events[0].automatic
+    assert history_problems(agent.messages) == []
+
+
+def test_a_change_of_model_drops_the_old_window_until_the_new_one_is_looked_up():
+    agent, provider = make_agent(["a", "b"])
+    run(agent, "one")
+    agent.set_model("demo-large")  # the fake's model with no known window
+    assert not agent.context_window_checked and agent.context_budget == 0
+    run(agent, "two")
+    assert agent.context_window_checked and agent.context_window is None
+
+
+def test_a_failed_window_lookup_leaves_it_unknown_and_the_next_turn_asks_again():
+    agent, provider = make_agent(["a", "b"])
+    asked = []
+
+    def unreachable():
+        asked.append(1)
+        raise ConnectionError("no network")
+
+    provider.context_window = unreachable
+    run(agent, "one")  # the turn still goes ahead
+    assert not agent.context_window_checked and agent.context_budget == 0
+    del provider.context_window  # back to the real method
+    run(agent, "two")
+    assert len(asked) == 1 and agent.context_window == 200_000
+
+
+def test_an_answer_that_arrives_after_the_model_changed_is_not_kept():
+    agent, provider = make_agent([])
+
+    def slow():
+        provider.model = "demo-large"  # the user switched while the lookup was out
+        return 200_000
+
+    provider.context_window = slow
+    agent.look_up_context_window()
+    assert not agent.context_window_checked and agent.context_budget == 0
 
 
 @pytest.mark.parametrize(
@@ -368,7 +461,7 @@ def test_a_failed_compaction_leaves_the_history_exactly_as_it_was(bad_summary, p
 
 def test_a_failed_automatic_compaction_does_not_stop_the_turn():
     agent, provider = make_agent(["a reply", Message("assistant", [TextBlock(" ")]), "an answer"])
-    agent.context_budget = 10
+    agent.context_cap = 10
     run(agent, "one")
     events = run(agent, "two")
     assert events[1].error and isinstance(events[-1], TurnFinished)
