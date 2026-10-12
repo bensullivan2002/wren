@@ -29,11 +29,13 @@ from __future__ import annotations
 import json
 import re
 import time
+from decimal import Decimal
 from typing import Iterator, Sequence
 
 from wren.messages import (
     Completed,
     Message,
+    Prices,
     StreamEvent,
     TextBlock,
     TextDelta,
@@ -69,6 +71,13 @@ class FakeProvider:
         # "demo-fast" plays the part of a model with no separate effort
         # setting, so both kinds of provider can be tried offline.
         return [] if self.model == "demo-fast" else ["low", "medium", "high"]
+
+    def prices(self) -> Prices | None:
+        # Made-up prices, so the footer's cost can be seen (and tested)
+        # offline. "demo-large" plays a model whose prices aren't known.
+        if self.model == "demo-large":
+            return None
+        return Prices(input=Decimal(3), output=Decimal(15), cache_read=Decimal("0.3"), cache_write=Decimal("3.75"))
 
     def stream(
         self,

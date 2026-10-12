@@ -49,10 +49,8 @@ from textual.message import Message as TextualMessage
 from textual.widget import Widget
 from textual.widgets import Markdown, OptionList, Static, TextArea
 
-from wren import __version__
 from wren.agent import Agent, Compacted, CompactionStarted, ToolFinished, ToolStarted, TurnFinished
 from wren.commands import (
-    budget_used,
     compaction_note,
     default_effort,
     effort_list,
@@ -69,11 +67,14 @@ from wren.commands import (
     switch_model,
     switch_provider,
 )
+from wren.exchange import ExchangeRate
+from wren.footer import FOOTER_ROWS, AppState, GitState, footer_rows, git_state
 from wren.memory import Memory
 from wren.messages import Completed, Message, TextDelta, ToolUseBlock
 from wren.prompts import COMPACTED_NOTE
 from wren.sessions import SessionError, SessionStore
 from wren.settings import UserDefaults
+from wren.stats import RunStats
 from wren.tools import Decision, PermissionRequest, ToolResult
 from wren.tools.files import diff
 
@@ -91,7 +92,11 @@ Escape stops Wren while it's working. Whatever it had already done stays done,
 and stays in the conversation. Ctrl+Q quits.
 Select text with the mouse and press Ctrl+C to copy it."""
 
-SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+GIT_EVERY = 100  # ticks (10 seconds) between looks at the git branch while idle
+# The full bird is 8 rows. With the 6-row footer and a prompt at its 10-line
+# cap, 30 rows leaves 6 for the conversation; below that, the logo is "wren".
+LOGO_MIN_HEIGHT = 30
+LOGO_MIN_WIDTH = 20
 
 
 # --- Widgets: the pieces of the conversation -------------------------------------
@@ -277,6 +282,26 @@ class CommandPanel(VerticalScroll):
         await self.remove_children()
 
 
+class FooterRows(Static):
+    """The rows at the bottom: settings, spending, time, tools, and what
+    Wren is doing. What goes in them is decided in footer.py; this widget
+    asks for them at its current width, and again whenever that changes.
+    (Not called `Footer`: Textual has a widget of that name, for key hints.)"""
+
+    DEFAULT_CSS = f"FooterRows {{ dock: bottom; height: {FOOTER_ROWS}; padding: 0 1; }}"
+
+    def __init__(self, rows) -> None:
+        super().__init__("", id="footer", markup=False)
+        self.rows = rows  # a function: width -> the rows, as Text
+
+    def redraw(self) -> None:
+        width = self.content_size.width or 80  # 0 before the first layout
+        self.update(Text("\n").join(self.rows(width)))
+
+    def on_resize(self) -> None:
+        self.redraw()
+
+
 # --- The app ----------------------------------------------------------------------
 
 
@@ -287,11 +312,9 @@ class WrenApp(App):
     # are colours from the current theme, so this follows light and dark.
     CSS = """
     #logo { dock: top; height: auto; padding: 0 1; color: $accent; text-wrap: nowrap; }
-    #header { height: 1; padding: 0 1; background: $panel; color: $text-muted; text-wrap: nowrap; text-overflow: ellipsis; }
     #body { height: 1fr; }
     #chat { height: 1fr; }
     #transcript { height: 1fr; padding: 0 1; }
-    #status { height: 1; padding: 0 1; color: $text-muted; }
     #prompt { height: auto; max-height: 10; border: round $accent; }
     /* Three voices, told apart by the bar down the left edge:
          you          accent bar, tinted band, bold
@@ -327,9 +350,13 @@ class WrenApp(App):
         notice: str = "",
         choose_session: bool = False,
         defaults: UserDefaults | None = None,
+        exchange: ExchangeRate | None = None,
     ) -> None:
         super().__init__()
         self.agent = agent
+        # The dollar-to-pound rate for the footer's costs; None: show dollars
+        # and never look one up (the tests, so they never touch the network).
+        self.exchange = exchange
         self.memory = memory
         self.sessions = sessions
         self.defaults = defaults  # the saved default model and effort; None: nothing is kept between sessions
@@ -343,7 +370,14 @@ class WrenApp(App):
         self._stream: Any = None  # ...and Textual's helper for appending to it
         self._tool_views: dict[str, ToolCallView] = {}
         self._question: PermissionPrompt | None = None
-        self._frame = 0
+        self._frame = 0  # counts ticks: turns the spinner, and times the git check
+
+        # For the footer. The stats count from now: "since Wren opened".
+        self.stats = RunStats()
+        self.git: GitState | None = None
+        # A session file exists before the first message only if it was
+        # resumed (`wren --resume ID`): a new conversation gets one when it starts.
+        self.resumed = sessions is not None and sessions.current_id is not None
 
         # The two hooks the tools layer offers a front end (see cli.py for
         # the REPL's version of the first).
@@ -352,23 +386,31 @@ class WrenApp(App):
 
     def compose(self) -> ComposeResult:
         """Say what's on screen, top to bottom. Called once, at startup."""
-        # A screen-level widget, outside scrollback and history redraws.
+        # Screen-level widgets, outside scrollback and history redraws: the
+        # logo docked at the top, the footer at the bottom. Docking reserves
+        # their rows first, so a tall prompt can never push the footer off.
         yield Static(self._logo_text(), id="logo", markup=False)
-        yield Static(self._header_text(), id="header", markup=False)
+        yield FooterRows(self._footer_rows)
         # The panel shares only the space left after reserving the pinned
-        # logo, status and prompt, even when the prompt grows to several lines.
+        # logo, footer and prompt, even when the prompt grows to several lines.
         with Vertical(id="body"):
             with Vertical(id="chat"):
                 yield VerticalScroll(id="transcript")
                 yield CommandPanel()
-            yield Static("", id="status", markup=False)
             yield Prompt(id="prompt", placeholder="Ask Wren something, or /help", show_line_numbers=False)
 
-    def _header_text(self) -> str:
-        provider, tools = self.agent.provider, self.agent.tools
-        where = str(tools.context.root).replace(str(Path.home()), "~", 1)
-        effort = f" ({provider.effort} effort)" if provider.effort else ""
-        return f"wren {__version__} · {provider.name} · {provider.model}{effort} · {len(tools)} tools · {where}"
+    def _footer_rows(self, width: int) -> list[Text]:
+        state = AppState(
+            busy=self.busy,
+            stopping=self._stop.is_set(),
+            frame=self._frame,
+            git=self.git,
+            memory_files=len(self.memory.files) if self.memory else None,
+            session_id=self.sessions.current_id if self.sessions else None,
+            resumed=self.resumed,
+            gbp_per_usd=self.exchange.gbp_per_usd if self.exchange else None,
+        )
+        return footer_rows(self.agent, self.stats, state, width)
 
     async def on_mount(self) -> None:
         # "Anchored" means: stay scrolled to the bottom as content is added,
@@ -376,6 +418,8 @@ class WrenApp(App):
         self.transcript.anchor()
         self.set_interval(0.1, self._tick)
         self._show_status()
+        self.refresh_git()
+        self._maybe_look_up_rate()
         self.prompt.focus()
         await self._draw_conversation()
 
@@ -387,7 +431,7 @@ class WrenApp(App):
     def _logo_text(self, size: Size | None = None) -> str:
         # Don't squeeze an eight-row bird into a short or narrow terminal.
         size = self.size if size is None else size
-        if size.width < 20 or size.height < 20:
+        if size.width < LOGO_MIN_WIDTH or size.height < LOGO_MIN_HEIGHT:
             return "wren"
         return TERMINAL_LOGO
 
@@ -406,7 +450,6 @@ class WrenApp(App):
         pending: dict[str, ToolCallView] = {}  # tool calls waiting for the result in the next message
         for message in self.agent.messages:
             await self._draw_message(message, pending)
-        self._show_header()
         self._show_status()
         self.to_the_end()  # a resumed conversation opens at its latest message
         if self.choose_session:
@@ -500,6 +543,7 @@ class WrenApp(App):
             self.to_the_end()  # you've spoken: come back to the present, wherever you'd scrolled to
             self.busy = True
             self._stop.clear()
+            self.stats.start_turn()
             self._show_status()
             self.run_turn(text)
 
@@ -527,6 +571,7 @@ class WrenApp(App):
             await self.pick_session()
         elif result.resumed:
             self.notice = result.text
+            self.resumed = True
             await self._draw_conversation()
         elif result.compact:
             self.busy = True
@@ -542,18 +587,16 @@ class WrenApp(App):
             # (/clear, /remember, /model NAME), or went wrong: a note in
             # the transcript, so there's a record of it where it happened.
             if result.cleared:
+                self.resumed = False  # a new conversation, with a new session file
                 await self._draw_conversation()  # empty now, with memory re-read for the new conversation
             if result.text:
                 await self.note(result.text, "error" if result.is_error else "output")
-        self._show_header()  # /provider, /model NAME and /effort LEVEL change it
+        self._show_status()  # /provider, /model NAME, /effort LEVEL and /clear change what it shows
 
     async def close_panel(self) -> None:
         if self.panel.is_open:
             await self.panel.hide()
             self.prompt.focus()
-
-    def _show_header(self) -> None:
-        self.query_one("#header", Static).update(self._header_text())
 
     # --- A turn, on the worker thread -------------------------------------------
 
@@ -597,7 +640,7 @@ class WrenApp(App):
     async def _provider_chosen(self, name: str) -> None:
         text, ok = switch_provider(self.agent, name, user=self.defaults)
         await self.note(text, "output" if ok else "error")
-        self._show_header()
+        self._show_status()
 
     @work(thread=True, exclusive=True, group="turn")
     def fetch_models(self) -> None:
@@ -619,7 +662,7 @@ class WrenApp(App):
         if remember:  # Enter: the default for every session. Space: this session only.
             text = f"{text} {remember_model(self.agent, self.defaults)}".strip()
         await self.note(text)
-        self._show_header()
+        self._show_status()
 
     @work(thread=True, exclusive=True, group="turn")
     def fetch_efforts(self) -> None:
@@ -644,7 +687,7 @@ class WrenApp(App):
         if remember:
             text = f"{text} {remember_effort(self.agent, self.defaults)}".strip()
         await self.note(text)
-        self._show_header()
+        self._show_status()
 
     async def pick_session(self) -> None:
         saved = [s for s in self.sessions.saved() if s.id != self.sessions.current_id] if self.sessions else []
@@ -660,6 +703,7 @@ class WrenApp(App):
         except (SessionError, ValueError) as e:
             await self.note(f"couldn't resume: {e}", "error")
             return
+        self.resumed = True
         await self._draw_conversation()
 
     async def _open_picker(self, title: str, rows: list, on_choice, saves: bool = False) -> None:
@@ -707,6 +751,11 @@ class WrenApp(App):
     # --- Showing things, on the app thread ----------------------------------------
 
     async def show_event(self, event: Any) -> None:
+        # The footer's numbers first. They're redrawn on the next tick, a
+        # tenth of a second at most, not here: a fast reply sends dozens of
+        # words a second, and the footer doesn't need to be redrawn for each.
+        self.stats.record(event, self.agent.provider)
+
         if isinstance(event, TextDelta):
             if self._reply is None:
                 self._reply = Markdown("", classes="assistant")
@@ -773,7 +822,9 @@ class WrenApp(App):
         elif self._stop.is_set():
             await self.note("[stopped: anything Wren had already done is kept, and it knows where it stopped]")
         self.busy = False
+        self.stats.end_turn()
         self._show_status()
+        self.refresh_git()  # the turn may have changed files, or committed them
         self.prompt.focus()
 
     # --- Keys, status and quitting ---------------------------------------------------
@@ -797,23 +848,45 @@ class WrenApp(App):
         self.action_quit_wren()
 
     def _tick(self) -> None:
-        if self.busy:
-            self._frame += 1
+        """Ten times a second. While Wren works, the footer is redrawn every
+        time, to turn the spinner and count the turn's seconds. Between turns
+        only the session clock moves, so once a second is enough."""
+        self._frame += 1
+        if self.busy or self._frame % 10 == 0:
             self._show_status()
+        if not self.busy and self._frame % GIT_EVERY == 0:
+            self.refresh_git()  # you may have switched branch or committed in another terminal
+            self._maybe_look_up_rate()  # Wren may have been open past midnight
 
     def _show_status(self) -> None:
-        agent = self.agent
-        tokens = f"{agent.usage.sent_tokens:,} in · {agent.usage.output_tokens:,} out"
-        if agent.context_budget:
-            # The meter: how close the conversation is to being compacted.
-            tokens = f"context {budget_used(agent)} · {tokens}"
-        if not self.busy:
-            left = "enter send · ctrl+j new line · /help · ctrl+q quit"
-        elif self._stop.is_set():
-            left = f"{SPINNER[self._frame % len(SPINNER)]} stopping…"
-        else:
-            left = f"{SPINNER[self._frame % len(SPINNER)]} working · esc to stop"
-        self.query_one("#status", Static).update(f"{left}    {tokens}")
+        self.query_one("#footer", FooterRows).redraw()
+
+    @work(thread=True, exclusive=True, group="git")
+    def refresh_git(self) -> None:
+        """Look up the git branch. ON A WORKER THREAD, like a turn: in a big
+        repository `git status` can take long enough to freeze the screen.
+        Its own group, so it runs alongside a turn rather than waiting for it."""
+        found = git_state(self.agent.tools.context.root)
+        try:
+            self.call_from_thread(self._git_found, found)
+        except RuntimeError:  # the app has closed meanwhile
+            pass
+
+    def _git_found(self, found: GitState | None) -> None:
+        self.git = found
+        self._show_status()
+
+    def _maybe_look_up_rate(self) -> None:
+        # Claimed here, on the app thread, so two ticks can't start two lookups.
+        if self.exchange and self.exchange.claim_lookup():
+            self.look_up_rate()
+
+    @work(thread=True, exclusive=True, group="rate")
+    def look_up_rate(self) -> None:
+        """Fetch the day's exchange rate. ON A WORKER THREAD: it's a network
+        call. The footer reads the new rate at its next redraw."""
+        assert self.exchange is not None
+        self.exchange.look_up()
 
 
 # --- Small helpers ------------------------------------------------------------------

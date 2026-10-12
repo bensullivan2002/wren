@@ -31,7 +31,7 @@ driving it (a front end) decides how to show them.
 from __future__ import annotations
 
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Generator, Iterator, Union
 
 from wren.config import DEFAULT_MAX_STEPS
@@ -112,6 +112,10 @@ class Compacted:
     before_tokens: int
     after_tokens: int  # an estimate, until the next model call measures it
     error: str = ""
+    # What the summarising call used. It isn't a reply, so no Completed event
+    # is yielded for it, and this is the only way a front end hears its cost.
+    # Set even when compaction failed: the call was still paid for.
+    usage: Usage = field(default_factory=Usage)
 
 
 AgentEvent = Union[TextDelta, Completed, ToolStarted, ToolFinished, TurnFinished, CompactionStarted, Compacted]
@@ -363,7 +367,8 @@ class Agent:
         except Exception as e:
             if completed is not None and self.journal is not None:
                 self.journal.spent(completed.usage, before)  # it cost something even though it failed
-            yield Compacted(before, before, error=str(e) or type(e).__name__)
+            spent = completed.usage if completed is not None else Usage()
+            yield Compacted(before, before, error=str(e) or type(e).__name__, usage=spent)
             return
 
         # Only the summary's text is kept. Any reasoning that came with it
@@ -376,7 +381,7 @@ class Agent:
         self.context_tokens = completed.usage.output_tokens
         if self.journal is not None:
             self.journal.spent(completed.usage, self.context_tokens)
-        yield Compacted(before, self.context_tokens)
+        yield Compacted(before, self.context_tokens, usage=completed.usage)
 
     # --- Sessions and models -----------------------------------------------------
 

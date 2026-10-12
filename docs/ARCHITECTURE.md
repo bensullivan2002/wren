@@ -39,12 +39,15 @@ Solid arrows are calls; dotted arrows are what comes back, or a callback. One fr
 | **Memory** | `memory.py` | Find and read the memory files (`WREN.md`, `AGENTS.md`); render them for the prompt; append `/remember` notes | The file helpers |
 | **Agent** | `agent.py` | Own the conversation; run the agent loop; keep history valid and truthful; track its size and compact it | A `Provider`, a `ToolRegistry`, the message types |
 | **Messages** | `messages.py` | Provider-neutral types; the history rules (`history_problems`) | Nothing else |
-| **Provider** | `providers/` | Translate to a vendor's API and back; stream the reply; ask for caching; report token use; list its models | The vendor SDK, the message types |
+| **Provider** | `providers/` | Translate to a vendor's API and back; stream the reply; ask for caching; report token use; list its models; know their prices | The vendor SDK, the message types |
 | **Tool registry** | `tools/registry.py` | Look up tools, check arguments, get permission, run, turn failures into error results, cap output | The `Tool` interface, `Permissions` |
 | **Tool base** | `tools/base.py` | What a tool is; turn an `Input` model into a schema and into checked arguments | Pydantic |
 | **Permissions** | `tools/permissions.py` | Remember what's "always" allowed this session; otherwise ask, through a callback | Nothing else |
 | **Tools** | `tools/*.py` | Do one job each; describe themselves to the model, and their effects to the user | The working directory (via `ToolContext`) |
 | **App** | `tui.py` | The full-screen front end (Textual): run each turn on a worker thread, draw events as widgets, ask permission questions, stop on Escape | The `Agent`, the event types, Textual |
+| **Run stats** | `stats.py` | Keep a running account since Wren opened: tokens, cost, turns, times, tool calls. Fed events by the app | The event types, `Provider.prices` |
+| **Footer** | `footer.py` | Build the app's footer rows and fit them to the width; read the git branch | The `Agent`, `RunStats`, Rich |
+| **Exchange rate** | `exchange.py` | Look up the day's dollar-to-pound rate once a day, and keep it in `~/.wren` | Nothing of Wren's (the standard library only) |
 | **REPL** | `repl.py` | The plain front end: read a line, print events, ask permission questions with `input()` | The `Agent`, the event types |
 | **Sessions** | `sessions.py` | Write the conversation to a JSON Lines file as it happens; list and load saved sessions | The message types |
 | **Commands** | `commands.py` | Slash commands, returning text for either front end to show; resuming a session, switching model | The `Agent`, `Memory`, `SessionStore` |
@@ -180,9 +183,11 @@ The agent's output is a stream of events. Each front end decides how they look:
 | `Completed` | provider | one model call finished | the reply widget is closed | newline; warning if cut off |
 | `ToolStarted` | agent | about to run a tool | a `ToolCallView` line, ending `…` | `▸ edit_file(path='util.py', …)` |
 | `ToolFinished` | agent | the tool's result | summary, plus the diff or the end of a command's output | `→ util.py +1 −1`, or `✗ declined` |
-| `TurnFinished` | agent | the whole turn is over | status line updated | `↳ 3,210 in (2,900 cached) · 250 out · 2 model calls` |
+| `TurnFinished` | agent | the whole turn is over | a note only if it hit the step limit (the footer has the figures) | `↳ 3,210 in (2,900 cached) · 250 out · 2 model calls` |
 | `CompactionStarted` | agent | about to summarise the conversation | a note | a note |
-| `Compacted` | agent | done (or failed, with `error` set) | a note with before and after sizes | the same |
+| `Compacted` | agent | done (or failed, with `error` set); `usage` is what the summarising call cost | a note with before and after sizes | the same |
+
+The app also hands every event to its `RunStats` (`stats.py`), which counts tokens, cost, tool calls and times for the footer. `Completed.usage` and `Compacted.usage` between them cover every model call, so its totals match `agent.usage`.
 
 Three things flow the other way, from a front end into the core:
 
@@ -204,12 +209,16 @@ Textual runs an event loop on the main thread: it redraws, reads keys, and calls
 | --- | --- | --- |
 | app (the event loop) | `compose`, key and message handlers, `show_event`, `show_question`, `turn_ended` | yes |
 | worker (one per turn) | `run_turn`: the agent's loop, and everything it calls, including tools and `ask_permission` | **no**: it asks the app thread, with `call_from_thread`, and waits |
+| git worker | `refresh_git`: runs `git status` for the footer | **no**: hands the result over with `call_from_thread` |
+| rate worker | `look_up_rate`: fetches the day's exchange rate | **no**: sets one attribute, which the footer reads at its next redraw |
 
 Three objects cross between them: each event (worker to app, in order, one at a time); a `Future` holding the answer to a permission question (app to worker); and a `threading.Event`, the stop flag (app to worker).
 
-The screen is a column: a top-docked logo, a header line, then a body containing the scrolling transcript, command panel, status line, and prompt box. The body fills the remaining screen space. Inside it, the transcript and panel share a flexible chat area above the status and prompt. The panel's percentage height is relative to that chat area, so the pinned logo and a multiline prompt both have their space reserved first. The transcript holds one widget per thing that happened: your message, a reply, a tool call, a question, a note. All text from outside (model, files, commands) is passed as Rich `Text` or with `markup=False`, so it's never read as Textual markup.
+The screen is a column: a top-docked logo, a bottom-docked footer, and between them a body containing the scrolling transcript, the command panel (hidden until a command opens it) and the prompt box. Docked widgets get their rows first, so the body fills what's left. Inside it, the transcript and panel share a flexible chat area above the prompt. The panel's percentage height is relative to that chat area, so the pinned logo, a multiline prompt and the footer all have their space reserved first. The transcript holds one widget per thing that happened: your message, a reply, a tool call, a question, a note. All text from outside (model, files, commands, branch names) is passed as Rich `Text` or with `markup=False`, so it's never read as Textual markup.
 
-The theme-coloured bird is a top-docked `Static` outside the transcript, pinned at the top left in new and resumed conversations. Chatting, scrolling, `/clear` and history redraws do not move or recreate it. It is never a model message or session record. The mark is loaded with `importlib.resources` from `wren/wren-terminal.txt`, so installed apps do not depend on the repo's docs or working directory. The branding generator keeps this packaged copy identical to the design asset. Below 20 columns or 20 rows, the welcome falls back to `wren`, adapting as the terminal is resized. Plain mode is unchanged.
+The theme-coloured bird is a top-docked `Static` outside the transcript, pinned at the top left in new and resumed conversations. Chatting, scrolling, `/clear` and history redraws do not move or recreate it. It is never a model message or session record. The mark is loaded with `importlib.resources` from `wren/wren-terminal.txt`, so installed apps do not depend on the repo's docs or working directory. The branding generator keeps this packaged copy identical to the design asset. Below 20 columns or 30 rows (`LOGO_MIN_WIDTH`, `LOGO_MIN_HEIGHT`), the welcome falls back to `wren`, adapting as the terminal is resized; 30 rows is what the bird, the footer and a full prompt need while leaving the conversation 6 (D96). Plain mode is unchanged.
+
+**The footer** (`FooterRows`) has six fixed rows: settings (model, effort, provider, git branch, folder, session), the context bar against the compaction budget, spending, time, tool calls, and what Wren is doing now. `footer.py` builds them from the agent, the app's `RunStats` and a little app state (busy, git, session); `tui.py` only puts them on screen. A row never wraps: each part has a `keep` score, and `fit` drops the least important parts that don't fit. The footer is redrawn on the app's tick (ten times a second while busy, once a second otherwise), not on every event. Cost comes from each provider's `prices()`, a dated table in US dollars copied from its pricing page, and is shown in pounds at the day's rate from `exchange.py` (in dollars until there is one). The footer is the app's alone; the REPL prints a summary line after each turn instead.
 
 ## Permission scopes
 

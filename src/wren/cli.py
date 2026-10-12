@@ -131,7 +131,9 @@ def main(argv: list[str] | None = None) -> int:
         repl.run()
     else:
         # Imported here so that plain mode never loads Textual at all.
+        from wren.exchange import ExchangeRate
         from wren.tui import WrenApp
 
-        WrenApp(agent, memory, sessions, notice, choose_session, defaults).run()  # wires itself to the same hooks in its __init__
+        # Wires itself to the same hooks in its __init__.
+        WrenApp(agent, memory, sessions, notice, choose_session, defaults, exchange=ExchangeRate()).run()
     return 0

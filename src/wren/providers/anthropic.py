@@ -8,6 +8,7 @@ code, means they can be unit-tested without an API key.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any, Iterator, Sequence
 
 import anthropic
@@ -16,6 +17,7 @@ from wren.messages import (
     Block,
     Completed,
     Message,
+    Prices,
     ReasoningBlock,
     StopReason,
     StreamEvent,
@@ -48,6 +50,42 @@ DOCUMENTED_DEFAULT_EFFORT = {
     "claude-sonnet-4-6": "high",
 }
 
+# What each model costs, in US dollars per million tokens. The API doesn't
+# report prices either, so these are copied from Anthropic's pricing page and
+# can go stale: a model that isn't listed has its cost shown as unknown,
+# never guessed. Cache writes are priced for the 5-minute cache, the one
+# Wren asks for (see `stream`). Wren uses neither of the options that change
+# these (US-only inference, fast mode).
+PRICES_SOURCE = "https://platform.claude.com/docs/en/about-claude/pricing, checked 12 October 2026"
+
+
+def _usd(base_input: str, cache_write_5m: str, cache_hit: str, output: str, **long_prompt: Any) -> Prices:
+    """A row of the pricing page's table, in the page's column order, so the
+    two can be compared line by line."""
+    return Prices(
+        input=Decimal(base_input), output=Decimal(output),
+        cache_read=Decimal(cache_hit), cache_write=Decimal(cache_write_5m), **long_prompt,
+    )
+
+
+DOCUMENTED_PRICES: dict[str, Prices] = {
+    "claude-fable-5-1": _usd("10", "12.50", "0.25", "50"),
+    "claude-fable-5": _usd("10", "12.50", "1", "50"),
+    "claude-opus-5-5": _usd("4", "5", "0.20", "20"),
+    "claude-opus-5": _usd("5", "6.25", "0.50", "25"),
+    "claude-opus-4-8": _usd("5", "6.25", "0.50", "25"),
+    "claude-opus-4-7": _usd("5", "6.25", "0.50", "25"),
+    "claude-opus-4-6": _usd("5", "6.25", "0.50", "25"),
+    "claude-sonnet-5-5": _usd("2", "2.50", "0.10", "10"),
+    "claude-sonnet-5": _usd("2", "2.50", "0.20", "10"),
+    "claude-sonnet-4-6": _usd("3", "3.75", "0.30", "15"),
+    # Priced by prompt length: over 100,000 tokens, every token costs more.
+    "claude-haiku-5-5": _usd(
+        "0.10", "0.125", "0.01", "0.50",
+        long_prompt_over=100_000, long_prompt=_usd("0.50", "0.625", "0.05", "2.50"),
+    ),
+}
+
 _KNOWN_STOP_REASONS = {"end_turn", "max_tokens", "tool_use", "stop_sequence", "refusal"}
 
 
@@ -74,6 +112,9 @@ class AnthropicProvider:
         return DOCUMENTED_DEFAULT_EFFORT.get(self.model)
 
     default_effort_source = DEFAULT_EFFORT_SOURCE
+
+    def prices(self) -> Prices | None:
+        return DOCUMENTED_PRICES.get(self.model)
 
     def models(self) -> list[str]:
         # Asked of the API, not written down here: a list in the code would

@@ -39,6 +39,7 @@ other part of Wren, which assumes the history lives in `agent.messages`.
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from typing import Any, Iterator, Sequence
 
 import openai
@@ -47,6 +48,7 @@ from wren.messages import (
     Block,
     Completed,
     Message,
+    Prices,
     ReasoningBlock,
     StopReason,
     StreamEvent,
@@ -74,6 +76,42 @@ DOCUMENTED_DEFAULT_EFFORT = {
     "gpt-6.1-sol": "medium",
     "gpt-6-sol": "medium",
     "gpt-6-luna": "medium",
+}
+
+# What each model costs, in US dollars per million tokens. No API reports
+# prices, so these are copied from OpenAI's pricing page and can go stale: a
+# model that isn't listed has its cost shown as unknown, never guessed.
+# These are the Standard tier, the one Wren uses, on the normal endpoint
+# (regional data-residency endpoints charge 10% more).
+PRICES_SOURCE = "https://developers.openai.com/api/docs/pricing, checked 12 October 2026"
+LONG_PROMPT = 272_000  # "Long context" on the pricing page: more than 272K input tokens
+
+
+def _usd(input: str, cached_input: str, cache_writes: str, output: str, **long_prompt: Any) -> Prices:
+    """A row of the pricing page's table, in the page's column order, so the
+    two can be compared line by line."""
+    return Prices(
+        input=Decimal(input), output=Decimal(output),
+        cache_read=Decimal(cached_input), cache_write=Decimal(cache_writes), **long_prompt,
+    )
+
+
+DOCUMENTED_PRICES: dict[str, Prices] = {
+    # Short and long context prices both published.
+    "gpt-6-astra": _usd("10", "1", "12.50", "50", long_prompt_over=LONG_PROMPT, long_prompt=_usd("20", "2", "25", "75")),
+    "gpt-6.1-sol": _usd("2", "0.10", "2.50", "10", long_prompt_over=LONG_PROMPT, long_prompt=_usd("4", "0.20", "5", "15")),
+    "gpt-6-luna": _usd("0.10", "0.01", "0.125", "0.50", long_prompt_over=LONG_PROMPT, long_prompt=_usd("0.20", "0.02", "0.25", "0.75")),
+    # A promotional price, "available at least through November 21, 2026".
+    "gpt-5.6-sol": _usd("4", "0.40", "5", "20", long_prompt_over=LONG_PROMPT, long_prompt=_usd("8", "0.80", "10", "30")),
+    # One price published, with no long context price.
+    "gpt-6-sol": _usd("2", "0.20", "2.50", "10"),
+    "gpt-5.6-terra": _usd("2", "0.20", "2.50", "12"),
+    "gpt-5.6-luna": _usd("0.20", "0.02", "0.25", "1.20"),
+    # Published "for <272K context length" only, so a longer call is unpriced.
+    # The page gives no cache-write price ("-"), so if a cache write is ever
+    # reported it's charged at the input price: an assumption, not a quote.
+    "gpt-5.5": _usd("5", "0.50", "5", "30", long_prompt_over=LONG_PROMPT),
+    "gpt-5.4": _usd("2.50", "0.25", "2.50", "15", long_prompt_over=LONG_PROMPT),
 }
 
 # `models.list()` returns everything on the account: image, speech and
@@ -106,6 +144,9 @@ class OpenAIProvider:
             return DOCUMENTED_DEFAULT_EFFORT[self.model]
         # The guide gives one default for the whole GPT-5.6 family.
         return "medium" if self.model.startswith("gpt-5.6-") else None
+
+    def prices(self) -> Prices | None:
+        return DOCUMENTED_PRICES.get(self.model)
 
     def stream(
         self,

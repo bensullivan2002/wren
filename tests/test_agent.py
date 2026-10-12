@@ -392,10 +392,21 @@ def test_compaction_drops_reasoning_and_counts_its_own_cost():
     sealed = ReasoningBlock("fake", {"type": "thinking", "thinking": "", "signature": "s"})
     agent, _ = make_agent(["a reply", Message("assistant", [sealed, TextBlock("The summary.")])])
     run(agent, "one")
-    spent = agent.usage.output_tokens
-    list(agent.compact())
+    before = agent.usage
+    done = list(agent.compact())[-1]
     assert agent.messages[1].content == [TextBlock("The summary.")]
-    assert agent.usage.output_tokens > spent
+    assert agent.usage.output_tokens > before.output_tokens
+    # ...and says what it cost, since no Completed event is yielded for a summary
+    assert done.usage.output_tokens > 0 and before + done.usage == agent.usage
+
+
+def test_a_failed_compaction_still_reports_what_its_call_cost():
+    agent, _ = make_agent(["a reply", Message("assistant", [TextBlock("  ")])])
+    run(agent, "one")
+    failed = list(agent.compact())[-1]
+    assert failed.error and failed.usage.sent_tokens > 0
+    nothing = list(make_agent([])[0].compact())[-1]  # no call was made at all
+    assert nothing.usage == Usage()
 
 
 def test_usage_adds_up_cached_tokens_too():

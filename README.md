@@ -30,13 +30,15 @@ If you use [uv](https://docs.astral.sh/uv/): `uv sync --extra dev`, then `uv run
 
 ## Using it
 
-Run `wren` inside the project you want to work on: its file tools can only see that folder. The Wren bird is pinned at the top left, above the conversation: chatting, scrolling, `/clear` and resuming don't move it. Small terminals show `wren` instead. The logo is decoration only, never part of the conversation sent to the model.
+Run `wren` inside the project you want to work on: its file tools can only see that folder. The Wren bird is pinned at the top left, above the conversation: chatting, scrolling, `/clear` and resuming don't move it. Terminals under 30 rows or 20 columns show `wren` instead, leaving room for the conversation. The logo is decoration only, never part of the conversation sent to the model.
 
 The full-screen app asks permission in place:
 
 ![Wren asking permission for an edit](docs/images/wren-tui.svg)
 
 Type in the box at the bottom. Replies stream into the conversation as rendered markdown. Each tool call shows as one line; edits show their diff, and commands the end of their output.
+
+Below the box, a footer keeps six rows up to date: the model, effort, provider, git branch and folder; how full the context is; what you've spent and how fast; how long the session and the current turn have taken; which tools have been called; and what Wren is doing right now. Everything in it counts from when you opened Wren. Cost comes from a price table in each provider, copied from its pricing page; a model that isn't in the table shows `£?`. It's shown in pounds at the day's European Central Bank rate, which the app looks up the first time it opens each day (the one network call Wren makes that isn't to the model) and keeps in `~/.wren/exchange-rate.json`. Until it has a rate, it shows dollars. In a narrow terminal, the least important parts are left out.
 
 | Key | What it does |
 | --- | --- |
@@ -143,7 +145,7 @@ Project files are looked for in the working directory and each folder above it, 
 Every request re-sends the whole conversation, so a long session costs more with each step. Wren does two things about it:
 
 - **Caching.** The part of each request that was sent before is billed at about a tenth of the price. Nothing to configure. `/usage` shows how much was read from the cache.
-- **Compaction.** When the conversation passes the context budget (150,000 tokens by default), Wren asks the model to summarise it and carries on from the summary. The status line shows how close you are (`context 12%`). Run `/compact` to do it at a moment you choose, such as after finishing a task. A summary loses detail: Wren may need to re-read files afterwards.
+- **Compaction.** When the conversation passes the context budget (150,000 tokens by default), Wren asks the model to summarise it and carries on from the summary. The footer's context bar shows how close you are (`context: ▰▱▱▱▱▱▱▱▱▱ 12% · 18k/150k`). Run `/compact` to do it at a moment you choose, such as after finishing a task. A summary loses detail: Wren may need to re-read files afterwards.
 
 ### Tools
 
@@ -223,6 +225,9 @@ src/wren/
   agent.py          owns the conversation; runs the agent loop; compacts it
   messages.py       provider-neutral message types, and the history rules
   tui.py            the full-screen front end (Textual)
+  footer.py         the rows at the bottom of the full-screen app
+  stats.py          tokens, cost, times and tool calls since Wren opened, for the footer
+  exchange.py       the day's dollar-to-pound rate, looked up once a day
   repl.py           the plain front end (--plain, pipes)
   commands.py       slash commands, shared by both front ends
   providers/

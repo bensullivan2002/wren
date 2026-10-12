@@ -13,6 +13,7 @@ Run `wren` and it now takes over the terminal, the way `vim` or `htop` does:
 - Tool calls appear as one line each. Edits show their **diff**; commands show the **end of their output**.
 - Permission questions appear in the conversation, where they come up: **y**, **a** or **n**.
 - Slash commands open in a panel above the prompt, and **Escape** closes it.
+- A **footer** below the prompt shows the model, the context, what's been spent, the time, the tools used, and what Wren is doing.
 - **Escape** stops Wren. **Ctrl+Q** quits.
 
 It's built on [Textual](https://textual.textualize.io), a Python framework for terminal apps. The old line-by-line interface is still there as `wren --plain`, and Wren switches to it by itself when it isn't attached to a terminal (`echo hi | wren`).
@@ -67,11 +68,18 @@ Everything visible is a **widget**: an object that draws itself. `compose()` say
 
 ```python
 def compose(self) -> ComposeResult:
-    yield Static(..., id="header")
-    yield VerticalScroll(id="transcript")     # the conversation
-    yield Static("", id="status")
-    yield Prompt(id="prompt", ...)            # where you type
+    yield Static(self._logo_text(), id="logo")        # the bird, docked at the top
+    yield FooterRows(self._footer_rows)               # docked at the bottom: settings, spending, activity
+    with Vertical(id="body"):                         # whatever rows are left
+        with Vertical(id="chat"):
+            yield VerticalScroll(id="transcript")     # the conversation
+            yield CommandPanel()                      # hidden until a slash command opens it
+        yield Prompt(id="prompt", ...)                # where you type
 ```
+
+The footer comes second in the code but sits at the bottom of the screen: it's *docked* there by its CSS, which takes it out of the top-to-bottom order.
+
+(When this step was built, there was no logo, a header line at the top and a one-line status above the prompt. The logo came later, and the footer replaced the other two: see the section at the end of this idea.)
 
 As the conversation goes on, we **mount** more widgets inside the transcript: a `Static` for your message, a `Markdown` for the reply, a `ToolCallView` for each tool call, a `PermissionPrompt` for a question.
 
@@ -83,6 +91,58 @@ How they look is **CSS**, as on a web page:
 ```
 
 `$accent` and `$warning` come from the theme, so the app follows light and dark terminals without us choosing colours.
+
+### The footer: six rows that stay put
+
+Later, the header and the status line gave way to a footer, modelled on [claude-hud](https://github.com/jarrodwatts/claude-hud), a status display for Claude Code. It sits below the prompt (the numbers here are made up):
+
+```
+model: claude-sonnet-5-5 · effort: high · provider: anthropic │ git: main · uncommitted: 2 │ ~/code/wren
+context: ▰▰▰▱▱▱▱▱▱▱ 28% · 42k/150k │ cache hit: 91% · compactions: 0 │ memory files: 1 · always allowed: 1
+cost: £2.71 · burn: £0.12/min │ in: 52k · out: 48k · cache read: 1.1M · cache write: 61k · thinking: 12k
+session: 23:10 · turns: 7 │ this turn: 0:42 · tokens/turn: 38k (avg 31k) │ first word: 1.8s
+tool calls: 24 · read_file 12 · shell 5 · search 4 · edit_file 3 │ files changed: 3 · tool errors: 1
+⠹ step 4/25 · running edit_file(path='tui.py', …) · esc to stop
+```
+
+The work is split three ways, so each part can be tested on its own:
+
+- `stats.py` counts. The app hands its `RunStats` every event the agent yields, and says when a turn starts and ends. It knows nothing about screens.
+- `footer.py` turns the agent and the stats into rows of Rich `Text`. These are plain functions, so a test calls `footer_rows(...)` and reads the text, with no app running.
+- `tui.py` shows them: `FooterRows` is a `Static` that asks for rows as wide as itself.
+
+Five ideas in it are worth knowing.
+
+**A row never wraps.** Wrapping would push the rows below it down, and the footer would change height as you typed. Instead, each part of a row has a `keep` score, and `fit` takes the most important first, skipping any that won't fit:
+
+```python
+for g, p in by_importance:                    # highest `keep` first
+    needed = SEPARATOR_CELLS + groups[g][p].text.cell_len
+    if used + needed <= width:
+        chosen.add((g, p))
+        used += needed
+```
+
+Skipping, not stopping, matters: a long part that doesn't fit leaves room that a short, less important one can still use. And it's `cell_len`, not `len`. A terminal gives some characters two cells (most emoji, Chinese characters) and some none, and Rich knows which.
+
+**Money is a `Decimal`.** In Python, `0.1 + 0.2 == 0.3` is `False`: a float is binary, and can't hold one tenth exactly. One model call costs a fraction of a cent, and adding thousands of slightly wrong fractions drifts. `Decimal("0.1") + Decimal("0.2") == Decimal("0.3")` is `True`, because `Decimal` does arithmetic the way you would on paper.
+
+**Time is `time.monotonic()`.** The wall clock, `time.time()`, jumps when the computer corrects itself or the clocks go back, and a turn could appear to take minus an hour. A monotonic clock only goes forwards. `RunStats` takes its clock as an argument, so a test passes one it moves by hand, and a "two-minute session" takes no time at all.
+
+**`git status` is run with care.** Wren runs it by itself, after each turn and every ten seconds between turns, in whatever folder you opened it in, so:
+
+- it runs on a worker thread of its own, like a turn, since in a big repository it can be slow;
+- it asks for `--porcelain=v2`, a format git promises never to change, where the normal output is for people and may change;
+- `GIT_OPTIONAL_LOCKS=0` stops it taking the index lock, which would make a `git commit` you run at the same moment fail;
+- `core.fsmonitor=false` matters most. A repository's own config can name a program for git to run during `status`, so a folder you downloaded could run anything when Wren looked at it. This turns that off, for this one command.
+
+**The footer is redrawn on a clock, not on every event.** A fast reply sends dozens of fragments a second, and the footer doesn't need redrawing for each. The app's tick redraws it ten times a second while Wren works. A new test read the footer as soon as a permission question appeared, and failed about one run in three: the footer hadn't caught up yet. The fix went in the test, not the app. It now waits with `until` for the footer to change, which is Idea 12's rule again.
+
+**Prices and the exchange rate come from outside, and are checked.** No API says what a call cost, so each provider has a table copied from its pricing page, with the page and the date in `PRICES_SOURCE`. Copying numbers by hand invites typos, so a one-off script read both downloaded pages and compared every entry with the tables. There were no differences, and a test catches the likeliest slip, a number in the wrong column: on every model, a cache read must be the cheapest and output the dearest. Some prices depend on the call. Claude Haiku 5.5 charges more for every token once the prompt passes 100,000 tokens, so `Prices` can hold a second price and its threshold. The pounds come from the European Central Bank's daily rate. `exchange.py` fetches it on a worker thread the first time the app opens each day, and keeps it in `~/.wren/exchange-rate.json` for the rest of the day. With no rate, the footer shows dollars rather than guessing. The fetch is an argument, so a test passes a function that plays the bank, and the tests never touch the network.
+
+**Rows are a budget.** The logo is docked at the top and the footer at the bottom, so Textual reserves their rows before anything else. On the classic 80×24 terminal that's 8 + 6, and a prompt at its 10-line cap takes the other 10. The conversation gets nothing, and Textual still gives the flexible chat area one row, so the prompt was clipped. A test caught it (the prompt's bottom at row 19, the footer's top at 18). Now the bird only appears from 30 rows, which leaves 6 for the conversation even with a full prompt; below that the logo is the word `wren` (D96).
+
+Building the footer exposed one gap in the core. Compaction calls the model but yields no `Completed`, so a front end never heard what it cost. `Compacted` now carries the call's `usage`, even when compaction fails, because the call was still paid for.
 
 ## Idea 3: the agent is slow, so it gets its own thread
 
@@ -289,7 +349,9 @@ Note `until(...)`. The turn is on another thread, so a test can't assume how lon
 - **You can't type the next message into a queue.** Sending while Wren works is refused; the text stays in the box.
 - **Nothing shows while the model writes a tool request,** beyond the spinner. Showing it as it's written needs a new provider event.
 - **Diffs and new files are cut at 40 lines,** command output at its last 10, with no way to expand them yet.
-- **The plain REPL didn't improve.** No markdown or spinner there.
+- **The plain REPL didn't improve.** No markdown or spinner there, and no footer: it prints one summary line after each turn.
+- **The footer's prices are copied by hand,** from each provider's price page (checked 12 October 2026), so they go out of date. A model missing from the table shows `£?`.
+- **The exchange rate is the central bank's daily reference rate,** not what your card is charged, which includes the bank's own margin.
 
 ## Things to try
 
@@ -300,6 +362,9 @@ Note `until(...)`. The turn is on another thread, so a test can't assume how lon
 5. Press Ctrl+P in the app for Textual's command palette, and change the theme.
 6. Run `echo "ls" | wren --provider fake`. Why did you get the plain interface?
 7. Read `Repl.show` and `WrenApp.show_event` side by side.
+8. In `wren --provider fake`, send a message and watch the footer's cost (the fake model has made-up prices). Then `/model demo-large`, which plays a model whose prices aren't known, and send another. What does the cost say now, and why?
+9. Make the terminal narrower, a little at a time, and watch which parts of the footer go first. Find the `keep` scores in `footer.py` that decide it.
+10. Open `~/.wren/exchange-rate.json`. Change `looked_up_on` to yesterday's date and open Wren again: the file is rewritten. Then turn off your network, do the same, and see which rate the footer uses.
 
 ## What's next: step 5, context management
 

@@ -19,6 +19,7 @@ and shapes are the most expensive thing to change later. Step 2 put them to work
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Literal, Union
 
 Role = Literal["user", "assistant"]
@@ -192,6 +193,41 @@ class Usage:
             self.cache_write_tokens + other.cache_write_tokens,
             self.thinking_tokens + other.thinking_tokens,
         )
+
+
+@dataclass(frozen=True)
+class Prices:
+    """What a model charges, in US dollars per million tokens, for each of
+    the kinds of token `Usage` counts. Thinking tokens aren't listed: they
+    are output tokens, already counted in `output_tokens`, and priced as such.
+
+    Decimal, not float. A float is binary, so it can't hold 0.1 exactly, and
+    the tiny errors add up over thousands of small sums. Decimal does
+    arithmetic the way you would on paper, which is what money needs.
+    """
+
+    input: Decimal
+    output: Decimal
+    cache_read: Decimal
+    cache_write: Decimal
+    # Some models charge more for a long prompt: a call that sends more than
+    # `long_prompt_over` tokens (counting cache reads and writes) is priced
+    # at `long_prompt`, every token of it. `long_prompt` None means the
+    # pricing page says such calls cost more but not how much.
+    long_prompt_over: int | None = None
+    long_prompt: Prices | None = None
+
+    def cost(self, usage: Usage) -> Decimal | None:
+        """What `usage`, one model call, cost in US dollars, or None if the
+        prices for a call that size aren't known."""
+        if self.long_prompt_over is not None and usage.sent_tokens > self.long_prompt_over:
+            return self.long_prompt.cost(usage) if self.long_prompt else None
+        return (
+            usage.input_tokens * self.input
+            + usage.output_tokens * self.output
+            + usage.cache_read_tokens * self.cache_read
+            + usage.cache_write_tokens * self.cache_write
+        ) / 1_000_000
 
 
 # --- Streaming events -----------------------------------------------------

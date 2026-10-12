@@ -73,7 +73,7 @@ cat docs/branding/wren-terminal.txt
 ```
 
 The TUI renders the block text with its theme's accent and normal terminal
-line spacing. Spaces stay transparent. Below **20 columns or 20 rows**, it
+line spacing. Spaces stay transparent. Below **20 columns or 30 rows**, it
 shows `wren` instead; resizing restores the bird when there is room. The
 same pinned widget stays visible in both new and resumed conversations,
 including after `/clear`. Plain mode and piped output do not print the logo.

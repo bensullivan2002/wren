@@ -10,11 +10,14 @@ pytest-asyncio runs them (see asyncio_mode in pyproject.toml).
 """
 
 import os
+import threading
+from decimal import Decimal
 
 import pytest
 from textual.widgets import Markdown, Static
 
 from wren.agent import INTERRUPTED_NOTE, Agent
+from wren.exchange import ExchangeRate
 from wren.memory import Memory
 from wren.messages import Message, TextBlock, ToolUseBlock, history_problems
 from wren.config import Config
@@ -76,6 +79,11 @@ def screen_text(app):
     return "\n".join(parts)
 
 
+def footer_text(app):
+    """The footer's rows, as plain text."""
+    return str(app.query_one("#footer").content)
+
+
 def panel_text(app):
     """What the command panel is showing ("" if it's closed)."""
     if not app.panel.is_open:
@@ -93,13 +101,13 @@ def question(app):
 
 async def test_logo_is_pinned_top_left_without_adding_it_to_history(tmp_path):
     app = make_app(tmp_path, ["Hello"])
-    async with app.run_test(size=(80, 24)) as pilot:
+    async with app.run_test(size=(80, 30)) as pilot:
         logo = app.query_one("#logo", Static)
         await until(pilot, lambda: logo.region.height == 8, "the eight-row logo to be laid out")
         assert str(logo.content) == TERMINAL_LOGO
         assert (logo.region.x, logo.region.y) == (0, 0)
-        assert logo.content_region.x == 1  # the same left padding as the header
-        assert logo.region.bottom <= app.query_one("#header").region.y
+        assert logo.content_region.x == 1  # the same left padding as the conversation
+        assert logo.region.bottom <= app.transcript.region.y
         assert not app.transcript.query("#logo") and screen_text(app) == ""
         assert app.agent.messages == [] and app.focused is app.prompt
 
@@ -112,8 +120,9 @@ async def test_logo_is_pinned_top_left_without_adding_it_to_history(tmp_path):
 async def test_logo_stays_fixed_while_chat_scrolls_and_command_panel_opens(tmp_path):
     reply = "\n\n".join(f"Paragraph {i}" for i in range(30))
     app = make_app(tmp_path, [reply])
-    async with app.run_test(size=(80, 24)) as pilot:
+    async with app.run_test(size=(80, 30)) as pilot:  # the smallest with the full bird
         logo = app.query_one("#logo", Static)
+        await until(pilot, lambda: logo.region.height == 8, "the eight-row logo to be laid out")
         pinned_region = logo.region
         await say(app, pilot, "hi")
         await finished(app, pilot)
@@ -134,8 +143,9 @@ async def test_logo_stays_fixed_while_chat_scrolls_and_command_panel_opens(tmp_p
         assert app.prompt.region.bottom <= app.screen.region.bottom
         app.prompt.insert("\n".join("Another input line" for _ in range(20)))
         await until(pilot, lambda: app.prompt.region.height == 10, "the multiline prompt to reach its cap")
-        assert app.prompt.region.bottom <= app.screen.region.bottom
-        assert app.panel.region.bottom <= app.query_one("#status").region.y
+        assert app.prompt.region.bottom <= app.query_one("#footer").region.y
+        assert app.query_one("#footer").region.bottom <= app.screen.region.bottom  # the footer isn't pushed off
+        assert app.panel.region.bottom <= app.prompt.region.y
         assert logo.region == pinned_region
         await pilot.press("escape")
         await until(pilot, lambda: not app.panel.is_open, "the help panel to close")
@@ -143,24 +153,40 @@ async def test_logo_stays_fixed_while_chat_scrolls_and_command_panel_opens(tmp_p
     assert history_problems(app.agent.messages) == []
 
 
-@pytest.mark.parametrize("size", [(18, 24), (80, 16)])
+@pytest.mark.parametrize("size", [(18, 30), (80, 16), (80, 29)])
 async def test_small_terminals_use_text_and_restore_the_bird_after_resizing(tmp_path, size):
     app = make_app(tmp_path)
     async with app.run_test(size=size) as pilot:
         logo = app.query_one("#logo", Static)
         assert str(logo.content) == "wren" and logo.region.y == 0
-        await pilot.resize_terminal(80, 24)
+        await pilot.resize_terminal(80, 30)
         await until(pilot, lambda: str(logo.content) == TERMINAL_LOGO, "the bird after enlarging")
         await pilot.resize_terminal(*size)
         await until(pilot, lambda: str(logo.content) == "wren", "the compact logo after shrinking")
         assert logo.region.y == 0 and app.focused is app.prompt
-        assert app.prompt.region.bottom <= app.screen.region.bottom
+        assert app.prompt.region.bottom <= app.query_one("#footer").region.y
+        assert app.query_one("#footer").region.bottom <= app.screen.region.bottom
+
+
+async def test_a_24_row_terminal_fits_a_full_prompt_above_the_footer(tmp_path):
+    # The classic 80x24: the full bird would leave no room, so it's "wren".
+    app = make_app(tmp_path)
+    async with app.run_test(size=(80, 24)) as pilot:
+        logo = app.query_one("#logo", Static)
+        assert str(logo.content) == "wren"
+        app.prompt.insert("\n".join("Another input line" for _ in range(20)))
+        await until(pilot, lambda: app.prompt.region.height == 10, "the multiline prompt to reach its cap")
+        footer = app.query_one("#footer")
+        assert logo.region.bottom <= app.transcript.region.y
+        assert app.transcript.region.height > 0
+        assert app.prompt.region.bottom <= footer.region.y
+        assert footer.region.bottom <= app.screen.region.bottom
 
 
 async def test_existing_history_opens_with_the_same_pinned_logo(tmp_path):
     app = make_app(tmp_path, ["An earlier answer"])
     list(app.agent.run_turn("An earlier question"))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(80, 30)) as pilot:  # tall enough for the full bird
         assert str(app.query_one("#logo", Static).content) == TERMINAL_LOGO
         assert not app.transcript.query("#logo")
         assert "An earlier answer" in screen_text(app)
@@ -299,6 +325,42 @@ async def test_a_stops_the_asking_for_the_rest_of_the_session(tmp_path):
         await until(pilot, lambda: (tmp_path / "b.txt").exists(), "the second write, with no question")
         await finished(app, pilot)
         assert question(app) is None
+
+
+async def test_the_footer_follows_a_turn_as_it_happens(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test(size=(160, 30)) as pilot:
+        assert "enter send" in footer_text(app)  # idle: the keys
+        await say(app, pilot, "write a.txt one")
+        await until(pilot, lambda: question(app), "the permission question")
+        # The footer catches up on its next tick, a tenth of a second at most.
+        await until(pilot, lambda: "running write_file(" in footer_text(app), "the footer to show the tool")
+        shown = footer_text(app)
+        assert "step 1/25 · running write_file(" in shown and "esc to stop" in shown
+        assert "this turn: " in shown and "turns: 1" in shown
+
+        await pilot.press("y")
+        await finished(app, pilot)
+        shown = footer_text(app)
+        assert "tool calls: 1 · write_file 1" in shown and "files changed: 1" in shown
+        assert "last turn: " in shown and "enter send" in shown
+        assert "cost: <$0.01" in shown  # made-up prices, a short turn, and no exchange rate in tests
+
+
+async def test_the_app_looks_up_the_days_rate_and_shows_pounds(tmp_path):
+    asked = threading.Event()
+
+    def bank():  # plays the exchange-rate service, on the worker thread
+        asked.set()
+        return Decimal("0.5"), "2026-10-09"
+
+    app = make_app(tmp_path, ["Hello"])
+    app.exchange = ExchangeRate(tmp_path / "home", bank)
+    async with app.run_test(size=(160, 30)) as pilot:
+        await until(pilot, asked.is_set, "the rate to be looked up at startup")
+        await until(pilot, lambda: "cost: £0.00" in footer_text(app), "the footer to show pounds")
+        saved = tmp_path / "home" / ".wren" / "exchange-rate.json"
+        await until(pilot, saved.exists, "the rate to be saved for the rest of the day")
 
 
 @pytest.mark.skipif(os.name != "posix", reason="uses POSIX shell commands")
@@ -477,7 +539,7 @@ async def test_a_permission_question_closes_the_panel_and_takes_the_keyboard(tmp
 
 async def test_slash_commands_that_change_things_leave_a_note_and_clear_empties_the_screen(tmp_path):
     app = make_app(tmp_path, ["Hello"])
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(80, 30)) as pilot:  # tall enough for the full bird
         logo = app.query_one("#logo", Static)
         await say(app, pilot, "/nonsense")
         await pilot.pause()
@@ -505,7 +567,9 @@ async def test_compact_runs_in_the_background_and_reports_what_it_saved(tmp_path
 
         assert "compacting the conversation, as you asked" in screen_text(app)
         assert len(app.agent.messages) == 2 and "pretend summary" in app.agent.messages[1].text
-        assert "context " in str(app.query_one("#status").content)  # the meter
+        assert "context: " in footer_text(app)  # the meter
+        assert app.stats.compactions == 1
+        assert app.stats.usage == app.agent.usage  # the summary's tokens are counted too, not just the turn's
         assert app.focused is app.prompt
 
 
@@ -521,7 +585,7 @@ async def test_loaded_memory_files_are_announced_and_remember_adds_to_them(tmp_p
     assert (tmp_path / "WREN.md").read_text() == "Be brief.\n- use tabs\n"
 
 
-async def test_the_model_picker_switches_model_and_updates_the_header(tmp_path):
+async def test_the_model_picker_switches_model_and_updates_the_footer(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
         await say(app, pilot, "/model")
@@ -531,11 +595,11 @@ async def test_the_model_picker_switches_model_and_updates_the_header(tmp_path):
 
         await until(pilot, lambda: not app.query(Picker), "the picker to close")
         assert app.agent.provider.model == "demo-large"
-        assert "demo-large" in str(app.query_one("#header").content)
+        assert "model: demo-large" in footer_text(app)
         assert "Now using demo-large." in screen_text(app) and app.focused is app.prompt
 
 
-async def test_the_effort_picker_sets_effort_and_shows_it_in_the_header(tmp_path):
+async def test_the_effort_picker_sets_effort_and_shows_it_in_the_footer(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:
         await say(app, pilot, "/effort")
@@ -546,7 +610,7 @@ async def test_the_effort_picker_sets_effort_and_shows_it_in_the_header(tmp_path
 
         await until(pilot, lambda: not app.query(Picker), "the picker to close")
         assert app.agent.provider.effort == "high"
-        assert "demo (high effort)" in str(app.query_one("#header").content)
+        assert "model: demo · effort: high" in footer_text(app)
         assert "Effort is now high." in screen_text(app)
 
         await say(app, pilot, "hello")
@@ -584,7 +648,7 @@ async def test_space_in_the_model_picker_keeps_it_to_this_session(tmp_path):
     async with app.run_test() as pilot:
         await pick(app, pilot, "/model", "down", "space")
         assert app.agent.provider.model == "demo-large"
-        assert "demo-large" in str(app.query_one("#header").content)
+        await until(pilot, lambda: "model: demo-large" in footer_text(app), "the footer to show the model")
         assert "Saved" not in screen_text(app)
     assert user.get("fake") is None and not user.path.exists()
     assert Config.load(provider="fake", env={}, user=user).model == "demo"
@@ -668,7 +732,7 @@ async def test_effort_for_a_model_without_the_setting_explains_instead_of_offeri
     async with app.run_test() as pilot:
         await say(app, pilot, "/model demo-fast")
         await pilot.pause()
-        assert "demo-fast" in str(app.query_one("#header").content)  # typed switches update the header too
+        assert "model: demo-fast" in footer_text(app)  # typed switches update the footer too
         await say(app, pilot, "/effort")
         await until(pilot, lambda: "no separate effort setting" in screen_text(app), "the explanation")
         assert not app.query(Picker) and not app.busy
@@ -695,7 +759,8 @@ async def test_the_provider_picker_switches_provider_and_says_which_need_a_key(t
         await pilot.press("enter")  # anthropic
         await until(pilot, lambda: "Now using anthropic" in screen_text(app), "the switch")
         assert app.agent.provider.name == "anthropic"
-        assert "anthropic · claude-opus-5-5 (xhigh effort)" in str(app.query_one("#header").content)
+        shown = "model: claude-opus-5-5 · effort: xhigh · provider: anthropic"
+        await until(pilot, lambda: shown in footer_text(app), "the footer to show the new provider")
 
 
 async def test_escape_closes_a_picker_without_choosing(tmp_path):
@@ -711,7 +776,7 @@ async def test_escape_closes_a_picker_without_choosing(tmp_path):
 async def test_resume_picks_an_earlier_conversation_and_redraws_it(tmp_path):
     (tmp_path / "a.txt").write_text("one\ntwo\n")
     app = make_app(tmp_path, saved=True)
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(250, 30)) as pilot:  # wide, so the footer has room for the session id
         await say(app, pilot, "read a.txt")
         await finished(app, pilot)
         await say(app, pilot, "/clear")
@@ -729,8 +794,8 @@ async def test_resume_picks_an_earlier_conversation_and_redraws_it(tmp_path):
         assert "read a.txt" in shown and "▸ Read a.txt" in shown  # the old turn, tool call and all
         assert "something else entirely" not in shown
         assert len(app.agent.messages) == 4 and app.focused is app.prompt
-        status = str(app.query_one("#status").content)
-        assert "0 in · 0 out" not in status  # the old conversation's totals came back with it
+        assert app.agent.usage.sent_tokens > 0  # the old conversation's totals came back with it (/usage shows them)
+        assert f"session id: {app.sessions.current_id} (resumed)" in footer_text(app)
 
 
 async def test_starting_with_resume_opens_the_same_picker(tmp_path):

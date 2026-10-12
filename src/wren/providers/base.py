@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Iterator, Protocol, Sequence
 
-from wren.messages import Message, StreamEvent, ToolSpec
+from wren.messages import Message, Prices, StreamEvent, ToolSpec
 
 
 class Provider(Protocol):
@@ -50,6 +50,12 @@ class Provider(Protocol):
     def models(self) -> list[str]:
         """The models this provider offers right now, for a picker to show.
         May make a network call. Best first, if there's a natural order."""
+        ...
+
+    def prices(self) -> Prices | None:
+        """What the current model charges, if known. No API reports prices,
+        so they're copied from the provider's pricing page and can go out of
+        date. None for a model that isn't listed: unknown, never guessed."""
         ...
 
     def stream(

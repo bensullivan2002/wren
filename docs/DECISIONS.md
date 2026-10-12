@@ -517,7 +517,7 @@ You expected the logo to appear after restarting Wren. The original logo PR ship
 *Not chosen:* a permanent eight-row header (less room for the conversation), a repo-relative asset path (breaks installed apps), or a logo in plain/piped output (decoration in scripts).
 
 ### D82. Pin the TUI logo at the top left
-*Branding follow-up · you*
+*Branding follow-up · you · small-terminal threshold raised by D96*
 
 You asked for the logo to be pinned like Claude and Codex, rather than scrolling away. This supersedes D81's placement: a top-docked screen widget appears above the header in every conversation, including resumed ones. `/clear` and history redraws touch only the transcript, leaving the same logo widget in place.
 *Design details:* reserve the logo's space outside a flexible body, and reserve the status and prompt outside the body's flexible chat area. The command panel's percentage height is relative to that chat area, so opening `/help` with a multiline input does not push the prompt off-screen. Theme colour, packaged asset, small-terminal fallback, and absence from model history and plain output are unchanged.
@@ -553,3 +553,82 @@ In the `/model` and `/effort` pickers, Enter makes the choice your default for e
 - *An effort chosen with Enter on a model chosen with Space is not saved*, with a note saying why: the level belongs to the model, and saving the model would break the Space promise. Applying it to the session still works.
 - Switching provider starts on that provider's default pair when it lands on the default model; resuming a session brings its own model and effort.
 *Not chosen:* saving on typed commands (they are explicit, one-off choices, and an easy way to change a default by accident). Ctrl+Enter or Shift+Enter as the second key (most terminals can't tell them from Enter). A per-model table of saved efforts (more to explain, and a stale level would silently return after a later model choice).
+
+### D87. A footer replaces the header and the status line
+*Step 8 follow-up · you*
+
+You asked for a footer like [claude-hud](https://github.com/jarrodwatts/claude-hud)'s: fixed rows at the bottom of the app saying what Wren is set to, what it has spent, and what it's doing. The header line is gone and its contents moved into the footer; the pinned logo (D82) stays at the top. Six rows: settings, context, spending, time, tools, and what Wren is doing now.
+*Your choices:* model and effort as plain `key: value`, with no note of where each value came from. Included: git branch; cost and £/min; tokens in, out, cache read and cache write; tokens per turn; turns; session and turn time; calls per tool. Also every extra proposed: cache hit, a warning when another model answered, step n/25, the "always allowed" count, thinking tokens, compactions, session id and whether it was resumed, memory files, files changed, tool errors, time to first word.
+*Front ends:* the app only. The plain REPL keeps its one-line summary after each turn (`↳ …`): a line-by-line interface has no bottom of the screen to keep.
+
+### D88. The context bar measures against the compaction budget
+*Step 8 follow-up · you*
+
+The bar fills towards `context_budget` (150,000 by default), where Wren compacts, not towards the model's real context window. It answers "how long until compaction?", which is the limit you meet first.
+*Not chosen:* the model's window (a per-model table to maintain, and the bar would never get past the budget anyway).
+
+### D89. Cost in pounds, from a dated price table per provider
+*Step 8 follow-up · you*
+
+Each provider has a `DOCUMENTED_PRICES` table, in US dollars per million tokens, and offers it through `Provider.prices()`. The footer converts at the day's exchange rate (D97). Burn rate is £ per minute. A model missing from its table shows `£?`; if only some calls were to such models, the total gets `+?`.
+*Your choice (prices):* copied from the providers' published pages, each table naming its page and the date checked (`PRICES_SOURCE`): Anthropic's 11 current model IDs, and 9 of OpenAI's. A script compared every entry with the downloaded pages: no differences.
+*Design details:* money is `Decimal`, not float. Thinking tokens are priced as output, since they are output. Cache writes use the 5-minute rate, the cache Wren asks for. Standard tier only; Wren uses none of the options that change prices (fast mode, US-only or regional routing). £/min shows `—` in the first minute, when a single reply would make it look enormous.
+*Long prompts:* some models charge more for every token of a call whose prompt is long: Claude Haiku 5.5 over 100,000 tokens, which Wren's default budget passes, and several OpenAI models over 272K. `Prices` takes an optional second price and its threshold. Where a page says long prompts cost more but not how much (gpt-5.5, gpt-5.4), such a call counts as unpriced.
+*Cost:* the tables go stale when prices change, and a new model shows `£?` until it's added.
+
+### D90. Session time counts from when Wren opened
+*Step 8 follow-up · you*
+
+*Extended (proposed as design, then agreed by you):* so does everything else in the footer, so that a rate divides money and minutes that start at the same moment. After `/resume` the footer's tokens and cost leave out the resumed conversation's earlier totals (`/usage` still shows those). `/clear` resets nothing: the money was spent.
+*Not chosen:* carrying the old totals over. Session files don't record how long a conversation took, so £/min would be wrong.
+
+### D91. The footer sits below the prompt
+*Step 8 follow-up · design*
+
+Claude Code's status line, which claude-hud fills, sits below its input box (from memory: the claude-hud page couldn't be opened while building this). The box you type in stays next to the conversation.
+*Not chosen:* above the prompt, where the old status line was (six rows between the conversation and your reply to it).
+
+### D92. A footer row never wraps; parts are kept by importance
+*Step 8 follow-up · design*
+
+Each part of a row has a `keep` score from 1 to 9. In a narrow terminal, `footer.fit` takes the highest first and leaves out what doesn't fit, so every row stays on its line, and the model, the context bar and the cost are the last to go.
+*Not chosen:* wrapping (rows would move about, and the footer's height would change). Cutting each row off at the right edge (it loses whatever happens to be on the right).
+
+### D93. How the footer's figures are counted
+*Step 8 follow-up · design*
+
+- **tokens/turn:** the last finished turn, with the average of all finished turns beside it.
+- **cache hit:** the share of everything sent since Wren opened that was read from the cache.
+- **tool errors:** a "no" from you isn't counted. The tool didn't fail; you declined.
+- **files changed:** distinct files that a tool changed successfully.
+- **"last reply came from X":** shown when the model the provider reports doesn't start with the one asked for. Providers answer with dated names (asked `x`, answered `x-2026-09-01`), so this is a heuristic.
+- **step n/25:** model calls in this turn, the number the step limit counts.
+- **first word:** from sending a request to its first text, for the latest model call that wrote any.
+
+The footer is redrawn ten times a second while Wren works, and once a second otherwise, not on every event: a fast reply sends dozens of fragments a second.
+
+### D94. The git branch comes from `git status`, on a worker thread
+*Step 8 follow-up · design*
+
+`git status --porcelain=v2 --branch` gives the branch and the number of uncommitted files, in a format git promises not to change. It runs at startup, after each turn, and every 10 seconds between turns, on its own worker thread so a slow repository can't freeze the screen. Two settings make it safe to run unasked: `GIT_OPTIONAL_LOCKS=0`, so it never holds the index lock while you run git yourself, and `core.fsmonitor=false`, so a downloaded repository's config can't make it run a program.
+*Not chosen:* reading `.git/HEAD` directly (fast, but no uncommitted count, and worktrees and packed refs complicate it). A git library (a dependency for one command).
+
+### D95. `Compacted` reports what the summarising call cost
+*Step 8 follow-up · design*
+
+Compaction calls the model but yields no `Completed`, so a front end had no way to see its tokens. `Compacted.usage` carries them, even when compaction fails: the call was still paid for.
+
+### D96. The full logo needs 30 rows
+*Step 8 follow-up · you*
+
+The logo and the footer are both docked, so their rows are reserved first. On an 80×24 terminal, logo (8) + footer (6) + a prompt at its 10-line cap is all 24 rows, and the prompt was clipped by a row (the test caught it: prompt bottom 19, footer top 18). Below 30 rows the logo is now the one-line `wren`, which leaves the conversation at least 6 rows with a full prompt. The 20-column rule from D82 is unchanged.
+*Not chosen:* a two-row footer on short screens (the footer would change shape, and lose what it's for). A shorter prompt cap (less room to write in every terminal, to save rows in small ones).
+
+### D97. The exchange rate is looked up once a day
+*Step 8 follow-up · you (a daily live rate) · design (the source and the details)*
+
+The first time the app opens each day, a worker thread asks [Frankfurter](https://frankfurter.dev) for the European Central Bank's dollar-to-pound reference rate and saves it in `~/.wren/exchange-rate.json`. Every run that day uses the saved rate; an app left open past midnight looks again. This is the one network call Wren makes that isn't to the model. It's a fixed URL and sends nothing about you or your work.
+*Why this source:* free, no key or account, and the rate comes from a central bank, not a trading feed. It is published on working days only, so at the weekend the rate is Friday's; the file records both the rate's date and the day it was fetched.
+*Failure:* at most one try a day. If it fails, the last saved rate is used, however old. With no rate ever, costs are shown in dollars (`$0.42`) rather than converted at a made-up rate.
+*Design details:* `exchange.py` takes the fetch and today's date as arguments, so tests never touch the network. The app does no lookup unless given an `ExchangeRate`, which only `cli.py` does. The file is written to a temporary file and renamed into place, so two Wrens starting at once can't leave it half-written. A rate outside 0–10 is not believed.
+*Not chosen:* a fixed rate in `config.py` (goes stale silently). A lookup every run (needless calls when the bank's rate changes once a day). A paid or keyed service (one more secret to manage).
