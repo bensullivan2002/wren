@@ -7,12 +7,15 @@ Two uses:
    a string (plain text) or a Message, which may contain ToolUseBlocks to
    make the agent run tools.
 
-2. Offline demo (no script): `wren --provider fake`. It understands three
+2. Offline demo (no script): `wren --provider fake`. It understands a few
    commands, so you can watch the agent loop work without paying for a model:
 
-       ls [pattern]       asks for list_files
-       read <path>        asks for read_file
-       search <regex>     asks for search
+       ls [pattern]                  asks for list_files
+       read <path>                   asks for read_file
+       search <regex>                asks for search
+       write <path> <text>           asks for write_file
+       edit <path> <old> => <new>    asks for edit_file
+       run <command>                 asks for shell
 
    After the tool runs, it replies with a one-line note about the result.
    Anything else you type is echoed back.
@@ -102,6 +105,15 @@ class FakeProvider:
             call = ("read_file", {"path": arg})
         elif command == "search" and arg:
             call = ("search", {"pattern": arg})
+        elif command == "run" and arg:
+            call = ("shell", {"command": arg})
+        elif command == "write" and " " in arg:
+            path, _, text = arg.partition(" ")
+            call = ("write_file", {"path": path, "content": text + "\n"})
+        elif command == "edit" and " => " in arg and " " in arg.split(" => ")[0]:
+            path, _, change = arg.partition(" ")
+            old, _, new = change.partition(" => ")
+            call = ("edit_file", {"path": path, "old_string": old, "new_string": new})
         if call is None:
             return Message.assistant(f"You said: {last.text}")
 

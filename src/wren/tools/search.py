@@ -7,7 +7,9 @@ import re
 from pathlib import Path
 from typing import Iterator
 
-from wren.tools.base import Tool, ToolContext, ToolError, ToolResult
+from pydantic import Field
+
+from wren.tools.base import Tool, ToolContext, ToolError, ToolInput, ToolResult
 from wren.tools.files import clip, is_binary, is_inside, resolve, shown, walk
 
 MAX_MATCHES = 100
@@ -23,48 +25,30 @@ class Search(Tool):
         "Good for finding where something is defined or used, e.g. 'def run_turn' or 'class \\w+Provider'. "
         "Binary files, files over 2 MB, and folders such as .git and node_modules are skipped."
     )
-    input_schema = {
-        "type": "object",
-        "properties": {
-            "pattern": {
-                "type": "string",
-                "description": "Regular expression to search for.",
-            },
-            "path": {
-                "type": "string",
-                "default": ".",
-                "description": "File or folder to search, relative to the working directory.",
-            },
-            "include": {
-                "type": "string",
-                "description": "Only search files whose name matches this glob, e.g. '*.py'.",
-            },
-            "ignore_case": {
-                "type": "boolean",
-                "default": False,
-                "description": "Match regardless of upper or lower case.",
-            },
-        },
-        "required": ["pattern"],
-    }
+    class Input(ToolInput):
+        pattern: str = Field(description="Regular expression to search for.")
+        path: str = Field(".", description="File or folder to search, relative to the working directory.")
+        # `str | None` with a default of None is how you say "optional, and
+        # there's no sensible value to assume" (unlike `path`, which has one).
+        include: str | None = Field(None, description="Only search files whose name matches this glob, e.g. '*.py'.")
+        ignore_case: bool = Field(False, description="Match regardless of upper or lower case.")
 
-    def run(self, args, ctx: ToolContext) -> ToolResult:
+    def run(self, args: Input, ctx: ToolContext) -> ToolResult:
         try:
-            regex = re.compile(args["pattern"], re.IGNORECASE if args["ignore_case"] else 0)
+            regex = re.compile(args.pattern, re.IGNORECASE if args.ignore_case else 0)
         except re.error as e:
-            raise ToolError(f"Invalid regular expression {args['pattern']!r}: {e}.")
+            raise ToolError(f"Invalid regular expression {args.pattern!r}: {e}.")
 
-        base = resolve(ctx, args["path"])
+        base = resolve(ctx, args.path)
         if not base.exists():
-            raise ToolError(f"No such file or folder: {args['path']}.")
+            raise ToolError(f"No such file or folder: {args.path}.")
 
-        include = args.get("include")
         lines_out: list[str] = []
         total = 0
         files_with_matches = 0
 
         for path in _candidates(base):
-            if include and not fnmatch.fnmatch(path.name, include):
+            if args.include and not fnmatch.fnmatch(path.name, args.include):
                 continue
             if not _searchable(ctx, path):
                 continue
@@ -80,7 +64,7 @@ class Search(Tool):
             files_with_matches += found_here
 
         if total == 0:
-            return ToolResult(f"No matches for {args['pattern']!r}.", summary="no matches")
+            return ToolResult(f"No matches for {args.pattern!r}.", summary="no matches")
 
         output = "\n".join(lines_out)
         if total > MAX_MATCHES:

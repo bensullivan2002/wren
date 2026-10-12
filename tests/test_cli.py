@@ -48,6 +48,38 @@ def test_tool_errors_are_shown_and_the_conversation_carries_on(tmp_path):
     assert "You said: hello" in result.stdout
 
 
+def test_an_edit_is_shown_as_a_diff_and_happens_once_approved(tmp_path):
+    (tmp_path / "hello.txt").write_text("first line\nsecond line\n")
+    result = wren("--provider", "fake", stdin="edit hello.txt first => 1st\ny\n", cwd=tmp_path)
+
+    assert "Edit hello.txt" in result.stdout
+    assert "│ -first line" in result.stdout and "│ +1st line" in result.stdout
+    assert "Allow? [y]es / [n]o / [a]lways allow all file edits this session" in result.stdout
+    assert "→ hello.txt +1 −1" in result.stdout
+    assert (tmp_path / "hello.txt").read_text() == "1st line\nsecond line\n"
+
+
+def test_a_declined_command_does_not_run(tmp_path):
+    result = wren("--provider", "fake", stdin="run touch made.txt\nn\n", cwd=tmp_path)
+    assert "Run a shell command" in result.stdout and "│ touch made.txt" in result.stdout
+    assert "✗ declined" in result.stdout
+    assert not (tmp_path / "made.txt").exists()
+
+
+def test_always_is_remembered_for_the_session_and_listed(tmp_path):
+    stdin = "write a.txt one\na\nwrite b.txt two\n/permissions\n"
+    result = wren("--provider", "fake", stdin=stdin, cwd=tmp_path)
+    assert result.stdout.count("Allow?") == 1  # the second write didn't ask
+    assert (tmp_path / "a.txt").read_text() == "one\n" and (tmp_path / "b.txt").read_text() == "two\n"
+    assert "Allowed without asking, until you quit:\n  all file edits" in result.stdout
+
+
+def test_running_out_of_input_at_a_permission_prompt_means_no(tmp_path):
+    result = wren("--provider", "fake", stdin="write a.txt one\n", cwd=tmp_path)
+    assert "✗ declined" in result.stdout
+    assert not (tmp_path / "a.txt").exists()
+
+
 def test_tools_command_lists_and_shows_tools():
     result = wren("--provider", "fake", stdin="/tools\n/tools read_file\n")
     assert "list_files" in result.stdout and "search" in result.stdout

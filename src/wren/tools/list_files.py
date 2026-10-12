@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from wren.tools.base import Tool, ToolContext, ToolError, ToolResult
+from pydantic import Field
+
+from wren.tools.base import Tool, ToolContext, ToolError, ToolInput, ToolResult
 from wren.tools.files import glob_to_regex, resolve, shown, walk
 
 MAX_RESULTS = 200
@@ -18,28 +20,15 @@ class ListFiles(Tool):
         "'src/**/test_*.py' finds test files under src. "
         "Folders such as .git, node_modules and .venv are skipped."
     )
-    input_schema = {
-        "type": "object",
-        "properties": {
-            "pattern": {
-                "type": "string",
-                "default": "*",
-                "description": "Glob pattern, matched against paths relative to `path`.",
-            },
-            "path": {
-                "type": "string",
-                "default": ".",
-                "description": "Folder to look in, relative to the working directory.",
-            },
-        },
-        "required": [],
-    }
+    class Input(ToolInput):
+        pattern: str = Field("*", description="Glob pattern, matched against paths relative to `path`.")
+        path: str = Field(".", description="Folder to look in, relative to the working directory.")
 
-    def run(self, args, ctx: ToolContext) -> ToolResult:
-        base = resolve(ctx, args["path"])
-        pattern = args["pattern"]
+    def run(self, args: Input, ctx: ToolContext) -> ToolResult:
+        base = resolve(ctx, args.path)
+        pattern = args.pattern
         if not base.exists():
-            raise ToolError(f"No such folder: {args['path']}.")
+            raise ToolError(f"No such folder: {args.path}.")
         if not base.is_dir():
             raise ToolError(f"{shown(ctx, base)} is a file, not a folder. Use read_file to read it.")
 

@@ -3,9 +3,11 @@
 This file is deliberately boring. It's the one place that knows about every
 part of Wren, so the parts themselves don't have to know about each other:
 
-    Config ──> Provider ──┐
-                          ├──> Agent ──> Repl
-    Tools  ──> Registry ──┘
+    Config ──> Provider ───────────────┐
+                                       ├──> Agent ──> Repl
+    Tools + Permissions ──> Registry ──┘                │
+                 ▲                                      │
+                 └────── "may I?" is asked by ──────────┘
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from wren.config import Config
 from wren.prompts import build_system_prompt
 from wren.providers import PROVIDERS, make_provider
 from wren.repl import Repl
-from wren.tools import ToolRegistry, default_tools
+from wren.tools import Permissions, ToolRegistry, default_tools
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -57,7 +59,13 @@ def main(argv: list[str] | None = None) -> int:
 
     root = Path.cwd()
     provider = make_provider(config.provider, config.model)
-    tools = ToolRegistry(default_tools(), root=root)
+    permissions = Permissions()
+    tools = ToolRegistry(default_tools(), root=root, permissions=permissions)
     agent = Agent(provider, build_system_prompt(root), config.max_tokens, tools, config.max_steps)
-    Repl(agent).run()
+    repl = Repl(agent)
+    # The one loop in the wiring: tools need to ask the user, and the REPL is
+    # the part that talks to the user. Until this line, Permissions has
+    # nobody to ask, and so refuses everything.
+    permissions.ask = repl.ask_permission
+    repl.run()
     return 0

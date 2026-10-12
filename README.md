@@ -2,7 +2,7 @@
 
 A small, readable coding-agent harness for the terminal, built step by step so every part can be understood.
 
-> **Status: step 2 of the roadmap.** Wren chats with Claude in your terminal and explores your project with read-only tools: it lists, reads and searches files to answer from the actual code. It can't change anything yet; that's step 3.
+> **Status: step 3 of the roadmap.** Wren chats with Claude in your terminal, explores your project, and can now change it: it edits files and runs commands such as your tests, asking your permission first. The shell is not sandboxed, so read what you approve.
 
 ## Quickstart
 
@@ -21,20 +21,44 @@ wren
 
 If you use [uv](https://docs.astral.sh/uv/): `uv sync --extra dev`, then `uv run wren`.
 
-**No API key?** `wren --provider fake` starts Wren with a pretend model. It's free and offline. It echoes what you type, except for three commands that make it call real tools, so you can watch the agent loop work: `ls [pattern]`, `read <path>`, `search <regex>`.
+**No API key?** `wren --provider fake` starts Wren with a pretend model. It's free and offline. It echoes what you type, except for a few commands that make it call real tools, so you can watch the agent loop and the permission prompts work: `ls [pattern]`, `read <path>`, `search <regex>`, `write <path> <text>`, `edit <path> <old> => <new>`, `run <command>`.
 
 ## Using it
 
-Start Wren inside the project you want to ask about: its tools can only see that folder. Type a message and press Enter. Replies stream in as they're written. Tool calls appear as they happen, followed by a dim line with the tokens the turn used:
+Start Wren inside the project you want to work on: its file tools can only see that folder. Type a message and press Enter. Replies stream in as they're written. Tool calls appear as they happen, followed by a dim line with the tokens the turn used:
 
 ```
-› where is the step limit enforced?
-Let me find it.
-  ▸ search(pattern='max_steps')  → 9 matches in 4 files
-  ▸ read_file(path='src/wren/agent.py', offset=95, limit=40)  → lines 95-134 of 161
-It's in Agent._loop (src/wren/agent.py:104)…
-↳ 6,120 in · 310 out · 3 model calls
+› the area function is wrong, fix it and run the tests
+Let me look.
+  ▸ read_file(path='shapes.py')  → 2 lines
+  ▸ edit_file(path='shapes.py', old_string='w + h', new_string='w * h')
+    Edit shapes.py
+    │ @@ -1,2 +1,2 @@
+    │  def area(w, h):
+    │ -    return w + h
+    │ +    return w * h
+    Allow? [y]es / [n]o / [a]lways allow all file edits this session: y
+  → shapes.py +1 −1
+  ▸ shell(command='pytest -q')
+    Run a shell command
+    │ pytest -q
+    Allow? [y]es / [n]o / [a]lways allow commands starting with `pytest` this session: a
+  → 3 lines
+Fixed: area multiplied nothing, it added (shapes.py:2). The tests pass.
+↳ 9,480 in · 420 out · 4 model calls
 ```
+
+### Permission
+
+Wren asks before every file edit and every shell command, and shows you exactly what it will do.
+
+| Answer | Meaning |
+| ------ | ------- |
+| `y`    | Yes, this once |
+| `n`    | No. Wren is told you declined, and should ask how you'd like to proceed |
+| `a`    | Yes, and don't ask again this session for this kind of thing: all file edits, or commands starting with the same word |
+
+`a` is only offered for simple commands: anything with `;`, `&&`, pipes, `$` or redirects is asked about every time. "Always" answers are forgotten when you quit. Reading, listing and searching never ask.
 
 | Command         | What it does                                          |
 | --------------- | ----------------------------------------------------- |
@@ -44,10 +68,11 @@ It's in Agent._loop (src/wren/agent.py:104)…
 | `/history`      | Show the conversation exactly as Wren holds it        |
 | `/system`       | Show the system prompt sent with every request        |
 | `/usage`        | Tokens used this session                              |
+| `/permissions`  | Show what you've said Wren may always do this session |
 | `/clear`        | Start a fresh conversation                            |
 | `/quit`         | Exit (Ctrl-D works too)                               |
 
-Ctrl-C while Wren is working stops it and discards that turn. Ctrl-C at the prompt clears the line.
+Ctrl-C while Wren is working stops it. Anything it had already done stays done, and stays in the conversation, so Wren knows where it left off. Ctrl-C at the prompt clears the line.
 
 ### Tools
 
@@ -56,8 +81,11 @@ Ctrl-C while Wren is working stops it and discards that turn. Ctrl-C at the prom
 | `list_files` | List files and folders, optionally by glob (`**/*.py`)          |
 | `read_file`  | Read a file with line numbers, 500 lines at a time              |
 | `search`     | Find lines matching a regular expression across the project     |
+| `edit_file`  | Replace an exact piece of text in a file (asks first)           |
+| `write_file` | Create a file, or replace one completely (asks first)           |
+| `shell`      | Run a command: tests, git, builds (asks first)                  |
 
-All three are read-only, confined to the working directory, and skip folders like `.git`, `node_modules` and `.venv`.
+The file tools are confined to the working directory, skip folders like `.git`, `node_modules` and `.venv` when listing and searching, and never write inside `.git`. **`shell` is not confined:** a command runs as you, with everything you can reach. The permission prompt is the safeguard.
 
 ## Configuration
 
@@ -81,12 +109,13 @@ The docs are written to teach, not just to reference:
 - **[Build journal](docs/journal/)**: one entry per step, explaining the ideas behind what we built.
   1. [Foundations: a chat loop you own](docs/journal/01-foundations.md)
   2. [Tools: the agent loop](docs/journal/02-tools.md)
+  3. [Acting safely: edits, commands and permission](docs/journal/03-acting-safely.md)
 
 ## Roadmap
 
 - [x] **1. Foundations**: conversation state, a swappable model provider, streaming, the terminal loop
 - [x] **2. Tools, read-only**: the real agent loop; Wren can list, read and search files
-- [ ] **3. Acting safely**: typed tool inputs (Pydantic), editing files and running commands, behind permission prompts
+- [x] **3. Acting safely**: typed tool inputs (Pydantic), editing files and running commands, behind permission prompts
 - [ ] **4. A better terminal UI**: rendered markdown, spinners, visible tool calls
 - [ ] **5. Context management**: token budgets, compaction, prompt caching
 - [ ] **6. Project memory**: a `WREN.md` file of standing instructions per project
@@ -114,13 +143,16 @@ src/wren/
     anthropic.py    Claude, via the Anthropic Messages API
     fake.py         a pretend model for tests and the offline demo
   tools/
-    base.py         the Tool interface, ToolResult, ToolError
-    registry.py     looks up, validates, runs and caps every tool call
-    validation.py   a tiny JSON Schema checker (replaced by Pydantic in step 3)
-    files.py        path fencing, folder walking, glob matching
+    base.py         the Tool interface; Pydantic inputs -> schema and checked arguments
+    registry.py     looks up, checks, gets permission for, runs and caps every tool call
+    permissions.py  what needs asking, and what's "always" allowed this session
+    files.py        path fencing, folder walking, glob matching, safe text read/write, diffs
     list_files.py   ┐
-    read_file.py    ├ the tools themselves
+    read_file.py    ├ read-only tools
     search.py       ┘
+    edit_file.py    ┐
+    write_file.py   ├ tools that change things (and ask first)
+    shell.py        ┘
 tests/              unit and end-to-end tests
 docs/               architecture, decisions, build journal
 ```

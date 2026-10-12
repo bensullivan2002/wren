@@ -1,8 +1,10 @@
 """Helpers shared by the file tools: keeping paths inside the working
-directory, walking folders, spotting binary files, and matching globs."""
+directory, walking folders, spotting binary files, matching globs, and
+reading and writing text without disturbing it."""
 
 from __future__ import annotations
 
+import difflib
 import os
 import re
 from pathlib import Path
@@ -37,6 +39,19 @@ def resolve(ctx: ToolContext, path: str) -> Path:
             "Wren's tools can only access files inside it."
         )
     return candidate
+
+
+def resolve_for_writing(ctx: ToolContext, path: str) -> Path:
+    """Like resolve(), for tools that are about to change the file.
+
+    One extra rule: nothing inside `.git` may be written. That folder is
+    git's own database, and its `hooks/` are scripts git runs by itself, so
+    a file written there could run later without anyone approving it.
+    """
+    target = resolve(ctx, path)
+    if ".git" in target.relative_to(ctx.root).parts:
+        raise ToolError(f"'{path}' is inside .git, which Wren's tools never write to. Use git commands instead.")
+    return target
 
 
 def is_inside(ctx: ToolContext, path: Path) -> bool:
@@ -98,3 +113,55 @@ def clip(line: str, limit: int) -> str:
     if len(line) <= limit:
         return line
     return f"{line[:limit]}… [{len(line) - limit:,} more characters]"
+
+
+# --- Reading and writing text for edits --------------------------------------
+#
+# Python's ordinary text mode quietly converts Windows line endings ("\r\n")
+# to "\n" when reading. That's fine for showing a file, but an edit tool that
+# read a file that way and wrote it back would rewrite every line ending in
+# it, and the diff would be the whole file. So edits work on bytes at the
+# edges: we note which line ending the file uses, work in "\n" (which is what
+# the model writes), and put the original endings back when saving.
+
+
+def read_text(path: Path, name: str) -> tuple[str, str]:
+    """Return (text using "\n", the file's own line ending)."""
+    raw = path.read_bytes()
+    if b"\0" in raw[:8192]:
+        raise ToolError(f"{name} looks like a binary file, so it can't be edited as text.")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ToolError(f"{name} isn't valid UTF-8 text, so it can't be edited safely.") from None
+    newline = "\r\n" if "\r\n" in text else "\n"
+    return text.replace("\r\n", "\n"), newline
+
+
+def write_text(path: Path, text: str, newline: str = "\n") -> None:
+    if newline != "\n":
+        text = text.replace("\n", newline)
+    path.write_bytes(text.encode("utf-8"))
+
+
+def diff(old: str, new: str, name: str) -> str:
+    """A unified diff, the same format `git diff` prints: lines starting
+    with "-" are removed, "+" are added, and the rest is context."""
+    lines = difflib.unified_diff(
+        old.splitlines(), new.splitlines(), fromfile=f"a/{name}", tofile=f"b/{name}", lineterm=""
+    )
+    return "\n".join(lines)
+
+
+def diff_summary(old: str, new: str) -> str:
+    """How big a change is, in lines: "+3 −1"."""
+    added = removed = 0
+    for line in difflib.ndiff(old.splitlines(), new.splitlines()):
+        added += line.startswith("+ ")
+        removed += line.startswith("- ")
+    return f"+{added} −{removed}"
+
+
+def numbered(lines: list[str], first: int, max_chars: int = 500) -> str:
+    """Lines in read_file's format: a right-aligned number, a tab, the text."""
+    return "\n".join(f"{number:>6}\t{clip(line, max_chars)}" for number, line in enumerate(lines, first))

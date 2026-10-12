@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from wren.tools.base import Tool, ToolContext, ToolError, ToolResult
-from wren.tools.files import clip, is_binary, resolve, shown
+from pydantic import Field
+
+from wren.tools.base import Tool, ToolContext, ToolError, ToolInput, ToolResult
+from wren.tools.files import is_binary, numbered, resolve, shown
 
 DEFAULT_LIMIT = 500  # lines per read
 MAX_LINE_CHARS = 500
@@ -19,31 +21,13 @@ class ReadFile(Tool):
         "ends with a note saying which offset to use to read the next part. "
         "If you don't know the exact path, use list_files or search first."
     )
-    input_schema = {
-        "type": "object",
-        "properties": {
-            "path": {
-                "type": "string",
-                "description": "Path to the file, relative to the working directory.",
-            },
-            "offset": {
-                "type": "integer",
-                "minimum": 1,
-                "default": 1,
-                "description": "Line number to start reading from (1 is the first line).",
-            },
-            "limit": {
-                "type": "integer",
-                "minimum": 1,
-                "default": DEFAULT_LIMIT,
-                "description": "Maximum number of lines to return.",
-            },
-        },
-        "required": ["path"],
-    }
+    class Input(ToolInput):
+        path: str = Field(description="Path to the file, relative to the working directory.")
+        offset: int = Field(1, ge=1, description="Line number to start reading from (1 is the first line).")
+        limit: int = Field(DEFAULT_LIMIT, ge=1, description="Maximum number of lines to return.")
 
-    def run(self, args, ctx: ToolContext) -> ToolResult:
-        path = resolve(ctx, args["path"])
+    def run(self, args: Input, ctx: ToolContext) -> ToolResult:
+        path = resolve(ctx, args.path)
         name = shown(ctx, path)
 
         if not path.exists():
@@ -61,19 +45,16 @@ class ReadFile(Tool):
         if total == 0:
             return ToolResult("(this file is empty)", summary="empty file")
 
-        start = args["offset"]
+        start = args.offset
         if start > total:
             raise ToolError(f"offset {start} is past the end of {name}, which has {total} lines.")
-        end = min(start - 1 + args["limit"], total)
+        end = min(start - 1 + args.limit, total)
 
-        # Line numbers let the model say "line 42", and (from step 3) point
-        # precisely at the code it wants to change.
-        numbered = "\n".join(
-            f"{number:>6}\t{clip(line, MAX_LINE_CHARS)}"
-            for number, line in enumerate(lines[start - 1 : end], start)
-        )
+        # Line numbers let the model say "line 42", and find its way back to
+        # the code it wants to change.
+        shown_lines = numbered(lines[start - 1 : end], start, MAX_LINE_CHARS)
         if start == 1 and end == total:
-            return ToolResult(numbered, summary=f"{total} lines")
+            return ToolResult(shown_lines, summary=f"{total} lines")
 
         # A note that tells the model how to get the rest. Tool output is the
         # model's only view of the world, so make it say what to do next.
@@ -81,4 +62,4 @@ class ReadFile(Tool):
         if end < total:
             note += f" To read on, call read_file with offset={end + 1}."
         note += "]"
-        return ToolResult(f"{numbered}\n\n{note}", summary=f"lines {start}-{end} of {total}")
+        return ToolResult(f"{shown_lines}\n\n{note}", summary=f"lines {start}-{end} of {total}")

@@ -5,6 +5,10 @@
 Everything about *showing* things lives here, and nothing about *doing*
 things. The agent hands us events; we decide how they look. Swapping this
 file for a fancier interface later shouldn't require touching the agent.
+
+The same goes for permission prompts. The tools layer decides *whether* to
+ask (tools/permissions.py); `Repl.ask_permission` decides what asking looks
+like.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from typing import Any, Callable, TextIO
 from wren import __version__
 from wren.agent import Agent, ToolFinished, ToolStarted, TurnFinished
 from wren.messages import Completed, Message, TextBlock, TextDelta, ToolResultBlock, ToolUseBlock
+from wren.tools import Decision, PermissionRequest
 
 try:
     # On macOS and Linux, importing readline quietly upgrades input(): arrow
@@ -39,12 +44,16 @@ def _style(code: str) -> Callable[[str], str]:
     return lambda s: f"\033[{code}m{s}\033[0m" if _COLOR else s
 
 
-dim, bold, red, cyan = _style("2"), _style("1"), _style("31"), _style("36")
+dim, bold, red, green, cyan, yellow = _style("2"), _style("1"), _style("31"), _style("32"), _style("36"), _style("33")
 
 # Inside an input() prompt, escape codes must be wrapped in \001...\002 so
 # readline knows they take up no space on screen. Without that, long lines
 # and history recall leave the cursor in the wrong place.
 PROMPT = "\001\033[1;36m\002›\001\033[0m\002 " if _COLOR else "> "
+
+# A permission prompt shows at most this much of a diff or a new file. Enough
+# to judge most changes; a huge one says how much more there is.
+MAX_DETAIL_LINES = 40
 
 HELP = """\
 /help          show this list
@@ -53,10 +62,13 @@ HELP = """\
 /history       show the conversation exactly as Wren holds it
 /system        show the system prompt sent with every request
 /usage         tokens used this session
+/permissions   show what you've said Wren may always do this session
 /clear         start a fresh conversation
 /quit          exit (Ctrl-D works too)
 
-Ctrl-C while Wren is working stops it and discards that turn."""
+Wren asks before it edits a file or runs a command: y, n, or a for "always".
+Ctrl-C while Wren is working stops it. Whatever it had already done stays done,
+and stays in the conversation."""
 
 
 class Repl:
@@ -102,11 +114,11 @@ class Repl:
                     self.show(event)
         except KeyboardInterrupt:
             self._end_line()
-            self.say(dim("[interrupted: that turn was discarded]"))
+            self.say(dim("[interrupted: anything Wren had already done is kept, and it knows where it stopped]"))
         except Exception as e:  # network trouble, bad API key, etc.
             self._end_line()
             self.say(red(f"error: {e}"))
-            self.say(dim("That turn was discarded; the conversation is unchanged."))
+            self.say(dim("The turn stopped there. What happened before the error is kept in the conversation."))
 
     def show(self, event: Any) -> None:
         if isinstance(event, TextDelta):
@@ -119,11 +131,14 @@ class Repl:
                 self.say(red("[reply cut off: hit the max_tokens limit]"))
 
         elif isinstance(event, ToolStarted):
-            # Printed without a newline, so the result can finish the line.
+            # Printed without a newline, so the result can finish the line
+            # (unless a permission prompt comes in between).
             self.say(cyan("  ▸ ") + dim(format_call(event.call)), end="")
+            self._mid_line = True
 
         elif isinstance(event, ToolFinished):
             result = event.result
+            self._mid_line = False
             if result.is_error:
                 self.say(red(f"  ✗ {result.summary}"))
             else:
@@ -141,6 +156,49 @@ class Repl:
         if self._mid_line:
             self.say()
             self._mid_line = False
+
+    # --- Permission prompts ---------------------------------------------------
+
+    def ask_permission(self, request: PermissionRequest) -> Decision:
+        """Show what a tool wants to do and read the user's answer.
+
+        This is called from deep inside a turn (agent -> registry ->
+        permissions -> here), while the "▸ tool(...)" line is still open.
+        """
+        self._end_line()
+        self.say(yellow(f"    {request.title}"))
+        lines = request.detail.splitlines()
+        for line in lines[:MAX_DETAIL_LINES]:
+            self.say("    " + dim("│ ") + _colour_diff_line(line))
+        if len(lines) > MAX_DETAIL_LINES:
+            self.say("    " + dim(f"│ … and {len(lines) - MAX_DETAIL_LINES:,} more lines"))
+
+        choices = "[y]es / [n]o"
+        if request.scope is not None:
+            choices += f" / [a]lways allow {request.scope_label} this session"
+        while True:
+            try:
+                answer = input(f"    Allow? {choices}: ").strip().lower()
+            except EOFError:  # Ctrl-D, or no more input: the safe answer is no
+                self.say()
+                return Decision.DENY
+            # (Ctrl-C isn't caught here: it stops the whole turn, as it does anywhere else.)
+            if answer in ("y", "yes"):
+                return Decision.ALLOW
+            if answer in ("n", "no"):
+                return Decision.DENY
+            if answer in ("a", "always") and request.scope is not None:
+                return Decision.ALWAYS
+            self.say(dim("    Please answer " + ("y, n or a." if request.scope is not None else "y or n.")))
+
+    def show_permissions(self) -> None:
+        always = self.agent.tools.permissions.always
+        if not always:
+            self.say(dim("Nothing is always allowed: Wren asks before every edit and command."))
+            return
+        self.say("Allowed without asking, until you quit:")
+        for label in always.values():
+            self.say(f"  {label}")
 
     # --- Slash commands -----------------------------------------------------
 
@@ -162,6 +220,8 @@ class Repl:
             self.say(self.agent.system_prompt)
         elif name == "/history":
             self.show_history()
+        elif name == "/permissions":
+            self.show_permissions()
         elif name == "/tools":
             self.show_tools(args[0] if args else None)
         else:
@@ -195,6 +255,15 @@ def format_call(call: ToolUseBlock) -> str:
     """A tool call written like a Python call: read_file(path='app.py')."""
     args = ", ".join(f"{key}={_shorten(repr(value), 60)}" for key, value in call.input.items())
     return f"{call.name}({args})"
+
+
+def _colour_diff_line(line: str) -> str:
+    """Green for added lines, red for removed, as `git diff` does."""
+    if line.startswith("+") and not line.startswith("+++"):
+        return green(line)
+    if line.startswith("-") and not line.startswith("---"):
+        return red(line)
+    return line
 
 
 def _shorten(text: str, limit: int) -> str:

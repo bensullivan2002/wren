@@ -53,7 +53,7 @@ Providers yield events as the model writes, rather than returning a finished rep
 `FakeProvider` implements the same interface with scripted or echoed replies. Tests use it, so they need no network or API key, and anyone can try Wren offline with `--provider fake`.
 
 ### D9. Interrupted turns are rolled back
-*Step 1 · design*
+*Step 1 · design* · **Superseded by D24 in step 3.**
 
 If a turn is interrupted or fails, the agent removes that turn's messages entirely. The alternative, keeping a partial reply, means deciding what "half a turn" means, and once tools arrive a half-finished turn can be outright invalid for the API.
 
@@ -75,7 +75,7 @@ The docs version with the code, so they can't drift apart unnoticed, and they re
 ---
 
 ### D13. Hand-written tool schemas now, Pydantic in step 3
-*Step 2 · you*
+*Step 2 · you* · **Carried out in step 3:** see D25.
 
 In step 2, each tool's JSON Schema is written out by hand and checked by a small hand-rolled validator (`tools/validation.py`). You see exactly what the model sees and what validation involves. At the start of step 3, before any tool can change files, we refactor to one Pydantic model per tool, which generates the schema and validates input from a single definition.
 *Why not straight to Pydantic:* learning first, then the better-engineered version. The refactor is cheap because nothing outside each tool touches its schema.
@@ -123,3 +123,71 @@ Each tool limits its own output (500 lines per read, 200 listing entries, 100 se
 *Step 2 · design*
 
 When the model asks for several tools in one reply, they run sequentially, in order, and the results go back together. Running them in parallel is faster but complicates output and, once tools have side effects, ordering. Simple first.
+
+---
+
+### D22. Our own edit and shell tools, not Anthropic's predefined ones
+*Step 3 · you*
+
+`edit_file`, `write_file` and `shell` are ordinary Wren tools with Pydantic inputs. Anthropic's API also offers predefined, schema-less tool types (`text_editor_20250728`, `bash_20250124`) that Claude is trained on.
+*Why ours:* they work with any provider (D4, D5), they go through the same schema and validation as every other tool (D25), and every line is visible. It's also the industry norm: Claude Code's own Edit, Write and Bash are custom tools of this shape.
+*Not chosen:* the predefined types (Anthropic-only; no schema to own; the editor's `view` command duplicates `read_file`; `bash` expects a persistent session). Our own tools copying the predefined editor's multi-command shape (one tool with four commands is harder to describe and to ask permission for than separate narrow tools).
+*Cost:* we write and maintain the descriptions.
+
+### D23. Reads are free; edits and commands ask; "always" lasts for the session
+*Step 3 · you*
+
+Read-only tools never ask. Edits and commands ask every time, with three answers: yes, no, or always. "Always" covers all file edits, or shell commands starting with the same word, and is held in memory until Wren exits.
+*Not chosen:* asking every time with no "always" (safest, but prompts that appear too often stop being read). Saving "always" rules to a project file (the full industry standard, as in Claude Code; left for a later step because it needs a config format and rule matching, which is more to get wrong).
+
+### D24. A turn that's cut short is kept, not rolled back
+*Step 3 · you · supersedes D9*
+
+After Ctrl-C or an error, the history keeps everything that happened. Unanswered tool requests get a result (the real one, "cut short", or "not run"), and a closing assistant note records where the turn stopped. One rule covers interrupts and errors alike.
+*Why:* once tools have side effects, deleting a turn from the history doesn't undo it. The model would forget changes that are really on disk.
+*Not chosen:* rolling back only when nothing but read-only tools ran (two behaviours to understand and test). Snapshotting files and undoing edits on interrupt (shell commands can't be undone, so the promise would be partial; better as a separate undo feature).
+*Cost:* a turn that fails on its very first model call still leaves your message and a note in the history, where D9 left nothing.
+
+### D25. Tool inputs are strict, closed Pydantic models
+*Step 3 · design*
+
+Every tool's `Input` inherits `ToolInput`, which sets `strict=True` (no type conversion: `"10"` is not `10`) and `extra="forbid"` (unknown arguments are errors). Pydantic's errors are rewritten into sentences for the model. Field titles are stripped from the generated schema to save tokens. `pydantic>=2` is now a declared dependency.
+*Not chosen:* Pydantic's default lax mode, which would quietly accept `"10"`. It's more forgiving, but a wrong type means the model misread the schema, and a clear error teaches it faster than a guess. Open to challenge if real use shows the model tripping on it.
+
+### D26. Tools describe their effects; the registry enforces; the front end asks through a callback
+*Step 3 · design*
+
+A tool returns a `PermissionRequest` from `permission()`, or `None` if it only reads. `ToolRegistry.run` asks `Permissions.allows` between validation and running. `Permissions` asks the user through a callback that `cli.py` points at the REPL. With no callback, everything that needs permission is refused (fail closed).
+*Not chosen:* a central table of which tool names need permission (the knowledge of what a call will do belongs with the tool, and a table can't show a diff). A `PermissionRequested` event answered with `generator.send()` (purer, since the agent would stay the only channel to the UI, but it threads a two-way protocol through every generator between the registry and the REPL).
+
+### D27. `edit_file` replaces exact text that must be unique; `write_file` is separate
+*Step 3 · design*
+
+An edit names the text to replace. It fails if that text is missing, or occurs more than once without `replace_all`. Creating and overwriting files is a different tool.
+*Why:* a stale picture of the file makes the edit fail loudly instead of applying wrongly.
+*Not chosen:* whole-file rewrites only (expensive, and lossy on long files), line-number edits (numbers go stale), unified-diff patches (models get the line counts in hunk headers wrong).
+
+### D28. Shell "always" is keyed on the first word, for simple commands only
+*Step 3 · design*
+
+"Always allow" for a command covers later commands with the same first word, and is only offered when the command contains no shell syntax (`;`, `&`, `|`, `$`, redirects, brackets, backslashes, line breaks) and no leading `VAR=value`. Anything else is asked about every time.
+*Why:* `pytest; rm -rf ~` also starts with `pytest`. The check doesn't try to parse quoting, so it sometimes asks when it needn't; it never fails to ask when it should.
+*Cost:* the first word is a coarse unit. "Always allow `git`" includes `git push --force`.
+
+### D29. The shell runs each command fresh, with a timeout, and is not sandboxed
+*Step 3 · design*
+
+Each command gets a new shell in the working directory, no keyboard input, combined stdout and stderr, and a timeout (120 seconds by default, 600 at most), after which its whole process group is killed. A non-zero exit code is reported in a normal result, not an error. Long output keeps its tail.
+*Not chosen:* one persistent shell session (state carries over, but so do surprises, and it's much more machinery). Sandboxing (the right long-term answer; a project of its own).
+*Cost:* the shell can reach anything you can. The permission prompt is the only protection.
+
+### D30. Writing tools never touch `.git`
+*Step 3 · design*
+
+`edit_file` and `write_file` refuse any path inside `.git`. Its hooks are scripts git runs by itself, so writing there would be a way to run code later with nobody approving it, and "always allow edits" would cover it.
+
+### D31. A declined action is an error result, and the turn goes on
+*Step 3 · design*
+
+Saying no doesn't end the turn. The model gets a result saying the user declined, not to retry or work around it, and to ask how to proceed.
+*Not chosen:* ending the turn on a no (simpler, but the model never learns it was declined, and may ask again next turn).

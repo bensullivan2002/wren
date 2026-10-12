@@ -2,10 +2,11 @@ from contextlib import closing
 
 import pytest
 
-from wren.agent import Agent, ToolFinished, ToolStarted, TurnFinished
+from wren.agent import CUT_SHORT, INTERRUPTED_NOTE, NOT_RUN, Agent, ToolFinished, ToolStarted, TurnFinished
 from wren.messages import Completed, Message, TextBlock, TextDelta, ToolUseBlock, history_problems
 from wren.providers.fake import FakeProvider
-from wren.tools import Tool, ToolRegistry, ToolResult
+from wren.tools import Decision, Permissions, Tool, ToolInput, ToolRegistry, ToolResult, default_tools
+from wren.tools.registry import DECLINED
 
 # --- Test doubles ---------------------------------------------------------
 
@@ -13,10 +14,12 @@ from wren.tools import Tool, ToolRegistry, ToolResult
 class Shout(Tool):
     name = "shout"
     description = "Return the text in capitals."
-    input_schema = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
+
+    class Input(ToolInput):
+        text: str
 
     def run(self, args, ctx):
-        return ToolResult(args["text"].upper(), summary="shouted")
+        return ToolResult(args.text.upper(), summary="shouted")
 
 
 def make_agent(replies, max_steps=10):
@@ -147,10 +150,14 @@ def test_turn_usage_covers_every_model_call_in_the_turn():
     assert events[-1].usage.output_tokens == sum(u.output_tokens for u in per_call)
 
 
-# --- Rolling back -----------------------------------------------------------
+# --- Turns that are cut short -------------------------------------------------
+#
+# Tools can now change things, so a turn that stops early is kept, not rolled
+# back: the model must remember what it really did. Each test checks both that
+# the history says what happened and that it's still valid.
 
 
-def test_abandoning_a_turn_rolls_the_conversation_back():
+def test_an_interrupted_reply_keeps_what_was_said_and_notes_the_interruption():
     # What happens when you press Ctrl-C mid-reply: the UI stops iterating.
     agent, _ = make_agent(["kept", "a long reply that gets cut off"])
     run(agent, "first")
@@ -158,23 +165,93 @@ def test_abandoning_a_turn_rolls_the_conversation_back():
     with closing(agent.run_turn("second")) as events:
         next(events)  # read one fragment, then walk away
 
-    assert [m.text for m in agent.messages] == ["first", "kept"]
+    assert [m.text for m in agent.messages[:3]] == ["first", "kept", "second"]
+    assert agent.messages[3].text == f"a\n\n{INTERRUPTED_NOTE}"
+    assert history_problems(agent.messages) == []
 
 
-def test_abandoning_a_turn_mid_loop_rolls_back_the_tool_calls_too():
-    agent, _ = make_agent([asks(("t1", "shout", {"text": "hi"})), "never reached"])
+def test_interrupting_between_tools_keeps_finished_results_and_answers_the_rest():
+    agent, _ = make_agent([asks(("t1", "shout", {"text": "one"}), ("t2", "shout", {"text": "two"}))])
     with closing(agent.run_turn("go")) as events:
         for event in events:
-            if isinstance(event, ToolStarted):
-                break
-    assert agent.messages == []
+            if isinstance(event, ToolFinished):
+                break  # t1 has run; t2 never starts
+
+    first, second = agent.messages[2].tool_results
+    assert (first.tool_use_id, first.content, first.is_error) == ("t1", "ONE", False)
+    assert (second.tool_use_id, second.content, second.is_error) == ("t2", NOT_RUN, True)
+    assert agent.messages[3].text == INTERRUPTED_NOTE
+    assert history_problems(agent.messages) == []
 
 
-def test_a_provider_error_rolls_the_conversation_back():
-    agent, _ = make_agent([])  # no replies: the provider raises
+def test_interrupting_a_running_tool_says_it_may_have_partly_completed():
+    class Stuck(Tool):
+        name = "stuck"
+        description = "Never finishes."
+
+        def run(self, args, ctx):
+            raise KeyboardInterrupt  # Ctrl-C arrives while the tool is working
+
+    agent = Agent(FakeProvider([asks(("t1", "stuck", {}))]), "sys", 100, ToolRegistry([Stuck()]))
+    with pytest.raises(KeyboardInterrupt):
+        run(agent, "go")
+
+    assert agent.messages[2].tool_results[0].content == CUT_SHORT
+    assert history_problems(agent.messages) == []
+
+
+def test_a_provider_error_is_noted_and_the_conversation_carries_on():
+    agent, provider = make_agent([asks(("t1", "shout", {"text": "hi"}))])  # then the script runs out
     with pytest.raises(RuntimeError):
-        run(agent, "hello?")
-    assert agent.messages == []
+        run(agent, "go")
+
+    assert agent.messages[2].tool_results[0].content == "HI"  # the tool call that did happen is kept
+    assert "because of an error" in agent.messages[3].text and "ran out of scripted replies" in agent.messages[3].text
+    assert history_problems(agent.messages) == []
+
+    provider.replies.append("back again")
+    run(agent, "still there?")
+    assert history_problems(agent.messages) == []
+
+
+# --- Permissions, end to end ----------------------------------------------------
+
+
+def writing_agent(tmp_path, replies, ask):
+    tools = ToolRegistry(default_tools(), root=tmp_path, permissions=Permissions(ask))
+    return Agent(FakeProvider(replies), "sys", 100, tools)
+
+
+def test_an_approved_write_happens_and_a_declined_one_does_not(tmp_path):
+    answers = iter([Decision.ALLOW, Decision.DENY])
+    agent = writing_agent(
+        tmp_path,
+        [
+            asks(("t1", "write_file", {"path": "yes.txt", "content": "ok\n"})),
+            asks(("t2", "write_file", {"path": "no.txt", "content": "ok\n"})),
+            "I'll leave it there.",
+        ],
+        ask=lambda request: next(answers),
+    )
+    run(agent, "write two files")
+
+    assert (tmp_path / "yes.txt").read_text() == "ok\n"
+    assert not (tmp_path / "no.txt").exists()
+    declined = agent.messages[4].tool_results[0]
+    assert declined.is_error and declined.content == DECLINED
+    assert history_problems(agent.messages) == []
+
+
+def test_ctrl_c_at_a_permission_prompt_stops_the_turn_and_changes_nothing(tmp_path):
+    def ask(request):
+        raise KeyboardInterrupt
+
+    agent = writing_agent(tmp_path, [asks(("t1", "write_file", {"path": "a.txt", "content": "x"}))], ask)
+    with pytest.raises(KeyboardInterrupt):
+        run(agent, "go")
+
+    assert not (tmp_path / "a.txt").exists()
+    assert history_problems(agent.messages) == []
 
 
 def test_reset_clears_the_conversation():

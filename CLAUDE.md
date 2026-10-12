@@ -19,18 +19,19 @@ Wren is a coding-agent harness for the terminal, built step by step by Claude wi
 
 ## Status
 
-Steps 1 and 2 are done (see the roadmap in README.md). **Next: step 3, acting safely.** Planned order:
+Steps 1 to 3 are done (see the roadmap in README.md). **Next: step 4, a better terminal UI.** It should replace `repl.py` (events in, `ask_permission` callback) without touching `agent.py` or `tools/`.
 
-1. **Refactor tool inputs to Pydantic** (decision D13): one input model per tool generates the JSON Schema and validates arguments; delete `tools/validation.py`. Pydantic is already installed via the `anthropic` SDK. Journal it as a refactor: what changed and why it's better.
-2. **An edit tool and a shell tool.**
-3. **Permission prompts** in `ToolRegistry.run`, between validation and running.
-4. **Rethink rollback on interrupt**: once tools have side effects, discarding the turn from history no longer undoes them.
+Questions to put to Ben during step 4:
 
-Questions to put to Ben during step 3:
+- Which terminal UI approach: stay with plain printing plus a markdown renderer (e.g. Rich), or a full-screen TUI framework (e.g. Textual, prompt_toolkit)? Check what current coding agents use before presenting this.
+- How much to show of tool calls and results (collapsed summaries versus full output), and how diffs and permission prompts should look.
+- Whether to stream the model's tool requests as they're written (needs a new provider event).
 
-- Edit tool design: our own str_replace-style tool, or Anthropic's predefined text-editor and bash tool types, which Claude is trained on? Check the current docs before presenting this.
-- Permission model: what needs asking, "always allow" scopes, and whether choices persist between sessions.
-- What an interrupted turn should mean after side effects.
+Carried over from step 3, for whenever they fit (see journal 03, "Known limits"):
+
+- Saving "always allow" rules between sessions (D23 left this out on purpose).
+- The shell is not sandboxed, and "always allow `git`" covers every git subcommand (D28, D29).
+- The tool-writing conventions are in `docs/ARCHITECTURE.md` ("Anatomy of a tool"): a nested Pydantic `Input(ToolInput)`, `permission()` for anything that changes things, and tests that use a fake asker.
 
 ## Commands
 

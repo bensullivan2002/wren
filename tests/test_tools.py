@@ -1,4 +1,4 @@
-"""Tests for the tool framework (validation, registry, path safety) and the three file tools.
+"""Tests for the tool framework (inputs, registry, path safety) and the tools themselves.
 
 Each test builds a small throwaway project in pytest's `tmp_path`.
 """
@@ -6,12 +6,15 @@ Each test builds a small throwaway project in pytest's `tmp_path`.
 import os
 
 import pytest
+from pydantic import Field
 
-from wren.tools import Tool, ToolError, ToolRegistry, ToolResult, default_tools
+from wren.tools import Decision, Permissions, Tool, ToolError, ToolInput, ToolRegistry, ToolResult, default_tools
 from wren.tools import list_files as list_files_module
 from wren.tools import search as search_module
+from wren.tools import shell as shell_module
 from wren.tools.files import glob_to_regex
-from wren.tools.validation import validate_args
+from wren.tools.registry import DECLINED
+from wren.tools.shell import command_word
 
 
 @pytest.fixture
@@ -29,9 +32,27 @@ def project(tmp_path):
     return tmp_path
 
 
+class Answers:
+    """Stands in for the person at the permission prompt: gives a fixed
+    answer, and remembers every request it was shown."""
+
+    def __init__(self, decision=Decision.ALLOW):
+        self.decision = decision
+        self.seen = []
+
+    def __call__(self, request):
+        self.seen.append(request)
+        return self.decision
+
+
 @pytest.fixture
-def tools(project):
-    return ToolRegistry(default_tools(), root=project)
+def user():
+    return Answers()
+
+
+@pytest.fixture
+def tools(project, user):
+    return ToolRegistry(default_tools(), root=project, permissions=Permissions(user))
 
 
 def ok(result):
@@ -44,47 +65,75 @@ def err(result):
     return result
 
 
-# --- validate_args ------------------------------------------------------------
-
-SCHEMA = {
-    "type": "object",
-    "properties": {
-        "path": {"type": "string"},
-        "limit": {"type": "integer", "minimum": 1, "default": 10},
-        "loud": {"type": "boolean", "default": False},
-    },
-    "required": ["path"],
-}
+# --- Tool inputs: one Pydantic model gives the schema and the checking ----------
 
 
-def test_valid_args_get_defaults_filled_in():
-    assert validate_args({"path": "a"}, SCHEMA) == {"path": "a", "limit": 10, "loud": False}
-    assert validate_args({"path": "a", "limit": 3}, SCHEMA)["limit"] == 3
+class Demo(Tool):
+    name = "demo"
+    description = "A tool for testing inputs."
+
+    class Input(ToolInput):
+        """A docstring here is for people; it must not reach the model."""
+
+        path: str = Field(description="Where to look.")
+        limit: int = Field(10, ge=1)
+        loud: bool = False
+
+
+def test_the_schema_is_generated_from_the_input_model():
+    assert Demo().spec().input_schema == {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Where to look."},
+            "limit": {"type": "integer", "minimum": 1, "default": 10},
+            "loud": {"type": "boolean", "default": False},
+        },
+        "required": ["path"],
+        "additionalProperties": False,
+    }
+
+
+def test_valid_args_become_a_typed_object_with_defaults_filled_in():
+    args = Demo().parse({"path": "a"})
+    assert (args.path, args.limit, args.loud) == ("a", 10, False)
+    assert Demo().parse({"path": "a", "limit": 3}).limit == 3
 
 
 def test_every_problem_is_reported_at_once():
     with pytest.raises(ToolError) as e:
-        validate_args({"limit": "ten", "colour": "red"}, SCHEMA)
+        Demo().parse({"limit": "ten", "colour": "red"})
     message = str(e.value)
     assert "missing required argument 'path'" in message
-    assert "'limit' must be an integer, not a string" in message
+    assert "'limit': Input should be a valid integer (got 'ten')" in message
     assert "unknown argument 'colour'" in message
     assert "Accepted arguments: path, limit, loud" in message
 
 
-def test_true_is_not_accepted_as_an_integer():
-    with pytest.raises(ToolError, match="'limit' must be an integer, not a boolean"):
-        validate_args({"path": "a", "limit": True}, SCHEMA)
+@pytest.mark.parametrize("almost", [True, "3", 3.0])
+def test_nothing_is_quietly_converted_to_an_integer(almost):
+    with pytest.raises(ToolError, match="'limit': Input should be a valid integer"):
+        Demo().parse({"path": "a", "limit": almost})
 
 
 def test_minimum_is_enforced():
-    with pytest.raises(ToolError, match="at least 1"):
-        validate_args({"path": "a", "limit": 0}, SCHEMA)
+    with pytest.raises(ToolError, match="greater than or equal to 1"):
+        Demo().parse({"path": "a", "limit": 0})
 
 
 def test_arguments_must_be_an_object():
     with pytest.raises(ToolError, match="JSON object"):
-        validate_args(["a"], SCHEMA)
+        Demo().parse(["a"])
+
+
+def test_a_tool_without_an_input_model_takes_no_arguments(tmp_path):
+    assert Boom().spec().input_schema == {"type": "object", "properties": {}, "additionalProperties": False}
+    assert "unknown argument 'x'" in err(ToolRegistry([Boom()], root=tmp_path).run("boom", {"x": 1})).content
+
+
+def test_every_real_tool_describes_all_of_its_arguments():
+    for tool in default_tools():
+        for name, rules in tool.spec().input_schema["properties"].items():
+            assert rules.get("description"), f"{tool.name}.{name} has no description"
 
 
 # --- The registry -------------------------------------------------------------
@@ -93,7 +142,6 @@ def test_arguments_must_be_an_object():
 class Boom(Tool):
     name = "boom"
     description = "Always crashes."
-    input_schema = {"type": "object", "properties": {}}
 
     def run(self, args, ctx):
         raise ZeroDivisionError("division by zero")
@@ -102,7 +150,6 @@ class Boom(Tool):
 class Big(Tool):
     name = "big"
     description = "Returns a lot of text."
-    input_schema = {"type": "object", "properties": {}}
 
     def run(self, args, ctx):
         return ToolResult("x" * 500, summary="big")
@@ -269,3 +316,229 @@ def test_search_caps_matches(tools, monkeypatch):
     result = ok(tools.run("search", {"pattern": "e"}))
     assert len(result.content.split("\n\n")[0].splitlines()) == 1
     assert "Showing the first 1 of" in result.content
+
+
+# --- Permissions ---------------------------------------------------------------
+
+
+def test_read_only_tools_never_ask(tools, user):
+    ok(tools.run("list_files", {}))
+    ok(tools.run("read_file", {"path": "README.md"}))
+    ok(tools.run("search", {"pattern": "Hello"}))
+    assert user.seen == []
+
+
+def test_a_declined_action_does_not_happen_and_the_model_is_told(tools, user, project):
+    user.decision = Decision.DENY
+    result = err(tools.run("write_file", {"path": "new.txt", "content": "hi"}))
+    assert result.content == DECLINED
+    assert not (project / "new.txt").exists()
+
+
+def test_with_nobody_to_ask_the_answer_is_no(project):
+    tools = ToolRegistry(default_tools(), root=project)  # no Permissions given
+    err(tools.run("shell", {"command": "echo hi"}))
+    err(tools.run("write_file", {"path": "new.txt", "content": "hi"}))
+    assert not (project / "new.txt").exists()
+
+
+def test_always_stops_the_asking_for_that_scope_only(tools, user):
+    user.decision = Decision.ALWAYS
+    ok(tools.run("write_file", {"path": "a.txt", "content": "1"}))
+    ok(tools.run("write_file", {"path": "b.txt", "content": "2"}))
+    ok(tools.run("edit_file", {"path": "a.txt", "old_string": "1", "new_string": "3"}))
+    assert len(user.seen) == 1  # asked once; edits and writes share the "edit" scope
+
+    ok(tools.run("shell", {"command": "echo one"}))
+    ok(tools.run("shell", {"command": "echo two"}))
+    ok(tools.run("shell", {"command": "true"}))
+    assert [r.scope for r in user.seen] == ["edit", "shell:echo", "shell:true"]
+    assert tools.permissions.always == {
+        "edit": "all file edits",
+        "shell:echo": "commands starting with `echo`",
+        "shell:true": "commands starting with `true`",
+    }
+
+
+def test_always_for_a_command_does_not_cover_a_chained_command(tools, user, project):
+    user.decision = Decision.ALWAYS
+    ok(tools.run("shell", {"command": "echo hi"}))
+    user.decision = Decision.DENY
+    err(tools.run("shell", {"command": "echo hi; touch sneaky.txt"}))
+    assert user.seen[-1].scope is None  # "always" isn't even offered for it
+    assert not (project / "sneaky.txt").exists()
+
+
+@pytest.mark.parametrize(
+    "command, word",
+    [
+        ("pytest -q tests", "pytest"),
+        ("git commit -m 'a message; with punctuation?'", None),  # we don't parse quotes: when unsure, ask
+        ("git status", "git"),
+        ("echo hi; rm -rf /", None),
+        ("echo hi && rm x", None),
+        ("cat a | sh", None),
+        ("echo $(whoami)", None),
+        ("echo hi > out.txt", None),
+        ("echo one\nrm x", None),
+        ("FOO=1 pytest", None),
+        ("echo 'unclosed", None),
+        ("   ", None),
+    ],
+)
+def test_command_word(command, word):
+    assert command_word(command) == word
+
+
+def test_a_call_that_cannot_work_fails_before_the_user_is_asked(tools, user):
+    err(tools.run("edit_file", {"path": "README.md", "old_string": "not there", "new_string": "x"}))
+    err(tools.run("edit_file", {"path": "README.md"}))  # invalid arguments
+    assert user.seen == []
+
+
+# --- edit_file ------------------------------------------------------------------
+
+
+def test_edit_file_replaces_the_text_and_shows_the_result(tools, user, project):
+    result = ok(
+        tools.run("edit_file", {"path": "src/app/util.py", "old_string": "return 42", "new_string": "return 43"})
+    )
+    assert (project / "src/app/util.py").read_text() == "def helper():\n    return 43\n"
+    assert "replaced 1 occurrence" in result.content
+    assert "     2\t    return 43" in result.content  # the model sees the new lines, numbered
+    assert result.summary == "src/app/util.py +1 −1"
+
+
+def test_the_user_is_shown_a_diff_of_the_edit(tools, user):
+    ok(tools.run("edit_file", {"path": "src/app/util.py", "old_string": "return 42", "new_string": "return 43"}))
+    request = user.seen[0]
+    assert request.title == "Edit src/app/util.py"
+    assert "-    return 42" in request.detail and "+    return 43" in request.detail
+
+
+def test_edit_file_refuses_text_that_is_missing_or_ambiguous(tools, project):
+    (project / "twice.txt").write_text("a = 1\nb = 2\na = 1\n")
+    assert "was not found" in err(tools.run("edit_file", {"path": "twice.txt", "old_string": "c", "new_string": "d"})).content
+    ambiguous = err(tools.run("edit_file", {"path": "twice.txt", "old_string": "a = 1", "new_string": "a = 9"}))
+    assert "occurs 2 times" in ambiguous.content and "lines 1, 3" in ambiguous.content
+    assert (project / "twice.txt").read_text() == "a = 1\nb = 2\na = 1\n"  # untouched
+
+
+def test_edit_file_can_replace_every_occurrence(tools, project):
+    (project / "twice.txt").write_text("a = 1\nb = 2\na = 1\n")
+    args = {"path": "twice.txt", "old_string": "a = 1", "new_string": "a = 9", "replace_all": True}
+    assert "all 2 occurrences" in ok(tools.run("edit_file", args)).content
+    assert (project / "twice.txt").read_text() == "a = 9\nb = 2\na = 9\n"
+
+
+def test_edit_file_can_delete_text(tools, project):
+    ok(tools.run("edit_file", {"path": "README.md", "old_string": "Hello world\n", "new_string": ""}))
+    assert (project / "README.md").read_text() == "# Demo\n"
+
+
+def test_edit_file_keeps_windows_line_endings(tools, project):
+    (project / "win.txt").write_bytes(b"one\r\ntwo\r\nthree\r\n")
+    ok(tools.run("edit_file", {"path": "win.txt", "old_string": "one\ntwo", "new_string": "one\n2"}))
+    assert (project / "win.txt").read_bytes() == b"one\r\n2\r\nthree\r\n"
+
+
+@pytest.mark.parametrize(
+    "args, message",
+    [
+        ({"path": "missing.py", "old_string": "a", "new_string": "b"}, "use write_file"),
+        ({"path": "src", "old_string": "a", "new_string": "b"}, "is a folder"),
+        ({"path": "logo.png", "old_string": "a", "new_string": "b"}, "binary"),
+        ({"path": "README.md", "old_string": "", "new_string": "b"}, "old_string is empty"),
+        ({"path": "README.md", "old_string": "Demo", "new_string": "Demo"}, "nothing to change"),
+        ({"path": "../outside.txt", "old_string": "a", "new_string": "b"}, "outside the working directory"),
+        ({"path": ".git/config", "old_string": "hello", "new_string": "bye"}, "inside .git"),
+    ],
+)
+def test_edit_file_explains_what_went_wrong(tools, args, message):
+    assert message in err(tools.run("edit_file", args)).content
+
+
+# --- write_file -----------------------------------------------------------------
+
+
+def test_write_file_creates_a_file_and_its_folders(tools, user, project):
+    result = ok(tools.run("write_file", {"path": "docs/guide/intro.md", "content": "# Intro\nHi\n"}))
+    assert (project / "docs/guide/intro.md").read_text() == "# Intro\nHi\n"
+    assert result.summary == "created docs/guide/intro.md, 2 lines"
+    assert user.seen[0].title == "Create docs/guide/intro.md" and user.seen[0].detail == "# Intro\nHi\n"
+
+
+def test_write_file_overwrites_and_shows_the_user_what_would_be_lost(tools, user, project):
+    result = ok(tools.run("write_file", {"path": "README.md", "content": "# Demo\nGoodbye\n"}))
+    assert (project / "README.md").read_text() == "# Demo\nGoodbye\n"
+    assert result.summary == "overwrote README.md +1 −1"
+    assert user.seen[0].title == "Overwrite README.md" and "-Hello world" in user.seen[0].detail
+
+
+@pytest.mark.parametrize(
+    "path, message",
+    [("src", "is a folder"), ("logo.png", "binary"), ("../x.txt", "outside"), (".git/hooks/pre-commit", "inside .git")],
+)
+def test_write_file_explains_what_went_wrong(tools, path, message):
+    assert message in err(tools.run("write_file", {"path": path, "content": "x"})).content
+
+
+def test_write_file_cannot_escape_through_a_symlinked_folder(tools, project, tmp_path_factory):
+    elsewhere = tmp_path_factory.mktemp("elsewhere")
+    os.symlink(elsewhere, project / "link")
+    assert "outside" in err(tools.run("write_file", {"path": "link/x.txt", "content": "x"})).content
+    assert not (elsewhere / "x.txt").exists()
+
+
+# --- shell ----------------------------------------------------------------------
+# These run real commands, so they stick to ones every POSIX shell has.
+
+posix_only = pytest.mark.skipif(os.name != "posix", reason="uses POSIX shell commands")
+
+
+@posix_only
+def test_shell_runs_in_the_working_directory_and_returns_output(tools, user):
+    result = ok(tools.run("shell", {"command": "ls src"}))
+    assert result.content == "app\nnotes.txt"
+    assert result.summary == "2 lines"
+    assert user.seen[0].title == "Run a shell command" and user.seen[0].detail == "ls src"
+
+
+@posix_only
+def test_shell_reports_a_failing_command_without_calling_it_a_tool_error(tools):
+    result = ok(tools.run("shell", {"command": "echo oops >&2; exit 3"}))
+    assert result.content == "oops\n\n[Exit code 3]"
+    assert result.summary == "exit 3 · 1 line"
+
+
+@posix_only
+def test_shell_says_when_there_is_no_output(tools):
+    result = ok(tools.run("shell", {"command": "true"}))
+    assert (result.content, result.summary) == ("(no output)", "no output")
+
+
+@posix_only
+def test_shell_stops_a_command_that_runs_too_long_and_keeps_its_output(tools):
+    # `sleep` runs as a child of the shell, so this also checks the whole
+    # process group is killed: otherwise the test would hang for 30 seconds.
+    result = err(tools.run("shell", {"command": "echo started; sleep 30", "timeout": 1}))
+    assert result.content.startswith("started")
+    assert "still running after 1 seconds" in result.content
+
+
+@posix_only
+def test_shell_commands_get_no_keyboard_input(tools):
+    assert ok(tools.run("shell", {"command": "cat"})).content == "(no output)"  # returns at once
+
+
+@posix_only
+def test_shell_keeps_the_end_of_very_long_output(tools, monkeypatch):
+    monkeypatch.setattr(shell_module, "MAX_OUTPUT_CHARS", 20)
+    result = ok(tools.run("shell", {"command": "seq 1 100"}))
+    assert "showing the last 20 of" in result.content and result.content.endswith("99\n100")
+
+
+def test_shell_refuses_an_empty_command_and_a_silly_timeout(tools, user):
+    assert "command is empty" in err(tools.run("shell", {"command": "  "})).content
+    assert "less than or equal to 600" in err(tools.run("shell", {"command": "true", "timeout": 9999})).content
+    assert user.seen == []
