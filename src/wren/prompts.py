@@ -37,6 +37,50 @@ paragraphs and plain lists read best; avoid large tables. When you mention
 code, give its location as path:line so the user can find it."""
 
 
+# --- Compaction -----------------------------------------------------------------
+# When a conversation gets long, Wren asks the model to write a summary of it
+# and carries on from the summary alone (see Agent.compact). The quality of
+# everything afterwards depends on this prompt: whatever it doesn't ask for
+# is forgotten. So it asks for the things a colleague taking over would need.
+
+COMPACT_PROMPT = """\
+This conversation is getting long, so it is about to be replaced by a summary. \
+Write that summary now. After this, you will have ONLY the summary to work from: \
+anything you leave out is lost, and you will not be able to see the messages above.
+
+Do not use any tools. Reply with the summary only, under these headings:
+
+## What the user wants
+Their goals and requests, in their own words where the wording matters. Include \
+any preferences or instructions they gave about how to work.
+
+## What has been done
+What was changed or run, in order: files edited or created (with paths), \
+commands run and how they turned out. Say what the user approved and what they declined.
+
+## What was learned
+Facts about the project that took effort to find: where things live \
+(path:line), how the relevant code works, causes of bugs, dead ends already ruled out.
+
+## Current state
+What is finished, what is half-done, and anything known to be broken or untested.
+
+## Next steps
+What you were about to do, and anything still waiting on the user.
+
+Be specific and concrete. Keep exact names, paths, commands and error messages; \
+leave out pleasantries and the details of how you searched."""
+
+# What stands in the history where the old conversation was. It's phrased as
+# a note in the user's place, so that the summary (the assistant's reply to
+# it) reads naturally as what comes next.
+COMPACTED_NOTE = (
+    "[The earlier part of this conversation was removed to save space. "
+    "The assistant's own summary of it follows. Files may have changed since: "
+    "read them again before relying on details.]"
+)
+
+
 def build_system_prompt(cwd: Path | None = None, today: date | None = None) -> str:
     cwd = cwd or Path.cwd()
     today = today or date.today()

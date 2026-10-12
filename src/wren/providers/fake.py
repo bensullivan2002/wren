@@ -42,6 +42,7 @@ from wren.messages import (
     ToolUseBlock,
     Usage,
 )
+from wren.prompts import COMPACT_PROMPT
 
 class FakeProvider:
     name = "fake"
@@ -66,7 +67,7 @@ class FakeProvider:
         )
 
         if self.replies is None:
-            reply = self._demo_reply(messages[-1])
+            reply = self._demo_reply(messages)
         elif self.replies:
             reply = self.replies.pop(0)
         else:
@@ -89,7 +90,14 @@ class FakeProvider:
             usage=Usage(input_tokens=sent // 4, output_tokens=_chars(reply) // 4),
         )
 
-    def _demo_reply(self, last: Message) -> Message:
+    def _demo_reply(self, messages: list[Message]) -> Message:
+        last = messages[-1]
+        if last.text == COMPACT_PROMPT:  # Wren is compacting: play along
+            asked = [m.text for m in messages[:-1] if m.role == "user" and m.text]
+            return Message.assistant(
+                "## What the user wants\n(fake model) A pretend summary. "
+                f"There were {len(messages) - 1} messages; the user's last one was: {asked[-1] if asked else '(none)'}"
+            )
         if last.tool_results:
             result = last.tool_results[0]
             lines = result.content.splitlines() or [""]

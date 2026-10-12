@@ -245,3 +245,55 @@ A question is a widget in the transcript that takes the keyboard focus and is an
 
 Ctrl+C is left as copy, Textual's convention, so text can be copied out of a full-screen app. The REPL's Ctrl-C-to-stop therefore becomes Escape in the app.
 *Not chosen:* Shift+Enter for a new line (many terminals can't tell it from Enter). Ctrl+C to stop (it would take away copying).
+
+---
+
+### D40. Compaction is our own summary step
+*Step 5 · you*
+
+When the conversation is too large, Wren asks the model to summarise it (`COMPACT_PROMPT`) and replaces the history with that summary.
+*Why:* it works with any provider (D4, D5), the prompt and the result are readable and editable, and it's what Claude Code and most agents do.
+*Not chosen:* Anthropic's server-side compaction (least code, but a beta, Claude-only, and the summary is opaque). Dropping only old tool results (cheap and loses no dialogue, but the conversation still grows without limit; it would make a good gentler first step later).
+*Cost:* one extra model call per compaction, and a summary always loses detail.
+
+### D41. Compaction runs automatically at a budget, and on `/compact`
+*Step 5 · you*
+
+Wren compacts between turns once the conversation passes a budget: 150,000 tokens by default (the same default Anthropic's own feature uses), set with `--context-budget`, and 0 turns it off. `/compact` does it on request. A meter shows how close the budget is.
+*Not chosen:* manual only (predictable, but easy to forget). Automatic only (no way to compact early at a natural break, which is when a summary loses least).
+
+### D42. Compaction replaces everything; no recent messages are kept verbatim
+*Step 5 · design*
+
+The new history is a note and the summary, nothing else.
+*Why:* a model's reasoning blocks are tied to the conversation that preceded them. Keeping recent messages while replacing what came before would leave their reasoning attached to a history that no longer exists, which the API can reject. A clean break avoids it, and is simpler.
+*Not chosen:* keeping the last few messages word for word (kinder to continuity; revisit if a provider-neutral way to do it safely appears).
+
+### D43. The conversation's size is read from each reply, not counted
+*Step 5 · design*
+
+`context_tokens` comes from the usage the API reports with every reply: exact, free, and one call behind.
+*Not chosen:* estimating from characters (wrong, badly so for code). Calling the token-counting endpoint before each request (accurate, but an extra round trip for a number we're about to be given).
+
+### D44. Prompt caching is on for every request, placed automatically
+*Step 5 · design*
+
+The Anthropic provider adds a top-level `cache_control`, which caches up to the end of each request and moves forward as the conversation grows.
+*Not chosen:* placing cache breakpoints by hand (finer control, more to get wrong; no need yet). Moving the date out of the system prompt (it changes the prefix once a day, and the cache lasts five minutes, so it costs nothing). The one-hour cache (double the write price; worth it only if pauses between messages are usually long).
+
+### D45. Reasoning blocks are stored sealed and sent back unchanged
+*Step 5 · design · fixes a bug*
+
+Since step 1 the Anthropic provider had dropped any reply block it didn't recognise, including the model's thinking. Current models think by default and expect those blocks back. They're now kept as `ReasoningBlock`s: provider-specific data, returned in place, opened only by the provider that made them.
+*Cost:* one vendor-shaped thing in an otherwise neutral history (D5). It is opaque by design, so nothing else depends on its shape.
+
+### D46. The default `max_tokens` is 32,000
+*Step 5 · design*
+
+Up from 8,192. The model's thinking counts against this limit, so the old value could cut a reply off before it reached its answer. It's a ceiling, not a cost.
+
+### D47. Compaction happens between turns, and fails safe
+*Step 5 · design*
+
+Automatic compaction is checked at the start of a turn, when the history is whole. Every step that can fail comes before the single line that replaces the history, so a failure or an interruption leaves it untouched; a failed automatic compaction lets the turn go ahead.
+*Cost:* a single very long turn can overshoot the budget. The budget is a cost target, well below the model's real limit.

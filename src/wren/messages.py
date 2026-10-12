@@ -9,7 +9,7 @@ The structure mirrors how modern chat APIs think about a conversation:
 
     conversation = list[Message]
     Message      = a role ("user" or "assistant") + a list of content blocks
-    Block        = TextBlock | ToolUseBlock | ToolResultBlock
+    Block        = TextBlock | ToolUseBlock | ToolResultBlock | ReasoningBlock
 
 Tool blocks were defined in step 1, before anything used them, because they
 decide the *shape* of a message (content is a list of blocks, not a string),
@@ -52,7 +52,29 @@ class ToolResultBlock:
     is_error: bool = False
 
 
-Block = Union[TextBlock, ToolUseBlock, ToolResultBlock]
+@dataclass
+class ReasoningBlock:
+    """The model's private reasoning from before it answered, kept so it can
+    be handed back.
+
+    Newer models think before they reply, and the API returns that thinking
+    as blocks alongside the text. We never read them, and often can't: the
+    content may be empty or encrypted. But the provider expects them back,
+    unchanged and in place, on the next request: the model's later steps
+    build on that reasoning, and a provider may reject a conversation whose
+    reasoning has been removed or altered.
+
+    So this is the one block Wren treats as a sealed envelope. `data` is the
+    provider's own representation, stored and returned exactly as it came.
+    It's the only vendor-shaped thing in the history, and nothing outside
+    the provider that made it looks inside.
+    """
+
+    provider: str  # which provider produced it; others won't understand it
+    data: dict[str, Any]
+
+
+Block = Union[TextBlock, ToolUseBlock, ToolResultBlock, ReasoningBlock]
 
 
 # --- Messages -------------------------------------------------------------
@@ -136,15 +158,34 @@ StopReason = Literal["end_turn", "max_tokens", "tool_use", "stop_sequence", "ref
 
 @dataclass
 class Usage:
-    """Token counts. Input tokens = everything we sent; output = what the model wrote."""
+    """Token counts for one model call, or a sum of several.
+
+    Everything we send is input, but with prompt caching it's billed in
+    three parts, and the provider reports them separately:
+
+        input_tokens        sent and processed afresh       (full price)
+        cache_write_tokens  processed afresh AND saved      (a little more)
+        cache_read_tokens   recognised from a recent call   (about a tenth)
+
+    Add the three to get how much was actually sent: `sent_tokens`.
+    """
 
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+
+    @property
+    def sent_tokens(self) -> int:
+        """Everything that went to the model, however it was billed."""
+        return self.input_tokens + self.cache_read_tokens + self.cache_write_tokens
 
     def __add__(self, other: Usage) -> Usage:
         return Usage(
             self.input_tokens + other.input_tokens,
             self.output_tokens + other.output_tokens,
+            self.cache_read_tokens + other.cache_read_tokens,
+            self.cache_write_tokens + other.cache_write_tokens,
         )
 
 

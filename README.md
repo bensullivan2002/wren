@@ -2,7 +2,7 @@
 
 A small, readable coding-agent harness for the terminal, built step by step so every part can be understood.
 
-> **Status: step 4 of the roadmap.** Wren is a full-screen terminal app that chats with Claude, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first. The shell is not sandboxed, so read what you approve.
+> **Status: step 5 of the roadmap.** Wren is a full-screen terminal app that chats with Claude, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first. It caches what it re-sends and compacts long conversations to keep them affordable. The shell is not sandboxed, so read what you approve.
 
 ## Quickstart
 
@@ -64,10 +64,18 @@ Wren asks before every file edit and every shell command, and shows you exactly 
 | `/tools NAME`   | Show exactly what the model is told about one tool    |
 | `/history`      | Show the conversation exactly as Wren holds it        |
 | `/system`       | Show the system prompt sent with every request        |
-| `/usage`        | Tokens used this session                              |
+| `/usage`        | Tokens used this session, and how full the context is |
+| `/compact`      | Replace the conversation with a summary, to save tokens |
 | `/permissions`  | Show what you've said Wren may always do this session |
 | `/clear`        | Start a fresh conversation                            |
 | `/quit`         | Exit                                                  |
+
+### Long conversations
+
+Every request re-sends the whole conversation, so a long session costs more with each step. Wren does two things about it:
+
+- **Caching.** The part of each request that was sent before is billed at about a tenth of the price. Nothing to configure. `/usage` shows how much was read from the cache.
+- **Compaction.** When the conversation passes the context budget (150,000 tokens by default), Wren asks the model to summarise it and carries on from the summary. The status line shows how close you are (`context 12%`). Run `/compact` to do it at a moment you choose, such as after finishing a task. A summary loses detail: Wren may need to re-read files afterwards.
 
 ### Tools
 
@@ -90,11 +98,12 @@ Each setting can come from a flag, an environment variable, or the default, in t
 | -------------- | -------------------- | ------------------- |
 | `--provider`   | `WREN_PROVIDER`      | `anthropic`         |
 | `--model`      | `WREN_MODEL`         | `claude-sonnet-5-5` |
-| `--max-tokens` | `WREN_MAX_TOKENS`    | `8192`              |
+| `--max-tokens` | `WREN_MAX_TOKENS`    | `32000`             |
 | `--max-steps`  | `WREN_MAX_STEPS`     | `25`                |
+| `--context-budget` | `WREN_CONTEXT_BUDGET` | `150000`       |
 | `--plain`      |                      | off                 |
 
-`--max-tokens` limits one reply; `--max-steps` limits how many times Wren calls the model in one turn before it stops and checks in with you.
+`--max-tokens` limits one reply, including the model's private thinking. `--max-steps` limits how many times Wren calls the model in one turn before it stops and checks in with you. `--context-budget` is how large the conversation may grow before Wren compacts it; 0 means never.
 
 ## How it works
 
@@ -107,6 +116,7 @@ The docs are written to teach, not just to reference:
   2. [Tools: the agent loop](docs/journal/02-tools.md)
   3. [Acting safely: edits, commands and permission](docs/journal/03-acting-safely.md)
   4. [A full-screen interface](docs/journal/04-terminal-ui.md)
+  5. [Context: what a long conversation costs](docs/journal/05-context.md)
 
 ## Roadmap
 
@@ -114,7 +124,7 @@ The docs are written to teach, not just to reference:
 - [x] **2. Tools, read-only**: the real agent loop; Wren can list, read and search files
 - [x] **3. Acting safely**: typed tool inputs (Pydantic), editing files and running commands, behind permission prompts
 - [x] **4. A better terminal UI**: a full-screen app with rendered markdown, diffs, in-place permission questions, and Escape to stop
-- [ ] **5. Context management**: token budgets, compaction, prompt caching
+- [x] **5. Context management**: prompt caching, a context meter, and compaction at a token budget
 - [ ] **6. Project memory**: a `WREN.md` file of standing instructions per project
 - [ ] **7. Sessions**: save, list and resume conversations
 - [ ] **8. Extensions**: subagents, MCP servers, hooks
@@ -131,8 +141,8 @@ The tests use a fake model, so they need no API key and no network. The app's te
 src/wren/
   cli.py            entry point: flags -> config -> provider + tools -> agent -> a front end
   config.py         settings and where they come from
-  prompts.py        the system prompt, including live environment details
-  agent.py          owns the conversation; runs the agent loop
+  prompts.py        the system prompt, and the prompt used to compact a conversation
+  agent.py          owns the conversation; runs the agent loop; compacts it
   messages.py       provider-neutral message types, and the history rules
   tui.py            the full-screen front end (Textual)
   repl.py           the plain front end (--plain, pipes)

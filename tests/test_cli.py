@@ -80,6 +80,22 @@ def test_running_out_of_input_at_a_permission_prompt_means_no(tmp_path):
     assert not (tmp_path / "a.txt").exists()
 
 
+def test_a_long_conversation_is_compacted_automatically_and_on_request():
+    stdin = "hello\nagain\n/compact\n/history\n/usage\n"
+    result = wren("--provider", "fake", "--context-budget", "100", stdin=stdin)
+    out = result.stdout
+    assert "[compacting the conversation, it passed the context budget…]" in out
+    assert "[compacting the conversation, as you asked…]" in out
+    assert out.count("[conversation compacted: about") == 2
+    assert "The earlier part of this conversation was removed" in out and "A pretend summary" in out
+    assert "% of the 100 budget" in out
+
+
+def test_compact_with_nothing_to_compact_says_so():
+    result = wren("--provider", "fake", stdin="/compact\n")
+    assert "couldn't compact the conversation: there's nothing to compact yet" in result.stdout
+
+
 def test_tools_command_lists_and_shows_tools():
     result = wren("--provider", "fake", stdin="/tools\n/tools read_file\n")
     assert "list_files" in result.stdout and "search" in result.stdout
@@ -99,6 +115,10 @@ def test_config_precedence_flag_then_env_then_default():
     assert Config.load(env=env).model == "from-env"
     assert Config.load(env=env).max_steps == 7
     assert Config.load(env={}).model == DEFAULT_MODEL
+    # 0 is a real value for the budget ("never compact"), from a flag or the environment.
+    assert Config.load(context_budget=0, env={"WREN_CONTEXT_BUDGET": "5"}).context_budget == 0
+    assert Config.load(env={"WREN_CONTEXT_BUDGET": "0"}).context_budget == 0
+    assert Config.load(env={}).context_budget == 150_000
 
 
 def test_system_prompt_describes_the_environment():

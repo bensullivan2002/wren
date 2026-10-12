@@ -24,8 +24,8 @@ from contextlib import closing
 from typing import Any, Callable, TextIO
 
 from wren import __version__
-from wren.agent import Agent, ToolFinished, ToolStarted, TurnFinished
-from wren.commands import format_call, run_command
+from wren.agent import Agent, Compacted, CompactionStarted, ToolFinished, ToolStarted, TurnFinished
+from wren.commands import compaction_note, format_call, run_command
 from wren.messages import Completed, TextDelta
 from wren.tools import Decision, PermissionRequest
 
@@ -143,8 +143,18 @@ class Repl:
             if event.hit_step_limit:
                 self.say(red(f"[stopped after {event.steps} model calls, the limit for one turn: say 'continue' to carry on]"))
             u = event.usage
+            cached = f" ({u.cache_read_tokens:,} cached)" if u.cache_read_tokens else ""
             calls = f" · {event.steps} model calls" if event.steps > 1 else ""
-            self.say(dim(f"↳ {u.input_tokens:,} in · {u.output_tokens:,} out{calls}"))
+            self.say(dim(f"↳ {u.sent_tokens:,} in{cached} · {u.output_tokens:,} out{calls}"))
+
+        elif isinstance(event, CompactionStarted):
+            self._end_line()
+            why = "it passed the context budget" if event.automatic else "as you asked"
+            self.say(dim(f"[compacting the conversation, {why}…]"))
+
+        elif isinstance(event, Compacted):
+            note = compaction_note(event)
+            self.say(red(note) if event.error else dim(note))
 
     def _end_line(self) -> None:
         if self._mid_line:
@@ -190,6 +200,12 @@ class Repl:
     def command(self, line: str) -> bool:
         """Run a slash command. Returns False when the REPL should exit."""
         result = run_command(self.agent, line, KEYS_HELP)
+        if result.compact:
+            try:
+                for event in self.agent.compact():
+                    self.show(event)
+            except KeyboardInterrupt:
+                self.say(dim("[interrupted: the conversation is unchanged]"))
         if result.text:
             self.say(red(result.text) if result.is_error else result.text)
         return not result.quit

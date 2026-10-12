@@ -15,8 +15,8 @@ import json
 import textwrap
 from dataclasses import dataclass
 
-from wren.agent import Agent
-from wren.messages import Message, TextBlock, ToolResultBlock, ToolUseBlock
+from wren.agent import Agent, Compacted
+from wren.messages import Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock
 
 COMMANDS = """\
 /help          show this list
@@ -24,7 +24,8 @@ COMMANDS = """\
 /tools NAME    show exactly what the model is told about one tool
 /history       show the conversation exactly as Wren holds it
 /system        show the system prompt sent with every request
-/usage         tokens used this session
+/usage         tokens used this session, and how full the context is
+/compact       replace the conversation with a summary of it, to save tokens
 /permissions   show what you've said Wren may always do this session
 /clear         start a fresh conversation
 /quit          exit"""
@@ -35,6 +36,7 @@ class CommandResult:
     text: str = ""  # what to show
     is_error: bool = False
     quit: bool = False  # the front end should exit
+    compact: bool = False  # the front end should run agent.compact() (a model call, so it takes a while)
     cleared: bool = False  # the conversation was reset; a front end with a transcript should empty it
 
 
@@ -51,9 +53,10 @@ def run_command(agent: Agent, line: str, keys_help: str = "") -> CommandResult:
     if name == "/clear":
         agent.reset()
         return CommandResult("Conversation cleared.", cleared=True)
+    if name == "/compact":
+        return CommandResult(compact=True)
     if name == "/usage":
-        u = agent.usage
-        return CommandResult(f"{u.input_tokens:,} tokens in · {u.output_tokens:,} out (this session)")
+        return CommandResult(_usage(agent))
     if name == "/system":
         return CommandResult(agent.system_prompt)
     if name == "/history":
@@ -79,6 +82,34 @@ def _tools(agent: Agent, name: str | None) -> CommandResult:
     spec = tool.spec()
     return CommandResult(
         json.dumps({"name": spec.name, "description": spec.description, "input_schema": spec.input_schema}, indent=2)
+    )
+
+
+def _usage(agent: Agent) -> str:
+    u = agent.usage
+    lines = [
+        f"This session: {u.sent_tokens:,} tokens in · {u.output_tokens:,} out",
+        f"  of the input, {u.cache_read_tokens:,} were read from the cache (about a tenth of the price)",
+        f"Conversation now: {context_meter(agent)}",
+    ]
+    return "\n".join(lines)
+
+
+def context_meter(agent: Agent) -> str:
+    """How big the conversation is, against the budget: "12,400 tokens, 8% of 150,000"."""
+    size = f"{agent.context_tokens:,} tokens"
+    if not agent.context_budget:
+        return size
+    percent = round(100 * agent.context_tokens / agent.context_budget)
+    return f"{size}, {percent}% of the {agent.context_budget:,} budget"
+
+
+def compaction_note(event: Compacted) -> str:
+    if event.error:
+        return f"[couldn't compact the conversation: {event.error}. It is unchanged.]"
+    return (
+        f"[conversation compacted: about {event.before_tokens:,} → {event.after_tokens:,} tokens. "
+        "Wren now works from its summary; /history shows it.]"
     )
 
 
@@ -109,6 +140,8 @@ def _describe(message: Message) -> str:
         elif isinstance(block, ToolResultBlock):
             error = " error" if block.is_error else ""
             parts.append(f"<tool_result for={block.tool_use_id}{error}> {shorten(block.content, 300)!r}")
+        elif isinstance(block, ReasoningBlock):
+            parts.append("<reasoning: kept to send back to the model, not readable>")
     return "\n".join(parts)
 
 

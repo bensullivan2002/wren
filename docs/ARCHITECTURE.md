@@ -1,6 +1,6 @@
 # Architecture
 
-*Describes Wren as of **step 4**. This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
+*Describes Wren as of **step 5**. This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
 
 ## The big picture
 
@@ -34,10 +34,10 @@ Solid arrows are calls; dotted arrows are what comes back, or a callback. One fr
 | --- | --- | --- | --- |
 | **Entry point** | `cli.py` | Parse flags, load config, build everything, pick and start a front end | Everything (the only file that does) |
 | **Config** | `config.py` | Decide each setting: flag, then env var, then default | Nothing else |
-| **System prompt** | `prompts.py` | Who the model is, how to work, plus live facts: folder, OS, date | Nothing else |
-| **Agent** | `agent.py` | Own the conversation; run the agent loop; keep history valid and truthful | A `Provider`, a `ToolRegistry`, the message types |
+| **Prompts** | `prompts.py` | The system prompt (who the model is, how to work, plus live facts: folder, OS, date) and the compaction prompt | Nothing else |
+| **Agent** | `agent.py` | Own the conversation; run the agent loop; keep history valid and truthful; track its size and compact it | A `Provider`, a `ToolRegistry`, the message types |
 | **Messages** | `messages.py` | Provider-neutral types; the history rules (`history_problems`) | Nothing else |
-| **Provider** | `providers/` | Translate to a vendor's API and back; stream the reply | The vendor SDK, the message types |
+| **Provider** | `providers/` | Translate to a vendor's API and back; stream the reply; ask for caching; report token use | The vendor SDK, the message types |
 | **Tool registry** | `tools/registry.py` | Look up tools, check arguments, get permission, run, turn failures into error results, cap output | The `Tool` interface, `Permissions` |
 | **Tool base** | `tools/base.py` | What a tool is; turn an `Input` model into a schema and into checked arguments | Pydantic |
 | **Permissions** | `tools/permissions.py` | Remember what's "always" allowed this session; otherwise ask, through a callback | Nothing else |
@@ -67,10 +67,10 @@ One Pydantic `Input` model per tool is the single source for the JSON Schema sen
 What happens when you type *"rename helper to assist in util.py"* and press Enter:
 
 1. **The front end** calls `agent.run_turn(text)` and shows each event it yields. (In the app, that call is on a worker thread: see "The full-screen app" below.)
-2. **`Agent.run_turn`** appends your message.
+2. **`Agent.run_turn`** first checks the conversation's size. If it's over the context budget, it compacts (see "Context" below). Then it appends your message.
 3. **The loop begins.** `_call_model` sends the system prompt, the **entire** history and the **tool specs** to the provider.
-4. **The provider** translates to Anthropic's format and streams the reply. Text arrives as `TextDelta` events, which the REPL prints immediately. One `Completed` event ends the reply, carrying the assembled message, the stop reason and the token counts.
-5. **The agent appends the reply** to the history. Does it contain tool requests?
+4. **The provider** translates to Anthropic's format, marks the request for caching, and streams the reply. Text arrives as `TextDelta` events, which the REPL prints immediately. One `Completed` event ends the reply, carrying the assembled message, the stop reason and the token counts.
+5. **The agent records the conversation's new size** from the reply's token counts, and **appends the reply** to the history, including any reasoning blocks, untouched. Does it contain tool requests?
    - **No:** the turn is over. The agent yields `TurnFinished`, and the REPL prints the usage line.
    - **Yes:** carry on to step 6.
 6. **For each tool request,** the agent yields `ToolStarted`, calls `registry.run(name, args)`, and yields `ToolFinished`. The registry:
@@ -85,6 +85,21 @@ What happens when you type *"rename helper to assist in util.py"* and press Ente
 
 **If the turn is cut short** between steps 2 and 8 (Escape or Ctrl-C, a network error, a bad API key), nothing is deleted. `Agent._close_unfinished_turn` ties off the loose ends: every unanswered tool request gets a result (the real one if the tool finished, otherwise a note that it was cut short or never ran), and a closing assistant note records where and why the turn stopped, after any text that had already streamed.
 
+## Context: size, caching and compaction
+
+**The request is always built the same way:** tools, then the system prompt, then the messages in order, with new material only at the end. Prompt caching depends on that. The provider adds `cache_control` to every request, and the API reads the unchanged beginning back at about a tenth of the price.
+
+**Size is measured, not counted.** After each model call, `agent.context_tokens` is set from the reply's own usage: everything that was sent (fresh, cache-written and cache-read) plus what was written back. `Usage` carries those parts separately; `sent_tokens` is their sum.
+
+**Compaction** (`Agent.compact`) makes one model call, the conversation plus `COMPACT_PROMPT`, and then replaces the whole history with two messages: a note that the earlier part was removed, and the model's summary. It runs:
+
+- automatically at the start of a turn, when `context_tokens >= context_budget` (150,000 by default; 0 disables it);
+- when the user runs `/compact`.
+
+It changes nothing unless it has a good summary in hand: a provider error, a reply that calls a tool or is empty, a summary cut off by `max_tokens`, or the user stopping it all leave the history as it was. A failed automatic compaction doesn't stop the turn.
+
+**Reasoning blocks.** A model's private reasoning arrives as blocks in its reply. Wren stores each as a `ReasoningBlock`: the provider's own data, kept in position and sent back unchanged, and opened by nothing but that provider. Compaction keeps only the summary's text, so the new history contains none.
+
 ## Events and callbacks: the front-end contract
 
 The agent's output is a stream of events. Each front end decides how they look:
@@ -95,7 +110,9 @@ The agent's output is a stream of events. Each front end decides how they look:
 | `Completed` | provider | one model call finished | the reply widget is closed | newline; warning if cut off |
 | `ToolStarted` | agent | about to run a tool | a `ToolCallView` line, ending `…` | `▸ edit_file(path='util.py', …)` |
 | `ToolFinished` | agent | the tool's result | summary, plus the diff or the end of a command's output | `→ util.py +1 −1`, or `✗ declined` |
-| `TurnFinished` | agent | the whole turn is over | status line updated | `↳ 3,210 in · 250 out · 2 model calls` |
+| `TurnFinished` | agent | the whole turn is over | status line updated | `↳ 3,210 in (2,900 cached) · 250 out · 2 model calls` |
+| `CompactionStarted` | agent | about to summarise the conversation | a note | a note |
+| `Compacted` | agent | done (or failed, with `error` set) | a note with before and after sizes | the same |
 
 Three things flow the other way, from a front end into the core:
 
@@ -136,7 +153,7 @@ Scopes live in `Permissions.always`, in memory, until Wren exits. `/permissions`
 These are *invariants*: things the code guarantees, so the rest of the code can rely on them.
 
 1. **Between turns, the history is valid.** `history_problems(agent.messages)` is empty: it starts with the user and ends with the assistant, every `tool_use` is answered by id in the next message, and no message is empty.
-2. **The history is truthful.** Anything a tool did stays in the history, even if the turn was interrupted or failed. Nothing that happened is ever removed (except by `/clear`).
+2. **The history is truthful, and append-only between compactions.** Anything a tool did stays in the history, even if the turn was interrupted or failed. Nothing is removed or rewritten except by compaction, which replaces all of it with a summary, and `/clear`.
 3. **Every provider stream ends with exactly one `Completed`.** Zero or more `TextDelta` come first.
 4. **Tools never crash the loop.** Every failure becomes an error result the model can read. Only Ctrl-C escapes.
 5. **Nothing changes without permission.** A tool whose `permission()` returns a request runs only if `Permissions.allows` said yes. With nobody to ask, the answer is no.
@@ -148,12 +165,15 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 11. **Front ends are interchangeable.** The agent, tools and providers contain nothing specific to the app or to the REPL.
 12. **In the app, only the app's thread touches widgets.** The worker thread reaches the screen through `call_from_thread`.
 13. **Text from outside is never interpreted as markup.**
+14. **Compaction is all or nothing.** It either replaces the whole history with a summary or leaves it exactly as it was.
+15. **Reasoning blocks are returned as they came:** same data, same position. Only the provider that produced one looks inside it.
+16. **Requests are built identically every time,** with new content only at the end, so the cached prefix stays valid.
 
 ## Where the next steps plug in
 
 | Coming in | Plugs in at |
 | --- | --- |
-| Step 5: context management | Inside `Agent`, just before each call to the provider; a context meter in the status line |
+| Step 6: project memory | A `WREN.md` loaded into the prompt; where it goes matters for caching (invariant 16) |
 | Step 7: sessions | Saving and loading `agent.messages`; the app would redraw the transcript from them |
 | Later: saved permission rules | Loaded into `Permissions.always` at startup |
 | Later: sandboxing | Around `tools/shell.py`'s `_run` |

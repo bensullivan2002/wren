@@ -48,8 +48,8 @@ from textual.widget import Widget
 from textual.widgets import Markdown, Static, TextArea
 
 from wren import __version__
-from wren.agent import Agent, ToolFinished, ToolStarted, TurnFinished
-from wren.commands import format_call, run_command
+from wren.agent import Agent, Compacted, CompactionStarted, ToolFinished, ToolStarted, TurnFinished
+from wren.commands import compaction_note, format_call, run_command
 from wren.messages import Completed, TextDelta, ToolUseBlock
 from wren.tools import Decision, PermissionRequest, ToolResult
 from wren.tools.files import diff
@@ -272,7 +272,16 @@ class WrenApp(App):
         if self.busy and line.split()[0].lower() == "/clear":
             self.notify("Stop Wren (Escape) before clearing the conversation.")
             return
+        if self.busy and line.split()[0].lower() == "/compact":
+            self.notify("Wren is still working. Compact when it has finished.")
+            return
         result = run_command(self.agent, line, KEYS_HELP)
+        if result.compact:
+            self.busy = True
+            self._stop.clear()
+            self._show_status()
+            self.run_compact()
+            return
         if result.quit:
             self.action_quit_wren()
             return
@@ -298,6 +307,20 @@ class WrenApp(App):
                         break
                     self._on_app_thread(self.show_event, event)
         except Exception as e:  # network trouble, a bad API key...
+            error = e
+        self._on_app_thread(self.turn_ended, error)
+
+    @work(thread=True, exclusive=True, group="turn")
+    def run_compact(self) -> None:
+        """/compact: a model call, so it runs on the worker thread like a turn."""
+        error: Exception | None = None
+        try:
+            with closing(self.agent.compact()) as events:
+                for event in events:
+                    if self._stop.is_set():
+                        break
+                    self._on_app_thread(self.show_event, event)
+        except Exception as e:
             error = e
         self._on_app_thread(self.turn_ended, error)
 
@@ -354,6 +377,13 @@ class WrenApp(App):
             view = self._tool_views.pop(event.call.id, None)
             if view is not None:
                 view.finish(event.call, event.result)
+
+        elif isinstance(event, CompactionStarted):
+            why = "it passed the context budget" if event.automatic else "as you asked"
+            await self.note(f"[compacting the conversation, {why}…]")
+
+        elif isinstance(event, Compacted):
+            await self.note(compaction_note(event), "error" if event.error else "note")
 
         elif isinstance(event, TurnFinished):
             if event.hit_step_limit:
@@ -414,8 +444,12 @@ class WrenApp(App):
             self._show_status()
 
     def _show_status(self) -> None:
-        usage = self.agent.usage
-        tokens = f"{usage.input_tokens:,} in · {usage.output_tokens:,} out"
+        agent = self.agent
+        tokens = f"{agent.usage.sent_tokens:,} in · {agent.usage.output_tokens:,} out"
+        if agent.context_budget:
+            # The meter: how close the conversation is to being compacted.
+            percent = round(100 * agent.context_tokens / agent.context_budget)
+            tokens = f"context {percent}% · {tokens}"
         if not self.busy:
             left = "enter send · ctrl+j new line · /help · ctrl+q quit"
         elif self._stop.is_set():

@@ -16,8 +16,16 @@ Two facts shape this class.
              ▲                     │ yes
              └── send the results ◀┘ run them
 
+A third fact arrives with long conversations.
+
+3. Because everything is re-sent every time, the conversation's size is a
+   running cost: a file read once is paid for again on every later call.
+   So the agent keeps track of how big the conversation has become, and
+   when it passes a budget, asks the model to summarise it and carries on
+   from the summary. That's compaction: see `compact`.
+
 The agent knows nothing about terminals. It yields events, and whoever is
-driving it (today the REPL) decides how to show them.
+driving it (a front end) decides how to show them.
 """
 
 from __future__ import annotations
@@ -27,7 +35,8 @@ from dataclasses import dataclass
 from typing import Generator, Iterator, Union
 
 from wren.config import DEFAULT_MAX_STEPS
-from wren.messages import Completed, Message, TextDelta, ToolResultBlock, ToolUseBlock, Usage
+from wren.messages import Completed, Message, TextBlock, TextDelta, ToolResultBlock, ToolUseBlock, Usage
+from wren.prompts import COMPACT_PROMPT, COMPACTED_NOTE
 from wren.providers import Provider
 from wren.tools import ToolRegistry, ToolResult
 
@@ -73,7 +82,21 @@ class TurnFinished:
     hit_step_limit: bool = False
 
 
-AgentEvent = Union[TextDelta, Completed, ToolStarted, ToolFinished, TurnFinished]
+@dataclass
+class CompactionStarted:
+    automatic: bool  # True if the budget triggered it, False for /compact
+
+
+@dataclass
+class Compacted:
+    """Compaction is over. If `error` is set it failed, and nothing changed."""
+
+    before_tokens: int
+    after_tokens: int  # an estimate, until the next model call measures it
+    error: str = ""
+
+
+AgentEvent = Union[TextDelta, Completed, ToolStarted, ToolFinished, TurnFinished, CompactionStarted, Compacted]
 
 
 class Agent:
@@ -84,14 +107,21 @@ class Agent:
         max_tokens: int,
         tools: ToolRegistry | None = None,
         max_steps: int = DEFAULT_MAX_STEPS,
+        context_budget: int = 0,
     ) -> None:
         self.provider = provider
         self.system_prompt = system_prompt
         self.max_tokens = max_tokens
         self.tools = tools if tools is not None else ToolRegistry()
         self.max_steps = max_steps
+        self.context_budget = context_budget  # compact when the conversation passes this; 0 = never
         self.messages: list[Message] = []
         self.usage = Usage()  # running total for this session
+        # How big the conversation is now, in tokens: what the next request
+        # will send. We don't count it ourselves. Every reply reports how
+        # many tokens its request contained, which is an exact measurement
+        # by the only tokenizer that matters, and it's free.
+        self.context_tokens = 0
 
         # Where the current turn has got to, kept on the agent (not in local
         # variables) so that if the turn is cut short we still know what had
@@ -107,6 +137,13 @@ class Agent:
         happened stays in the conversation and the loose ends are tied off,
         so the conversation is always valid between turns.
         """
+        # Between turns is the one moment the history is whole and nothing is
+        # in flight, so that's when we tidy it. (Within a long turn it can
+        # still grow past the budget. That's fine: the budget is about cost,
+        # and the model's real limit is several times higher.)
+        if self.context_budget and self.context_tokens >= self.context_budget:
+            yield from self.compact(automatic=True)
+
         self.messages.append(Message.user(user_text))
         try:
             # `yield from` passes every event from _loop up to our caller,
@@ -161,11 +198,16 @@ class Agent:
             turn_usage += completed.usage
             self.usage += completed.usage
 
+            # This request's input, plus the reply it produced, is what the
+            # next request will carry.
+            self.context_tokens = completed.usage.sent_tokens + completed.usage.output_tokens
+
             reply = completed.message
-            if not reply.content:
-                # Rare, but it happens: the API rejects an empty assistant
-                # message anywhere in the history, so keep a placeholder.
-                reply = Message.assistant("(no reply)")
+            if not reply.text and not reply.tool_uses:
+                # Rare, but it happens: a reply with nothing to show. The API
+                # rejects an empty assistant message anywhere in the history,
+                # so add a placeholder (after any reasoning, which stays).
+                reply.content.append(TextBlock("(no reply)"))
             self.messages.append(reply)
             self._partial_text = ""  # it's all in `reply` now
 
@@ -221,6 +263,64 @@ class Agent:
             yield ToolFinished(call, result)
         return self._results
 
+    # --- Compaction -----------------------------------------------------------
+
+    def compact(self, automatic: bool = False) -> Iterator[AgentEvent]:
+        """Replace the conversation with the model's own summary of it.
+
+        One extra model call: the whole conversation, plus a request to
+        summarise it. Then the history becomes two messages: a note saying
+        what happened, and the summary. Everything after that costs a
+        fraction of what it did.
+
+        It is lossy, and there's no way round that. The summary keeps what
+        the prompt asks for (see COMPACT_PROMPT) and the rest is gone: the
+        model can no longer see files it read or exactly what was said.
+
+        If anything goes wrong, the history is left exactly as it was. The
+        swap is the last step, and happens only once we hold a good summary.
+        """
+        if len(self.messages) < 2:
+            yield Compacted(self.context_tokens, self.context_tokens, error="there's nothing to compact yet")
+            return
+        before = self.context_tokens
+        yield CompactionStarted(automatic)
+        try:
+            completed: Completed | None = None
+            # The same system prompt and tools as every other call, with the
+            # request added on the end. Since the beginning matches what was
+            # sent last time, this call reads the conversation from the cache.
+            events = self.provider.stream(
+                system=self.system_prompt,
+                messages=[*self.messages, Message.user(COMPACT_PROMPT)],
+                tools=self.tools.specs(),
+                max_tokens=self.max_tokens,
+            )
+            with closing(events):
+                for event in events:  # the summary isn't shown as it streams: it's not a reply
+                    if isinstance(event, Completed):
+                        completed = event
+            if completed is None:
+                raise RuntimeError("the provider's stream ended early")
+            self.usage += completed.usage
+            summary = completed.message.text.strip()
+            if completed.message.tool_uses or not summary:
+                raise RuntimeError("the model didn't write a summary")
+            if completed.stop_reason == "max_tokens":
+                raise RuntimeError("the summary was cut off by the max_tokens limit")
+        except Exception as e:
+            yield Compacted(before, before, error=str(e) or type(e).__name__)
+            return
+
+        # Only the summary's text is kept. Any reasoning that came with it
+        # belonged to the conversation we've just let go of.
+        self.messages[:] = [Message.user(COMPACTED_NOTE), Message.assistant(summary)]
+        # The summary's length is a fair first estimate of the new size. The
+        # next model call will replace it with a real measurement.
+        self.context_tokens = completed.usage.output_tokens
+        yield Compacted(before, self.context_tokens)
+
     def reset(self) -> None:
         """Forget the conversation (the system prompt, tools and totals stay)."""
         self.messages.clear()
+        self.context_tokens = 0

@@ -2,8 +2,28 @@ from contextlib import closing
 
 import pytest
 
-from wren.agent import CUT_SHORT, INTERRUPTED_NOTE, NOT_RUN, Agent, ToolFinished, ToolStarted, TurnFinished
-from wren.messages import Completed, Message, TextBlock, TextDelta, ToolUseBlock, history_problems
+from wren.agent import (
+    CUT_SHORT,
+    INTERRUPTED_NOTE,
+    NOT_RUN,
+    Agent,
+    Compacted,
+    CompactionStarted,
+    ToolFinished,
+    ToolStarted,
+    TurnFinished,
+)
+from wren.messages import (
+    Completed,
+    Message,
+    ReasoningBlock,
+    TextBlock,
+    TextDelta,
+    ToolUseBlock,
+    Usage,
+    history_problems,
+)
+from wren.prompts import COMPACT_PROMPT, COMPACTED_NOTE
 from wren.providers.fake import FakeProvider
 from wren.tools import Decision, Permissions, Tool, ToolInput, ToolRegistry, ToolResult, default_tools
 from wren.tools.registry import DECLINED
@@ -252,6 +272,136 @@ def test_ctrl_c_at_a_permission_prompt_stops_the_turn_and_changes_nothing(tmp_pa
 
     assert not (tmp_path / "a.txt").exists()
     assert history_problems(agent.messages) == []
+
+
+# --- Reasoning blocks: kept, and handed back untouched -----------------------------
+
+
+def test_the_models_reasoning_is_kept_in_place_and_sent_back_unchanged():
+    sealed = ReasoningBlock("fake", {"type": "thinking", "thinking": "", "signature": "abc123"})
+    request = Message("assistant", [sealed, TextBlock("Let me check."), ToolUseBlock("t1", "shout", {"text": "hi"})])
+    agent, provider = make_agent([request, "Done."])
+    run(agent, "go")
+
+    resent = provider.calls[1]["messages"][1]  # the assistant message, as sent with the tool result
+    assert resent.content[0] is sealed and resent.content[0].data["signature"] == "abc123"
+    assert history_problems(agent.messages) == []
+
+
+def test_a_reply_that_is_only_reasoning_gets_a_placeholder_after_it():
+    sealed = ReasoningBlock("fake", {"type": "thinking", "thinking": "", "signature": "s"})
+    agent, _ = make_agent([Message("assistant", [sealed])])
+    run(agent, "hi")
+    assert agent.messages[1].content == [sealed, TextBlock("(no reply)")]
+
+
+# --- Context size and compaction ------------------------------------------------------
+
+
+def test_the_agent_tracks_how_big_the_conversation_is():
+    agent, provider = make_agent(["one"])
+    assert agent.context_tokens == 0
+    events = run(agent, "hi")
+    used = [e for e in events if isinstance(e, Completed)][0].usage
+    assert agent.context_tokens == used.sent_tokens + used.output_tokens > 0
+
+
+def test_compact_replaces_the_history_with_the_models_summary():
+    agent, provider = make_agent(["first reply", "second reply", "## What the user wants\nA summary."])
+    run(agent, "one")
+    run(agent, "two")
+    events = list(agent.compact())
+
+    assert isinstance(events[0], CompactionStarted) and not events[0].automatic
+    assert isinstance(events[-1], Compacted) and not events[-1].error
+    assert events[-1].after_tokens < events[-1].before_tokens
+    assert not any(isinstance(e, TextDelta) for e in events)  # a summary isn't streamed as a reply
+    assert [m.text for m in agent.messages] == [COMPACTED_NOTE, "## What the user wants\nA summary."]
+    assert history_problems(agent.messages) == []
+
+
+def test_the_summary_request_reuses_the_same_prefix_so_it_can_be_cached():
+    agent, provider = make_agent(["a reply", "summary"])
+    run(agent, "one")
+    list(agent.compact())
+
+    normal, summarising = provider.calls
+    assert summarising["system"] == normal["system"] and summarising["tools"] == normal["tools"]
+    assert [m.text for m in summarising["messages"]] == ["one", "a reply", COMPACT_PROMPT]
+
+
+def test_compaction_happens_by_itself_between_turns_once_over_budget():
+    agent, provider = make_agent(["a reply", "the summary", "an answer"])
+    agent.context_budget = 10  # tiny, so one turn is enough to pass it
+    run(agent, "one")
+    events = run(agent, "two")
+
+    assert isinstance(events[0], CompactionStarted) and events[0].automatic
+    assert isinstance(events[1], Compacted)
+    assert [m.text for m in agent.messages] == [COMPACTED_NOTE, "the summary", "two", "an answer"]
+    assert history_problems(agent.messages) == []
+
+
+def test_no_budget_means_no_automatic_compaction():
+    agent, provider = make_agent(["a", "b"])  # context_budget defaults to 0
+    run(agent, "one")
+    assert not any(isinstance(e, CompactionStarted) for e in run(agent, "two"))
+
+
+@pytest.mark.parametrize(
+    "bad_summary, problem",
+    [
+        (asks(("t1", "shout", {"text": "x"}), text="I'll look first."), "didn't write a summary"),
+        (Message("assistant", [TextBlock("   ")]), "didn't write a summary"),
+        (None, "ran out of scripted replies"),  # the provider itself fails
+    ],
+)
+def test_a_failed_compaction_leaves_the_history_exactly_as_it_was(bad_summary, problem):
+    agent, provider = make_agent(["a reply"] + ([bad_summary] if bad_summary else []))
+    run(agent, "one")
+    before = list(agent.messages)
+    result = list(agent.compact())[-1]
+
+    assert problem in result.error and result.after_tokens == result.before_tokens
+    assert agent.messages == before
+
+
+def test_a_failed_automatic_compaction_does_not_stop_the_turn():
+    agent, provider = make_agent(["a reply", Message("assistant", [TextBlock(" ")]), "an answer"])
+    agent.context_budget = 10
+    run(agent, "one")
+    events = run(agent, "two")
+    assert events[1].error and isinstance(events[-1], TurnFinished)
+    assert [m.text for m in agent.messages] == ["one", "a reply", "two", "an answer"]
+
+
+def test_abandoning_a_compaction_changes_nothing():
+    agent, provider = make_agent(["a reply", "a summary"])
+    run(agent, "one")
+    with closing(agent.compact()) as events:
+        next(events)  # CompactionStarted, then walk away
+    assert [m.text for m in agent.messages] == ["one", "a reply"]
+
+
+def test_there_must_be_something_to_compact():
+    agent, _ = make_agent([])
+    assert "nothing to compact" in list(agent.compact())[0].error
+
+
+def test_compaction_drops_reasoning_and_counts_its_own_cost():
+    sealed = ReasoningBlock("fake", {"type": "thinking", "thinking": "", "signature": "s"})
+    agent, _ = make_agent(["a reply", Message("assistant", [sealed, TextBlock("The summary.")])])
+    run(agent, "one")
+    spent = agent.usage.output_tokens
+    list(agent.compact())
+    assert agent.messages[1].content == [TextBlock("The summary.")]
+    assert agent.usage.output_tokens > spent
+
+
+def test_usage_adds_up_cached_tokens_too():
+    total = Usage(10, 2, cache_read_tokens=100, cache_write_tokens=5) + Usage(1, 1, 50, 0)
+    assert (total.input_tokens, total.cache_read_tokens, total.cache_write_tokens) == (11, 150, 5)
+    assert total.sent_tokens == 166
 
 
 def test_reset_clears_the_conversation():

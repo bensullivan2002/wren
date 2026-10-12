@@ -262,6 +262,22 @@ async def test_slash_commands_show_their_output_and_clear_empties_the_screen(tmp
         assert screen_text(app) == "Conversation cleared." and app.agent.messages == []
 
 
+async def test_compact_runs_in_the_background_and_reports_what_it_saved(tmp_path):
+    app = make_app(tmp_path)
+    app.agent.context_budget = 100_000
+    async with app.run_test() as pilot:
+        await say(app, pilot, "hello")
+        await finished(app, pilot)
+        await say(app, pilot, "/compact")
+        await until(pilot, lambda: "conversation compacted" in screen_text(app), "the compaction note")
+        await finished(app, pilot)
+
+        assert "compacting the conversation, as you asked" in screen_text(app)
+        assert len(app.agent.messages) == 2 and "pretend summary" in app.agent.messages[1].text
+        assert "context " in str(app.query_one("#status").content)  # the meter
+        assert app.focused is app.prompt
+
+
 async def test_quit_command_exits(tmp_path):
     app = make_app(tmp_path)
     async with app.run_test() as pilot:

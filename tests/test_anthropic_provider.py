@@ -7,6 +7,7 @@ drive `stream` with a tiny stand-in for the SDK client.
 from anthropic.types import Message as ApiMessage
 
 from wren.messages import (
+    ReasoningBlock,
     Completed,
     Message,
     TextBlock,
@@ -148,3 +149,33 @@ def test_tools_are_sent_in_anthropic_format_and_tool_requests_come_back():
     done = events[-1]
     assert done.stop_reason == "tool_use"
     assert done.message.tool_uses == [ToolUseBlock("t1", "read_file", {"path": "a.py"})]
+
+
+# --- Reasoning blocks and caching ---------------------------------------------------------
+
+
+def test_thinking_blocks_come_back_sealed_and_go_out_exactly_as_they_came():
+    thinking = {"type": "thinking", "thinking": "", "signature": "sig-1"}
+    redacted = {"type": "redacted_thinking", "data": "opaque"}
+    message = from_api_message(api_message([thinking, {"type": "text", "text": "Hi"}, redacted]))
+
+    assert [type(b).__name__ for b in message.content] == ["ReasoningBlock", "TextBlock", "ReasoningBlock"]
+    sent = to_api_messages([message])[0]["content"]
+    assert sent == [thinking, {"type": "text", "text": "Hi"}, redacted]  # same data, same order
+
+
+def test_another_providers_reasoning_is_not_sent_to_claude():
+    foreign = Message("assistant", [ReasoningBlock("other", {"x": 1}), TextBlock("Hi")])
+    assert to_api_messages([foreign])[0]["content"] == [{"type": "text", "text": "Hi"}]
+
+
+def test_requests_ask_for_caching_and_cached_tokens_are_counted():
+    final = api_message([{"type": "text", "text": "Hi"}])
+    final.usage.cache_read_input_tokens = 900
+    final.usage.cache_creation_input_tokens = 40
+    client = FakeClient([], final)
+    done = list(AnthropicProvider("m", client=client).stream(system="s", messages=[Message.user("hi")], max_tokens=5))[-1]
+
+    assert client.requests[0]["cache_control"] == {"type": "ephemeral"}
+    assert (done.usage.cache_read_tokens, done.usage.cache_write_tokens) == (900, 40)
+    assert done.usage.sent_tokens == 12 + 900 + 40

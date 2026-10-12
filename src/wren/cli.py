@@ -41,6 +41,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--max-tokens", type=int, help="longest reply allowed (env: WREN_MAX_TOKENS)")
     parser.add_argument("--max-steps", type=int, help="most model calls in one turn (env: WREN_MAX_STEPS)")
     parser.add_argument(
+        "--context-budget",
+        type=int,
+        help="compact the conversation once it passes this many tokens; 0 = never (env: WREN_CONTEXT_BUDGET)",
+    )
+    parser.add_argument(
         "--plain", action="store_true", help="use the plain line-by-line interface, not the full-screen app"
     )
     parser.add_argument("--version", action="version", version=f"wren {__version__}")
@@ -54,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         model=args.model,
         max_tokens=args.max_tokens,
         max_steps=args.max_steps,
+        context_budget=args.context_budget,
     )
 
     if config.provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
@@ -69,7 +75,9 @@ def main(argv: list[str] | None = None) -> int:
     provider = make_provider(config.provider, config.model)
     permissions = Permissions()
     tools = ToolRegistry(default_tools(), root=root, permissions=permissions)
-    agent = Agent(provider, build_system_prompt(root), config.max_tokens, tools, config.max_steps)
+    agent = Agent(
+        provider, build_system_prompt(root), config.max_tokens, tools, config.max_steps, config.context_budget
+    )
 
     # A full-screen app needs a real terminal at both ends. When input or
     # output is a pipe or a file (`echo hi | wren`, the tests), fall back to

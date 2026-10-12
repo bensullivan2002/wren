@@ -19,16 +19,16 @@ Wren is a coding-agent harness for the terminal, built step by step by Claude wi
 
 ## Status
 
-Steps 1 to 4 are done (see the roadmap in README.md). Step 4 is Wren's own full-screen Textual app (`tui.py`), with the plain REPL kept for `--plain` and pipes.
+Steps 1 to 5 are done (see the roadmap in README.md).
 
-**First thing next session: ask Ben how the app feels in his real terminal.** It's tested headless (`tests/test_tui.py`) and by one scripted pseudo-terminal launch, not by a person using it. Fix what he finds before step 5.
+**First thing next session: ask Ben whether he has run Wren against the real API yet, and how it went.** Three things are tested only against stand-ins and need a real session to confirm (journal 05, "Known limits"): reasoning blocks surviving a tool loop (D45), prompt caching actually hitting (`/usage` should show cache reads from the second call on), and a real compaction's summary quality. Also ask how the app feels in his terminal. Fix what he finds before step 6.
 
-**Then: step 5, context management** (token counting, a budget, compaction, prompt caching). It plugs in inside `Agent`, before each provider call. Questions to put to Ben:
+**Then: step 6, project memory** (a `WREN.md` per project, loaded into every conversation). Questions to put to Ben:
 
-- Compaction: our own summarising step, or Anthropic's server-side compaction and context editing (check the current docs, and what each does to D4/D5 provider neutrality)?
-- When to compact: automatically at a threshold, on a `/compact` command, or both.
-- Prompt caching: where the cache breakpoints go, and whether the date in the system prompt (which changes daily) should move.
-- How to show context use in the app's status line and the REPL.
+- Where it's loaded from: the working directory only, or also parent folders and a personal file in the home directory (check how Claude Code's CLAUDE.md and the AGENTS.md convention do it, and whether to read those names too).
+- Whether Wren may write to it (a `/remember` command, or the model editing it through the normal permissioned edit tool), or it's the user's file only.
+- Where it goes in the request. It must not break caching (ARCHITECTURE invariant 16): the system prompt is stable per session, so loading it once at startup is safe; reloading mid-session is not free.
+- Whether saved "always allow" permission rules (deferred in D23) belong in this step, in a separate settings file.
 
 Things Ben has decided that aren't obvious from the code:
 
@@ -39,12 +39,14 @@ Things Ben has decided that aren't obvious from the code:
 Carried over, for whenever they fit (see "Known limits" in journals 03 and 04):
 
 - An async core (D34) if parallel tools or subagents need it; Escape can lag while waiting for the model's first words.
+- Context gaps: trimming old tool results before resorting to a summary (D40), compacting inside a very long turn (D47), keeping recent messages verbatim (D42 explains why not), showing cost in money.
 - App gaps: expanding cut-off diffs and output, queueing a message while Wren works, showing a tool request as it's written (needs a provider event).
 
 - Saving "always allow" rules between sessions (D23 left this out on purpose).
 - The shell is not sandboxed, and "always allow `git`" covers every git subcommand (D28, D29).
 - The tool-writing conventions are in `docs/ARCHITECTURE.md` ("Anatomy of a tool"): a nested Pydantic `Input(ToolInput)`, `permission()` for anything that changes things, and tests that use a fake asker.
 - A front-end feature must work in both front ends or be clearly optional: `tui.py` and `repl.py` implement the same contract (ARCHITECTURE.md, "the front-end contract"). Nothing Textual-specific goes in `agent.py`, `tools/` or `commands.py`.
+- The history is append-only between compactions, and requests are always built the same way (ARCHITECTURE invariants 2 and 16). Don't edit or reorder earlier messages, the system prompt or the tool list mid-session: it breaks prompt caching and can invalidate the model's reasoning blocks. `ReasoningBlock.data` is opaque: only its provider reads it.
 - In `tui.py`, only the app thread touches widgets, and text from the model, files or commands is never passed as markup. UI tests wait on conditions (`until`), never fixed sleeps.
 
 ## Commands

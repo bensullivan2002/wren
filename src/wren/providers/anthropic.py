@@ -16,6 +16,7 @@ from wren.messages import (
     Block,
     Completed,
     Message,
+    ReasoningBlock,
     StopReason,
     StreamEvent,
     TextBlock,
@@ -55,6 +56,17 @@ class AnthropicProvider:
             request["system"] = system
         if tools:
             request["tools"] = to_api_tools(tools)
+        # Prompt caching. Every request re-sends the whole conversation, and
+        # all but the newest part is identical to last time. This one field
+        # asks the API to remember what it has processed up to the end of
+        # this request, so the next request's matching beginning is read
+        # back at about a tenth of the price.
+        #
+        # It works because requests are built the same way every time: tools,
+        # then the system prompt, then messages in order, nothing reshuffled.
+        # A cache is matched from the start, byte for byte, so anything that
+        # changed near the front would throw away everything after it.
+        request["cache_control"] = {"type": "ephemeral"}
 
         # `messages.stream` keeps an HTTP connection open and receives the reply
         # as a series of server-sent events. The SDK's `text_stream` gives us
@@ -72,8 +84,18 @@ class AnthropicProvider:
         yield Completed(
             message=from_api_message(final),
             stop_reason=_stop_reason(final.stop_reason),
-            usage=Usage(final.usage.input_tokens, final.usage.output_tokens),
+            usage=_usage(final.usage),
         )
+
+
+def _usage(api_usage: Any) -> Usage:
+    return Usage(
+        input_tokens=api_usage.input_tokens,
+        output_tokens=api_usage.output_tokens,
+        # None when caching played no part in the request.
+        cache_read_tokens=getattr(api_usage, "cache_read_input_tokens", None) or 0,
+        cache_write_tokens=getattr(api_usage, "cache_creation_input_tokens", None) or 0,
+    )
 
 
 # --- Translation: Wren -> Anthropic ---------------------------------------
@@ -84,13 +106,18 @@ def to_api_tools(tools: Sequence[ToolSpec]) -> list[dict[str, Any]]:
 
 
 def to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
-    return [
-        {"role": m.role, "content": [_block_to_api(b) for b in m.content]}
-        for m in messages
-    ]
+    api_messages = []
+    for m in messages:
+        content = [api for api in map(_block_to_api, m.content) if api is not None]
+        api_messages.append({"role": m.role, "content": content})
+    return api_messages
 
 
-def _block_to_api(block: Block) -> dict[str, Any]:
+def _block_to_api(block: Block) -> dict[str, Any] | None:
+    if isinstance(block, ReasoningBlock):
+        # Ours go back exactly as they came. Another provider's reasoning
+        # would mean nothing to Claude, so it's left out.
+        return block.data if block.provider == AnthropicProvider.name else None
     if isinstance(block, TextBlock):
         return {"type": "text", "text": block.text}
     if isinstance(block, ToolUseBlock):
@@ -115,9 +142,12 @@ def from_api_message(api_message: Any) -> Message:
             blocks.append(TextBlock(b.text))
         elif b.type == "tool_use":
             blocks.append(ToolUseBlock(id=b.id, name=b.name, input=dict(b.input)))
-        # Other block types (e.g. "thinking") are ignored for now. If we turn on
-        # extended thinking later, we'll need to keep them: the API requires
-        # thinking blocks to be sent back unchanged during tool use.
+        elif b.type in ("thinking", "redacted_thinking"):
+            # Kept whole, in its place among the other blocks, to be sent
+            # back unchanged (see ReasoningBlock). `model_dump` turns the
+            # SDK's object back into the plain dict the API sent us.
+            blocks.append(ReasoningBlock(AnthropicProvider.name, b.model_dump(mode="json", exclude_none=True)))
+        # Any other block type is something Wren doesn't use yet, and is dropped.
     return Message("assistant", blocks)
 
 
