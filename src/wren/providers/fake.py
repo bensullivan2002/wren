@@ -89,6 +89,7 @@ class FakeProvider:
         sent = len(system) + sum(_chars(m) for m in messages) + sum(len(json.dumps(t.input_schema)) for t in tools)
         yield Completed(
             message=reply,
+            model=self.model,
             stop_reason="tool_use" if reply.tool_uses else "end_turn",
             usage=Usage(input_tokens=sent // 4, output_tokens=_chars(reply) // 4),
         )

@@ -211,6 +211,10 @@ class Completed:
     message: Message
     stop_reason: StopReason
     usage: Usage
+    # Which model wrote this reply, AS THE PROVIDER REPORTS IT. Not the name
+    # we asked for: the name that came back. It's how you can check that a
+    # request really went where you meant it to.
+    model: str = ""
 
 
 StreamEvent = Union[TextDelta, Completed]

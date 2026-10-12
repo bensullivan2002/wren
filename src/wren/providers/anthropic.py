@@ -91,6 +91,7 @@ class AnthropicProvider:
             message=from_api_message(final),
             stop_reason=_stop_reason(final.stop_reason),
             usage=_usage(final.usage),
+            model=final.model,  # from the response, not from self.model
         )
 
 
