@@ -19,7 +19,9 @@ far the most powerful thing Wren can do, and three facts follow from that.
 
 3. Commands can hang. A test that waits for input or a server that never
    exits would freeze the whole agent, so every command has a timeout, gets
-   no keyboard input, and is killed together with anything it started.
+   no keyboard input, and is killed together with anything it started. It
+   is also the one tool slow enough to need stopping part-way, so it checks
+   `ctx.should_stop` a few times a second while it waits.
 
 Each command runs in a fresh shell: `cd` and variables don't carry over to
 the next call. That's simpler and more predictable than keeping one shell
@@ -32,6 +34,8 @@ import os
 import shlex
 import signal
 import subprocess
+import time
+from typing import Callable
 
 from pydantic import Field
 
@@ -41,6 +45,7 @@ from wren.tools.permissions import PermissionRequest
 DEFAULT_TIMEOUT = 120  # seconds
 MAX_TIMEOUT = 600
 MAX_OUTPUT_CHARS = 20_000
+POLL_SECONDS = 0.2  # how often a running command checks whether to stop
 
 # Characters that let one command line do more than run one program:
 # chaining (; & |), substitution (` $), redirection (< >), grouping, and
@@ -79,7 +84,7 @@ class Shell(Tool):
         )
 
     def run(self, args: Input, ctx: ToolContext) -> ToolResult:
-        output, exit_code, timed_out = _run(args.command, ctx.root, args.timeout)
+        output, exit_code, stopped = _run(args.command, ctx.root, args.timeout, ctx.should_stop)
 
         # For a command, the end of the output is usually what matters (the
         # error, the test summary), so when it's too long we keep the tail.
@@ -92,9 +97,12 @@ class Shell(Tool):
         size = "no output" if count == 0 else "1 line" if count == 1 else f"{count:,} lines"
         content = output.rstrip("\n") or "(no output)"
 
-        if timed_out:
+        if stopped == "timeout":
             content += f"\n\n[Stopped: the command was still running after {args.timeout} seconds.]"
             return ToolResult(content, summary=f"timed out after {args.timeout}s", is_error=True)
+        if stopped == "cancelled":
+            content += "\n\n[Stopped by the user before it finished. It may have partly completed.]"
+            return ToolResult(content, summary="stopped", is_error=True)
         if exit_code != 0:
             # Not marked as an error: the tool worked, and a failing test run
             # is exactly the information the model asked for.
@@ -117,8 +125,9 @@ def command_word(command: str) -> str | None:
     return words[0]
 
 
-def _run(command: str, cwd, timeout: int) -> tuple[str, int, bool]:
-    """Run `command` in a shell. Returns (output, exit code, whether it timed out)."""
+def _run(command: str, cwd, timeout: int, should_stop: Callable[[], bool]) -> tuple[str, int, str | None]:
+    """Run `command` in a shell. Returns (output, exit code, why it was
+    stopped early: "timeout", "cancelled", or None if it finished)."""
     posix = os.name == "posix"
     process = subprocess.Popen(
         command,
@@ -134,13 +143,20 @@ def _run(command: str, cwd, timeout: int) -> tuple[str, int, bool]:
         # the terminal reaches Wren only, and Wren decides what to stop.
         start_new_session=posix,
     )
+    deadline = time.monotonic() + timeout
     try:
-        output, _ = process.communicate(timeout=timeout)
-        return output, process.returncode, False
-    except subprocess.TimeoutExpired:
-        _kill(process, posix)
-        output, _ = process.communicate()  # collect whatever it printed before it was stopped
-        return output, process.returncode, True
+        while True:
+            try:
+                # Wait a moment for it to finish. communicate() can be called
+                # again after a timeout without losing any output.
+                output, _ = process.communicate(timeout=POLL_SECONDS)
+                return output, process.returncode, None
+            except subprocess.TimeoutExpired:
+                stopped = "cancelled" if should_stop() else "timeout" if time.monotonic() >= deadline else None
+            if stopped:
+                _kill(process, posix)
+                output, _ = process.communicate()  # collect whatever it printed before it was stopped
+                return output, process.returncode, stopped
     except BaseException:  # Ctrl-C while the command runs: don't leave it running behind us
         _kill(process, posix)
         process.wait()

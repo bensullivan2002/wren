@@ -1,6 +1,6 @@
 # Architecture
 
-*Describes Wren as of **step 3**. This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
+*Describes Wren as of **step 4**. This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
 
 ## The big picture
 
@@ -10,9 +10,12 @@ Wren is that harness. `cli.py` builds the parts and wires them together:
 
 ```mermaid
 flowchart LR
-    you([You]) <-->|keyboard / screen| repl["<b>Repl</b><br/>repl.py"]
+    you([You]) <-->|keyboard / screen| repl["<b>Repl</b><br/>repl.py<br/><i>wren</i>"]
+    client(["Toad, or an editor"]) <-->|"JSON-RPC on stdin / stdout"| acp["<b>AcpServer</b><br/>acp/<br/><i>wren acp</i>"]
     repl -->|"run_turn(text)"| agent["<b>Agent</b><br/>agent.py<br/><i>the agent loop</i>"]
+    acp -->|"run_turn(text)"| agent
     agent -.->|events| repl
+    agent -.->|events| acp
     agent -->|"stream(system, messages, tools)"| provider{{"<b>Provider</b><br/>providers/"}}
     provider -.->|stream events| agent
     provider --- anthropic["AnthropicProvider"] --> api[("Claude API")]
@@ -21,12 +24,13 @@ flowchart LR
     registry -.->|ToolResult| agent
     registry -->|"allows(request)?"| perms["<b>Permissions</b><br/>tools/permissions.py"]
     perms -.->|"ask(request)"| repl
+    perms -.->|"ask(request)"| acp
     registry --> ro["list_files · read_file · search<br/><i>read-only, never ask</i>"] --> fs[("Your project<br/>(working directory only)")]
     registry --> rw["edit_file · write_file<br/><i>ask first</i>"] --> fs
     registry --> sh["shell<br/><i>asks first</i>"] --> os[("Your machine<br/>(not fenced)")]
 ```
 
-Solid arrows are calls; dotted arrows are what comes back, or a callback.
+Solid arrows are calls; dotted arrows are what comes back, or a callback. Only one front end runs at a time: `wren` starts the REPL, `wren acp` starts the ACP server.
 
 ## The parts
 
@@ -42,9 +46,11 @@ Solid arrows are calls; dotted arrows are what comes back, or a callback.
 | **Tool base** | `tools/base.py` | What a tool is; turn an `Input` model into a schema and into checked arguments | Pydantic |
 | **Permissions** | `tools/permissions.py` | Remember what's "always" allowed this session; otherwise ask, through a callback | Nothing else |
 | **Tools** | `tools/*.py` | Do one job each; describe themselves to the model, and their effects to the user | The working directory (via `ToolContext`) |
-| **REPL** | `repl.py` | Read your input, show events, ask permission questions, run slash commands | The `Agent`, the event and message types |
+| **REPL** | `repl.py` | Front end for a person: read input, show events, ask permission questions, run slash commands | The `Agent`, the event and message types |
+| **ACP server** | `acp/server.py` | Front end for a program: translate ACP requests into turns, events into `session/update`, permission into `session/request_permission` | The `Agent`, the event and message types, ACP's vocabulary |
+| **JSON-RPC** | `acp/jsonrpc.py` | The wire: one JSON message per line, both directions; match responses to requests by id | Nothing else |
 
-The rule behind this table: **each part knows as little as possible about the others.** The agent never prints and never touches files. Tools don't know there's a model, and never call `input()`. Nothing outside `providers/anthropic.py` knows what Anthropic's JSON looks like. That's what lets us swap the model, swap the interface, add tools, or test any part alone.
+The rule behind this table: **each part knows as little as possible about the others.** The agent never prints and never touches files. Tools don't know there's a model, and never call `input()`. Nothing outside `providers/anthropic.py` knows what Anthropic's JSON looks like, and nothing outside `acp/` knows what ACP's looks like. That's what lets us swap the model, swap the interface, add tools, or test any part alone.
 
 ## Anatomy of a tool
 
@@ -83,19 +89,44 @@ What happens when you type *"rename helper to assist in util.py"* and press Ente
 
 **If the turn is cut short** between steps 2 and 8 (Ctrl-C, a network error, a bad API key), nothing is deleted. `Agent._close_unfinished_turn` ties off the loose ends: every unanswered tool request gets a result (the real one if the tool finished, otherwise a note that it was cut short or never ran), and a closing assistant note records where and why the turn stopped, after any text that had already streamed.
 
-## Events and callbacks
+## Events and callbacks: the front-end contract
 
-The agent's output is a stream of events. The REPL decides how each looks:
+The agent's output is a stream of events. Each front end decides what to do with them:
 
-| Event | From | Meaning | Shown as |
+| Event | From | Meaning | REPL shows | ACP sends |
+| --- | --- | --- | --- | --- |
+| `TextDelta` | provider | a fragment of the model's text | printed as it arrives | `session/update` `agent_message_chunk` |
+| `Completed` | provider | one model call finished | newline; warning if cut off | nothing (its stop reason is kept for the response) |
+| `ToolStarted` | agent | about to run a tool | `▸ edit_file(path='util.py', …)` | `session/update` `tool_call` |
+| `ToolFinished` | agent | the tool's result | `→ util.py +1 −1`, or `✗ declined` | `session/update` `tool_call_update` |
+| `TurnFinished` | agent | the whole turn is over | `↳ 3,210 in · 250 out · 2 model calls` | the `session/prompt` response: `{"stopReason": …}` |
+
+Three things flow the other way, from a front end into the core:
+
+| Hook | Set on | REPL | ACP |
 | --- | --- | --- | --- |
-| `TextDelta` | provider | a fragment of the model's text | printed as it arrives |
-| `Completed` | provider | one model call finished | (newline; warning if cut off) |
-| `ToolStarted` | agent | about to run a tool | `▸ edit_file(path='util.py', …)` |
-| `ToolFinished` | agent | the tool's result | `→ util.py +1 −1`, or `✗ declined` in red |
-| `TurnFinished` | agent | the whole turn is over | `↳ 3,210 in · 250 out · 2 model calls` |
+| Permission question | `Permissions.ask` | `Repl.ask_permission`: prints, then `input()` | `session/request_permission`, then waits for the response |
+| Stop the turn | closing the `run_turn` generator | Ctrl-C | `session/cancel` sets a flag; the turn's loop breaks |
+| Stop a slow tool | `ToolContext.should_stop` | not used (Ctrl-C interrupts directly) | the same cancel flag; the shell polls it |
 
-One thing flows the other way. A permission question needs an answer *before* the tool runs, so it's a **callback**, not an event: `cli.py` sets `permissions.ask = repl.ask_permission`. It's called synchronously, between `ToolStarted` and `ToolFinished`.
+A permission question needs an answer *before* the tool runs, so it's a callback, not an event. It's called synchronously, between `ToolStarted` and `ToolFinished`.
+
+## ACP mode
+
+`wren acp` reads JSON-RPC requests from stdin and writes to stdout. It answers four methods:
+
+| Client sends | Wren does |
+| --- | --- |
+| `initialize` | returns protocol version 1, its name and version, and its capabilities (text and embedded files in prompts; no saved sessions) |
+| `session/new` `{cwd}` | builds a new `Agent` rooted at `cwd`, with its own `Permissions`; returns a session id |
+| `session/prompt` `{sessionId, prompt}` | runs one turn on its own thread; responds at the end with the stop reason: `end_turn`, `max_tokens`, `max_turn_requests`, `refusal` or `cancelled` |
+| `session/cancel` `{sessionId}` | sets the session's cancel flag (accepted as a notification or a request) |
+
+**Threads.** The main thread reads stdin: it answers the quick requests, delivers responses to Wren's own requests, and sets cancel flags. Each `session/prompt` gets a thread, because stdin must keep being read while a turn runs. A lock around writing keeps messages whole.
+
+**Stdout carries only the protocol.** `run_acp` keeps the real stdout for the connection and points `sys.stdout` at stderr, so a stray `print` can't corrupt the stream.
+
+**What isn't used.** ACP's client-side file and terminal methods, modes, plans, saved sessions and MCP servers. Wren runs its own tools, inside its own fence and permission checks.
 
 ## Permission scopes
 
@@ -120,14 +151,18 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 6. **Nobody is asked about a call that can't run.** Arguments are validated, and edits worked out, before the question.
 7. **File tools stay inside the working directory.** Every path is resolved (following `..` and symlinks) *before* it's checked. Writing tools also refuse anything inside `.git`. *(The shell is the exception: it is not fenced. See the journal.)*
 8. **No tool result exceeds 50,000 characters.**
-9. **Vendor formats never leak.** Only a provider module sees its vendor's request and response shapes.
+9. **Vendor formats never leak.** Only a provider module sees its vendor's request and response shapes, and only `acp/` sees ACP's.
 10. **The agent and the tools never do I/O with the user.** The agent yields events; permission questions go through a callback. Front ends decide what to show.
+11. **Front ends are interchangeable.** The agent, tools and providers contain nothing specific to the REPL or to ACP.
+12. **In ACP mode, every line on stdout is one JSON-RPC message.**
+13. **Every `session/prompt` gets exactly one response,** whether the turn finished, was cancelled, or failed, and the history is valid afterwards.
 
 ## Where the next steps plug in
 
 | Coming in | Plugs in at |
 | --- | --- |
-| Step 4: richer UI | A replacement for `repl.py`, including `ask_permission`; the agent and tools don't change |
-| Step 5: context management | Inside `Agent`, just before each call to the provider |
+| Step 5: context management | Inside `Agent`, just before each call to the provider; ACP's `usage_update` can report it |
+| Step 7: sessions | Saving and loading `agent.messages`; ACP's `session/load` and the `loadSession` capability |
+| Step 8: MCP | `session/new` already receives `mcpServers`; today it's ignored |
 | Later: saved permission rules | Loaded into `Permissions.always` at startup |
 | Later: sandboxing | Around `tools/shell.py`'s `_run` |

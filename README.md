@@ -2,7 +2,7 @@
 
 A small, readable coding-agent harness for the terminal, built step by step so every part can be understood.
 
-> **Status: step 3 of the roadmap.** Wren chats with Claude in your terminal, explores your project, and can now change it: it edits files and runs commands such as your tests, asking your permission first. The shell is not sandboxed, so read what you approve.
+> **Status: step 4 of the roadmap.** Wren chats with Claude, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first. Use it in its own plain terminal REPL, or through a richer interface such as [Toad](https://github.com/batrachianai/toad), which drives Wren over the Agent Client Protocol. The shell is not sandboxed, so read what you approve.
 
 ## Quickstart
 
@@ -23,9 +23,23 @@ If you use [uv](https://docs.astral.sh/uv/): `uv sync --extra dev`, then `uv run
 
 **No API key?** `wren --provider fake` starts Wren with a pretend model. It's free and offline. It echoes what you type, except for a few commands that make it call real tools, so you can watch the agent loop and the permission prompts work: `ls [pattern]`, `read <path>`, `search <regex>`, `write <path> <text>`, `edit <path> <old> => <new>`, `run <command>`.
 
-## Using it
+## Using it with Toad (ACP)
 
-Start Wren inside the project you want to work on: its file tools can only see that folder. Type a message and press Enter. Replies stream in as they're written. Tool calls appear as they happen, followed by a dim line with the tokens the turn used:
+`wren acp` makes Wren speak the [Agent Client Protocol](https://agentclientprotocol.com) on stdin and stdout, so an ACP client can be its interface: rendered markdown, diffs, permission dialogs. [Toad](https://github.com/batrachianai/toad) is one such client, for macOS and Linux:
+
+```bash
+uv tool install -U batrachian-toad --python 3.14
+cd ~/some/project
+toad acp "/full/path/to/wren/.venv/bin/wren acp"
+```
+
+Toad starts Wren in the project folder and passes on your environment, so `ANTHROPIC_API_KEY` must be set in the shell you start Toad from. To try it with no key, add `--provider fake` inside the quotes. Flags such as `--model` go there too.
+
+Wren's ACP mode is tested against the protocol, but has not yet been run under Toad itself. It does not support saved sessions, modes or images yet.
+
+## Using the REPL
+
+Run `wren` inside the project you want to work on: its file tools can only see that folder. Type a message and press Enter. Replies stream in as they're written. Tool calls appear as they happen, followed by a dim line with the tokens the turn used:
 
 ```
 › the area function is wrong, fix it and run the tests
@@ -89,6 +103,8 @@ The file tools are confined to the working directory, skip folders like `.git`, 
 
 ## Configuration
 
+`wren [chat|acp] [flags]`: `chat`, the default, is the REPL; `acp` is for clients such as Toad.
+
 Each setting can come from a flag, an environment variable, or the default, in that order of priority.
 
 | Flag           | Environment variable | Default             |
@@ -110,17 +126,20 @@ The docs are written to teach, not just to reference:
   1. [Foundations: a chat loop you own](docs/journal/01-foundations.md)
   2. [Tools: the agent loop](docs/journal/02-tools.md)
   3. [Acting safely: edits, commands and permission](docs/journal/03-acting-safely.md)
+  4. [Borrowing a UI: Wren speaks ACP](docs/journal/04-acp.md)
 
 ## Roadmap
 
 - [x] **1. Foundations**: conversation state, a swappable model provider, streaming, the terminal loop
 - [x] **2. Tools, read-only**: the real agent loop; Wren can list, read and search files
 - [x] **3. Acting safely**: typed tool inputs (Pydantic), editing files and running commands, behind permission prompts
-- [ ] **4. A better terminal UI**: rendered markdown, spinners, visible tool calls
+- [x] **4. A better UI, borrowed**: Wren speaks the Agent Client Protocol, so Toad (or an editor) can be its interface
 - [ ] **5. Context management**: token budgets, compaction, prompt caching
 - [ ] **6. Project memory**: a `WREN.md` file of standing instructions per project
 - [ ] **7. Sessions**: save, list and resume conversations
 - [ ] **8. Extensions**: subagents, MCP servers, hooks
+
+Unscheduled: a nicer built-in REPL (markdown, spinners); sandboxing the shell; saved permission rules; an async core.
 
 ## Development
 
@@ -132,12 +151,15 @@ The tests use a fake model, so they need no API key and no network.
 
 ```
 src/wren/
-  cli.py            entry point: flags -> config -> provider + tools -> agent -> REPL
+  cli.py            entry point: flags -> config -> provider + tools -> agent -> a front end
   config.py         settings and where they come from
   prompts.py        the system prompt, including live environment details
   agent.py          owns the conversation; runs the agent loop
   messages.py       provider-neutral message types, and the history rules
-  repl.py           the terminal front end
+  repl.py           front end for a person: the terminal REPL
+  acp/              front end for a program: the Agent Client Protocol
+    jsonrpc.py      the wire: JSON-RPC messages, one per line, both ways
+    server.py       translates ACP requests, updates and permission to and from the agent
   providers/
     base.py         the Provider interface
     anthropic.py    Claude, via the Anthropic Messages API

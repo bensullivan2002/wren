@@ -26,7 +26,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Callable
+
+
+@dataclass
+class FileChange:
+    """One file, before and after: a change in a form any front end can draw.
+
+    The terminal REPL shows a text diff, but a richer interface wants the two
+    versions themselves, to render the diff its own way. So tools that change
+    a file hand over both, and each front end takes what it needs.
+    """
+
+    path: Path  # absolute
+    before: str | None  # None when the file is new
+    after: str
 
 
 @dataclass
@@ -42,6 +57,8 @@ class PermissionRequest:
     # so "always" isn't offered and it's asked about every time.
     scope: str | None = None
     scope_label: str = ""  # the scope in words: "all file edits"
+
+    change: FileChange | None = None  # for file edits: the same change, structured
 
 
 class Decision(Enum):

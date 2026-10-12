@@ -191,3 +191,55 @@ Each command gets a new shell in the working directory, no keyboard input, combi
 
 Saying no doesn't end the turn. The model gets a result saying the user declined, not to retry or work around it, and to ask how to proceed.
 *Not chosen:* ending the turn on a no (simpler, but the model never learns it was declined, and may ask again next turn).
+
+---
+
+### D32. The better UI is someone else's: Wren speaks ACP, and Toad draws it
+*Step 4 · you*
+
+Step 4 was planned as "a better terminal UI". Instead, Wren gained an ACP mode (`wren acp`), so that Toad, or any other ACP client, is its interface.
+*The route:* the first recommendation was our own inline UI on Rich and prompt_toolkit. You then chose a full-screen Textual app of our own, and after seeing what that involved (Textual is async, the agent is not) chose Toad.
+*Not chosen:* Rich + prompt_toolkit (Aider's approach: the most to learn about terminal UIs for the least machinery). Our own Textual app (highest ceiling, largest rewrite). Rich alone.
+*Cost:* nothing was learned about building a terminal UI; Wren's own REPL is unchanged and plain; the polished experience depends on a young third-party app that needs macOS or Linux.
+
+### D33. The ACP layer is hand-written, on the standard library
+*Step 4 · you*
+
+`acp/jsonrpc.py` and `acp/server.py` implement the wire and the protocol directly: no new dependency, and every message is visible.
+*Not chosen:* the official `agent-client-protocol` Python SDK (typed models, kept current with the spec; but its base classes are async, so the synchronous agent would need bridging, and the wire becomes a black box).
+*Cost:* we track spec changes ourselves, and implement only what Wren needs.
+
+### D34. Threads, not async: one reader, one thread per turn
+*Step 4 · design*
+
+The agent stays synchronous. The main thread reads stdin; each `session/prompt` runs on its own thread. Cancelling is cooperative: a flag the turn checks at each event, and the shell polls.
+*Not chosen:* rewriting the agent, providers and tools as async (how most production agents are built; cancellation would be immediate everywhere, but every core file and most tests would change).
+*Cost:* a cancel can lag while the model is producing its first words. This question was put to you during the Textual plan and left open when you changed course; it's a design call here, and worth revisiting if parallel tool calls or subagents (step 8) need it.
+
+### D35. Wren keeps running its own tools under ACP
+*Step 4 · design*
+
+ACP lets an agent delegate file access and terminals to the client. Wren doesn't: the working-directory fence, permission checks and tests live in Wren's tools, and delegating would mean a second implementation of each.
+*Cost:* unsaved changes in an editor's buffers are invisible to Wren, and commands don't appear in the client's own terminal panes.
+
+### D36. The REPL stays, as a second front end
+*Step 4 · design*
+
+`wren` with no mode still starts the plain REPL. It needs no other program, it's what the end-to-end tests drive, and having two front ends keeps the boundary between agent and interface honest.
+
+### D37. Front-end vocabulary stays out of the core; two neutral hooks were added
+*Step 4 · design*
+
+ACP's terms (tool kinds, titles, update types) live only in `acp/`. The tools layer gained two things any front end could use: `FileChange` (an edit as before-and-after text, on `PermissionRequest` and `ToolResult`) and `ToolContext.should_stop` (so a long-running tool can be stopped).
+*Not chosen:* a `kind` attribute on each tool (simpler lookup, but it would put one client protocol's categories on every tool).
+
+### D38. Tolerant of clients that stray from the spec
+*Step 4 · design*
+
+`session/cancel` is accepted as a notification (per the spec) or as a request (answered with null). A cancel also ends Wren's wait for a permission answer, without relying on the client to send "cancelled". Both came from reading Toad's client code.
+
+### D39. Clients are shown the gist of a tool result, not all of it
+*Step 4 · you*
+
+Your choice of "compact, with key detail": a finished tool call sends the diff for an edit, the output for a command (the last 4,000 characters), the error for a failure, and a one-line summary otherwise. The model still receives the full result.
+*Not chosen:* summaries only (edits under "always allow" would happen unseen); everything the model sees (noisy).

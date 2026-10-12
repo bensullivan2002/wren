@@ -13,7 +13,7 @@ from pydantic import Field
 
 from wren.tools.base import Tool, ToolContext, ToolError, ToolInput, ToolResult
 from wren.tools.files import diff, diff_summary, read_text, resolve_for_writing, shown, write_text
-from wren.tools.permissions import PermissionRequest
+from wren.tools.permissions import FileChange, PermissionRequest
 
 
 class WriteFile(Tool):
@@ -30,12 +30,18 @@ class WriteFile(Tool):
         content: str = Field(description="The complete new content of the file.")
 
     def permission(self, args: Input, ctx: ToolContext) -> PermissionRequest:
-        _, name, before, _ = self._plan(args, ctx)
+        path, name, before, _ = self._plan(args, ctx)
         if before is None:
             title, detail = f"Create {name}", args.content
         else:
             title, detail = f"Overwrite {name}", diff(before, args.content, name)
-        return PermissionRequest(title=title, detail=detail, scope="edit", scope_label="all file edits")
+        return PermissionRequest(
+            title=title,
+            detail=detail,
+            scope="edit",
+            scope_label="all file edits",
+            change=FileChange(path, before, args.content),
+        )
 
     def run(self, args: Input, ctx: ToolContext) -> ToolResult:
         path, name, before, newline = self._plan(args, ctx)
@@ -44,10 +50,13 @@ class WriteFile(Tool):
 
         count = len(args.content.splitlines())
         lines = "1 line" if count == 1 else f"{count:,} lines"
+        change = FileChange(path, before, args.content)
         if before is None:
-            return ToolResult(f"Created {name} ({lines}).", summary=f"created {name}, {lines}")
+            return ToolResult(f"Created {name} ({lines}).", summary=f"created {name}, {lines}", change=change)
         return ToolResult(
-            f"Overwrote {name} ({lines}).", summary=f"overwrote {name} {diff_summary(before, args.content)}"
+            f"Overwrote {name} ({lines}).",
+            summary=f"overwrote {name} {diff_summary(before, args.content)}",
+            change=change,
         )
 
     def _plan(self, args: Input, ctx: ToolContext):

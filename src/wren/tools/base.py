@@ -23,13 +23,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, Callable, ClassVar
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic.json_schema import GenerateJsonSchema
 
 from wren.messages import ToolSpec
-from wren.tools.permissions import PermissionRequest
+from wren.tools.permissions import FileChange, PermissionRequest
 
 
 class ToolError(Exception):
@@ -45,6 +45,7 @@ class ToolResult:
     content: str  # what the model sees
     summary: str = ""  # one short line for the person watching the terminal
     is_error: bool = False
+    change: FileChange | None = None  # set by tools that changed a file, so a UI can show the diff
 
 
 @dataclass
@@ -52,6 +53,11 @@ class ToolContext:
     """What a tool is allowed to know about its surroundings."""
 
     root: Path  # the working directory, fully resolved; tools must stay inside it
+
+    # "Has the user asked us to stop?" A tool that can run for a long time
+    # (the shell) checks this now and then and gives up early if so. The
+    # default never says stop; a front end that can cancel replaces it.
+    should_stop: Callable[[], bool] = lambda: False
 
 
 class ToolInput(BaseModel):

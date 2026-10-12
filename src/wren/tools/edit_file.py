@@ -27,7 +27,7 @@ from pydantic import Field
 
 from wren.tools.base import Tool, ToolContext, ToolError, ToolInput, ToolResult
 from wren.tools.files import diff, diff_summary, numbered, read_text, resolve_for_writing, shown, write_text
-from wren.tools.permissions import PermissionRequest
+from wren.tools.permissions import FileChange, PermissionRequest
 
 CONTEXT_LINES = 3  # lines shown either side of the change in the result
 
@@ -60,6 +60,7 @@ class EditFile(Tool):
             detail=diff(plan.before, plan.after, plan.name),
             scope="edit",
             scope_label="all file edits",
+            change=plan.change,
         )
 
     def run(self, args: Input, ctx: ToolContext) -> ToolResult:
@@ -79,7 +80,7 @@ class EditFile(Tool):
         if lines:
             where = "Around the change" if plan.count == 1 else "Around the first change"
             content += f" {where}, the file now reads:\n{numbered(lines[first - 1 : last], first)}"
-        return ToolResult(content, summary=f"{plan.name} {diff_summary(plan.before, plan.after)}")
+        return ToolResult(content, summary=f"{plan.name} {diff_summary(plan.before, plan.after)}", change=plan.change)
 
     def _plan(self, args: Input, ctx: ToolContext) -> _Plan:
         path = resolve_for_writing(ctx, args.path)
@@ -121,6 +122,10 @@ class _Plan:
     newline: str  # the file's own line ending, to write it back with
     count: int  # how many replacements
     line: int  # the line the first one starts on
+
+    @property
+    def change(self) -> FileChange:
+        return FileChange(self.path, self.before, self.after)
 
 
 def _lines_of(text: str, needle: str, limit: int = 5) -> str:
