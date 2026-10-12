@@ -37,6 +37,7 @@ from wren.commands import (
 )
 from wren.memory import Memory
 from wren.sessions import SessionStore
+from wren.settings import UserDefaults
 from wren.messages import Completed, TextDelta
 from wren.tools import Decision, PermissionRequest
 
@@ -85,10 +86,14 @@ class Repl:
         sessions: SessionStore | None = None,
         notice: str = "",
         choose_session: bool = False,
+        defaults: UserDefaults | None = None,
     ) -> None:
         self.agent = agent
         self.memory = memory
         self.sessions = sessions
+        # Read, never written: plain mode has no picker, so nothing here
+        # makes a choice that should outlive the session.
+        self.defaults = defaults
         self.notice = notice  # something to say at startup, e.g. which session was resumed
         self.choose_session = choose_session  # started with --resume: begin by listing saved sessions
         self.out = out
@@ -238,9 +243,9 @@ class Repl:
 
     def command(self, line: str) -> bool:
         """Run a slash command. Returns False when the REPL should exit."""
-        result = run_command(self.agent, line, KEYS_HELP, self.memory, self.sessions)
+        result = run_command(self.agent, line, KEYS_HELP, self.memory, self.sessions, self.defaults)
         if result.pick_provider:
-            for label, _ in provider_choices(self.agent):
+            for label, _ in provider_choices(self.agent, self.defaults):
                 self.say(f"  {label}")
             self.say(dim("Switch with /provider NAME"))
         if result.pick_model:

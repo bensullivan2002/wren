@@ -31,6 +31,7 @@ from wren.prompts import build_system_prompt
 from wren.providers import PROVIDERS, make_provider
 from wren.repl import Repl
 from wren.sessions import SessionError, SessionStore
+from wren.settings import UserDefaults
 from wren.tools import Permissions, ToolRegistry, default_tools
 
 
@@ -69,7 +70,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    defaults = UserDefaults()  # ~/.wren/settings.json: what was chosen with Enter in the pickers
     config = Config.load(
+        user=defaults,
         provider=args.provider,
         model=args.model,
         max_tokens=args.max_tokens,
@@ -120,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     # output is a pipe or a file (`echo hi | wren`, the tests), fall back to
     # the plain REPL, which only needs lines of text.
     if args.plain or not (sys.stdin.isatty() and sys.stdout.isatty()):
-        repl = Repl(agent, memory=memory, sessions=sessions, notice=notice, choose_session=choose_session)
+        repl = Repl(agent, memory=memory, sessions=sessions, notice=notice, choose_session=choose_session, defaults=defaults)
         # The one loop in the wiring: tools need to ask the user, and the
         # front end is the part that talks to the user. Until this line,
         # Permissions has nobody to ask, and so refuses everything.
@@ -130,5 +133,5 @@ def main(argv: list[str] | None = None) -> int:
         # Imported here so that plain mode never loads Textual at all.
         from wren.tui import WrenApp
 
-        WrenApp(agent, memory, sessions, notice, choose_session).run()  # wires itself to the same hooks in its __init__
+        WrenApp(agent, memory, sessions, notice, choose_session, defaults).run()  # wires itself to the same hooks in its __init__
     return 0

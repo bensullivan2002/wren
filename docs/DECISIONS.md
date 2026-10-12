@@ -536,3 +536,20 @@ You pointed out that being asked to approve a long chained command is meaningles
 
 You asked for clearer separation between blocks, above all between your input and everything else. Your messages, the model's and the harness's now each have a distinct bar down the left edge, and yours sit on a tinted band. Tool calls are worded as actions ("Read src/app.py"), with a shell command's description as the headline and the command beneath; `/history` shows the calls as made.
 *Not chosen:* boxes around every message (heavy, and they waste width). Labels such as "You:" and "Wren:" on each block (noisier than colour, though more accessible: worth revisiting if the colours don't read well in your terminal).
+
+### D85. Defaults: Opus 5.5 and GPT 6.1 Sol at `xhigh`, and a saved default that outranks them
+*Post-step 8 · you*
+
+You wanted the strongest model at extra-high effort to be the starting point: `claude-opus-5-5` for Anthropic, `gpt-6.1-sol` for OpenAI, both at `xhigh`. This replaces the mid-priced defaults of D11 and D76, and puts an explicit effort where D66 deliberately sent none. The order for model and effort is: flag, environment variable, your saved default, Wren's default, and (for effort) the model's own.
+*Not chosen:* a system-wide config file between the saved default and Wren's (nothing needs one yet, and the built-in table plays that part).
+*Cost:* every new conversation now runs at the most expensive setting unless you say otherwise. If a model refuses `xhigh`, the API's error shows on the first request, as it already does for OpenAI efforts (D75).
+
+### D86. Enter in a picker keeps a choice for good; Space keeps it for the session
+*Post-step 8 · you*
+
+In the `/model` and `/effort` pickers, Enter makes the choice your default for every session, written to `~/.wren/settings.json` (per provider, the model and its effort together). Space chooses for this session only and leaves the saved default alone. The picker's footer says so. Typed `/model NAME` and `/effort LEVEL`, and the plain REPL (which has no picker), never save.
+- *Starting Wren is not choosing a model.* A new model resets effort to its own default (D67), but a saved pair is applied as it was saved, effort included, and effort is only applied to the model it was saved with (`--model other` starts `other` at its own effort).
+- *Choosing a model with Enter saves it with its own default effort* (null in the file, distinct from "nothing saved"); choosing an effort with Enter afterwards saves that level.
+- *An effort chosen with Enter on a model chosen with Space is not saved*, with a note saying why: the level belongs to the model, and saving the model would break the Space promise. Applying it to the session still works.
+- Switching provider starts on that provider's default pair when it lands on the default model; resuming a session brings its own model and effort.
+*Not chosen:* saving on typed commands (they are explicit, one-off choices, and an easy way to change a default by accident). Ctrl+Enter or Shift+Enter as the second key (most terminals can't tell them from Enter). A per-model table of saved efforts (more to explain, and a stale level would silently return after a later model choice).

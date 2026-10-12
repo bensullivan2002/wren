@@ -113,7 +113,7 @@ A provider turns Wren's neutral history into one vendor's request, and that vend
 | Caching | requested with `cache_control` | automatic | none |
 | Tool arguments | a JSON object | a JSON string, parsed on arrival | a dict |
 | Effort levels | asked of the API, per model | every level offered; the API can't be asked | fixed |
-| Default model | `claude-sonnet-5-5` | `gpt-5.6-terra` | `demo` |
+| Default model and effort | `claude-opus-5-5`, `xhigh` | `gpt-6.1-sol`, `xhigh` | `demo`, none |
 | Key | `ANTHROPIC_API_KEY` | `OPENAI_API_KEY` | none |
 
 Each provider stores its own reasoning as a `ReasoningBlock` tagged with its name, and leaves out any block tagged with another's. `Usage` means the same thing from every provider: `input_tokens` is the uncached part, and `sent_tokens` is everything sent.
@@ -142,10 +142,14 @@ Each provider stores its own reasoning as a `ReasoningBlock` tagged with its nam
 
 ## Switching provider, model and effort
 
-`Agent.set_provider` replaces the agent's provider object. `commands.switch_provider` builds the new one with `make_provider`, after checking its API key is set, using the model this conversation last used with that provider, or else the provider's default. The history is untouched; each provider leaves out the other's `ReasoningBlock`s. Resuming a session returns to its provider when that provider's key is available.
+`Agent.set_provider` replaces the agent's provider object. `commands.switch_provider` builds the new one with `make_provider`, after checking its API key is set, using the model this conversation last used with that provider, or else the provider's default (`config.default_choice`: the saved one, else Wren's own). When that is the default model it gets the default effort too, as at startup. The history is untouched; each provider leaves out the other's `ReasoningBlock`s. Resuming a session returns to its provider when that provider's key is available.
 
 
 A provider has a `model` and an `effort` (None for the model's default), both read on each request. `Agent.set_model` and `Agent.set_effort` set them and tell the journal; switching model puts effort back to None.
+
+**Defaults.** `config.default_choice(provider, user)` gives the `(model, effort)` a provider starts with: the pair saved in `~/.wren/settings.json` (`settings.UserDefaults`), else `DEFAULT_MODELS` and `DEFAULT_EFFORTS`. `Config.load` ranks flag, then environment variable, then that pair; the default effort is used only when the model started is the default model. Effort None means "send nothing; the model's own default applies".
+
+Saving happens in one place, the app's model and effort pickers. A `Picker` built with `saves=True` knows which key chose: Enter (the default `select` action) or Space (`select_for_session`). On Enter, `_model_chosen` and `_effort_chosen` call `commands.remember_model` / `remember_effort` after switching. `remember_model` saves the model with the effort it now has (None after a real switch, so a new model starts at its own default; unchanged if it was already in use). `remember_effort` saves only when the session is on the default model, because a level belongs to a model. Typed commands, the plain REPL and starting up never write the file; the REPL reads it only to pick the right provider default.
 
 `/effort` lists `provider.efforts()`: the levels the current model accepts as a separate setting. A provider whose models have none (unsupported, or folded into the model's name) returns an empty list, and the front end says to look in `/model`. `/effort LEVEL` and `--effort` set one directly; an unset effort is left out of the request.
 
