@@ -146,6 +146,7 @@ class Agent:
         # by the only tokenizer that matters, and it's free.
         self.context_tokens = 0
         self.answered_by = ""  # the model the provider says wrote the latest reply
+        self.last_call: Completed | None = None  # the latest model call, for /usage to report on
 
         # Where the current turn has got to, kept on the agent (not in local
         # variables) so that if the turn is cut short we still know what had
@@ -248,6 +249,7 @@ class Agent:
             # next request will carry.
             self.context_tokens = completed.usage.sent_tokens + completed.usage.output_tokens
             self.answered_by = completed.model
+            self.last_call = completed
             if self.journal is not None:
                 self.journal.spent(completed.usage, self.context_tokens)
 

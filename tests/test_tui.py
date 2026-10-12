@@ -318,7 +318,7 @@ async def test_the_effort_picker_sets_effort_and_shows_it_in_the_header(tmp_path
         await say(app, pilot, "/effort")
         await until(pilot, lambda: app.query(Picker), "the effort picker")
         first = str(app.query_one(Picker).get_option_at_index(0).prompt)
-        assert "default" in first and "(in use)" in first
+        assert "default: medium for this model" in first and "(in use)" in first
         await pilot.press("down", "down", "down", "enter")  # default, low, medium, high
 
         await until(pilot, lambda: not app.query(Picker), "the picker to close")

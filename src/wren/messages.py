@@ -174,6 +174,10 @@ class Usage:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    # How many of the output tokens were the model's private thinking, where
+    # the provider says. It's the nearest thing to a reading of how hard
+    # the model worked: it rises and falls with the effort setting.
+    thinking_tokens: int = 0
 
     @property
     def sent_tokens(self) -> int:
@@ -186,6 +190,7 @@ class Usage:
             self.output_tokens + other.output_tokens,
             self.cache_read_tokens + other.cache_read_tokens,
             self.cache_write_tokens + other.cache_write_tokens,
+            self.thinking_tokens + other.thinking_tokens,
         )
 
 
@@ -215,6 +220,10 @@ class Completed:
     # we asked for: the name that came back. It's how you can check that a
     # request really went where you meant it to.
     model: str = ""
+    # The effort setting this request was sent with (None: none was sent).
+    # This is the provider module's record of what it put in the request.
+    # It is NOT confirmation from the API, which doesn't say what it used.
+    effort_sent: str | None = None
 
 
 StreamEvent = Union[TextDelta, Completed]

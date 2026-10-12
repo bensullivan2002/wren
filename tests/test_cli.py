@@ -151,6 +151,7 @@ def test_effort_can_be_listed_and_set_in_plain_mode_and_from_the_command_line():
     out = result.stdout
     assert "demo (low effort)" in out  # the banner
     assert "low  (in use)" in out and "Switch with /effort LEVEL" in out
+    assert "default (which is medium for this model)" in out
     assert "Effort is now high." in out
     assert "demo-fast has no separate effort setting" in out
 

@@ -165,6 +165,7 @@ def load(path: Path) -> SavedSession:
                             record.get("output_tokens", 0),
                             record.get("cache_read_tokens", 0),
                             record.get("cache_write_tokens", 0),
+                            record.get("thinking_tokens", 0),
                         )
                         context_tokens = record.get("context_tokens", context_tokens)
                     elif kind == "model":
@@ -247,6 +248,7 @@ class SessionStore:
                     "output_tokens": usage.output_tokens,
                     "cache_read_tokens": usage.cache_read_tokens,
                     "cache_write_tokens": usage.cache_write_tokens,
+                    "thinking_tokens": usage.thinking_tokens,
                     "context_tokens": context_tokens,
                 }
             )

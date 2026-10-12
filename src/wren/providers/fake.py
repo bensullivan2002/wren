@@ -60,6 +60,11 @@ class FakeProvider:
     def models(self) -> list[str]:
         return ["demo", "demo-large", "demo-fast"]  # all equally pretend
 
+    default_effort_source = "the fake provider's own rule"
+
+    def default_effort(self) -> str | None:
+        return None if self.model == "demo-fast" else "medium"
+
     def efforts(self) -> list[str]:
         # "demo-fast" plays the part of a model with no separate effort
         # setting, so both kinds of provider can be tried offline.
@@ -102,11 +107,20 @@ class FakeProvider:
 
         # Rough rule of thumb: one token is about four characters of English.
         sent = len(system) + sum(_chars(m) for m in messages) + sum(len(json.dumps(t.input_schema)) for t in tools)
+        # Pretend to think harder at higher effort, so the effect of the
+        # setting can be seen (and tested) without a real model.
+        # (Scripted tests that haven't set an effort get none, so their
+        # token counts stay easy to predict.)
+        level = self.effort or (self.default_effort() if self.replies is None else None)
+        thinking = {"low": 10, "medium": 50, "high": 200}.get(level or "", 0)
         yield Completed(
             message=reply,
             model=self.model,
+            effort_sent=self.effort,
             stop_reason="tool_use" if reply.tool_uses else "end_turn",
-            usage=Usage(input_tokens=sent // 4, output_tokens=_chars(reply) // 4),
+            usage=Usage(
+                input_tokens=sent // 4, output_tokens=_chars(reply) // 4 + thinking, thinking_tokens=thinking
+            ),
         )
 
     def _demo_reply(self, messages: list[Message]) -> Message:

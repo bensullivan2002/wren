@@ -4,6 +4,8 @@ We check the two translation functions against the SDK's real types, and
 drive `stream` with a tiny stand-in for the SDK client.
 """
 
+from types import SimpleNamespace
+
 from anthropic.types import Message as ApiMessage
 
 from wren.messages import (
@@ -211,6 +213,26 @@ def test_effort_levels_come_from_what_the_api_says_the_model_supports():
     assert AnthropicProvider("older", client=client).efforts() == ["low", "medium", "high"]
     assert AnthropicProvider("oldest", client=client).efforts() == []
     assert AnthropicProvider("unknown-shape", client=client).efforts() == []
+
+
+def test_documented_default_effort_is_given_for_known_models_and_never_guessed():
+    assert AnthropicProvider("claude-opus-5-5", client=object()).default_effort() == "medium"
+    assert AnthropicProvider("claude-sonnet-5-5", client=object()).default_effort() == "high"
+    assert AnthropicProvider("claude-some-future-model", client=object()).default_effort() is None
+    assert "documentation" in AnthropicProvider.default_effort_source
+
+
+def test_the_reply_records_the_effort_that_was_sent_and_the_thinking_the_api_reported():
+    final = api_message([{"type": "text", "text": "Hi"}])
+    final.usage.output_tokens_details = SimpleNamespace(thinking_tokens=77)
+    client = FakeClient([], final)
+    provider = AnthropicProvider("m", client=client)
+
+    done = list(provider.stream(system="", messages=[Message.user("hi")], max_tokens=5))[-1]
+    assert done.effort_sent is None and done.usage.thinking_tokens == 77
+    provider.effort = "low"
+    done = list(provider.stream(system="", messages=[Message.user("hi")], max_tokens=5))[-1]
+    assert done.effort_sent == "low" == client.requests[1]["output_config"]["effort"]
 
 
 def test_the_reply_carries_the_model_the_api_says_answered_and_the_request_names_the_current_one():

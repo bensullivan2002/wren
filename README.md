@@ -96,6 +96,8 @@ The files are plain text, readable only by your user account, and kept until you
 
 `/effort` chooses how hard the model works on each reply (how much it thinks, how thorough it is): higher is slower and costs more. The levels offered are the ones the current model accepts; `/effort LEVEL` sets one directly, `/effort default` hands the choice back to the model, and `--effort` or `WREN_EFFORT` sets it at launch. Changing model puts effort back to that model's default. Some providers offer effort as part of the model choice and not as a separate setting; there, `/effort` tells you to look in `/model`.
 
+`/usage` shows what the default effort is for the current model (from Anthropic's documentation: the API doesn't report it), the effort Wren sent with the last request, and how many thinking tokens the API reported for the last reply. The API never states which effort it used, so thinking tokens are the only measurable sign that a change took effect.
+
 ### Memory: standing instructions
 
 Wren reads instructions from files at the start of every conversation and puts them in its system prompt:

@@ -315,7 +315,7 @@ def test_effort_is_sent_from_the_next_request_on_and_default_means_unset(tmp_pat
     assert "Effort is now high." in note and "resets the cache" in note
     run(agent, "again")
     assert [call["effort"] for call in agent.provider.calls] == [None, "high"]
-    assert "effort: high" in run_command(agent, "/usage").text
+    assert "Effort asked for: high" in run_command(agent, "/usage").text
     assert "already high" in run_command(agent, "/effort high").text
 
     assert "Effort is now the model's default." in run_command(agent, "/effort default").text
@@ -357,6 +357,41 @@ def test_a_session_remembers_its_effort_and_resuming_restores_it(tmp_path):
     note = resume_session(later, later_store, later_store.find(None))
     assert (later.provider.model, later.provider.effort) == ("demo-large", "low")
     assert "Using demo-large at low effort, as it was" in note
+
+
+def test_usage_says_what_the_default_effort_is_and_where_that_comes_from(tmp_path):
+    agent, store = make(tmp_path, [])
+    shown = run_command(agent, "/usage").text
+    assert "Effort asked for: the model's default, which is medium for scripted" in shown
+    assert "(the fake provider's own rule)" in shown  # the source is named: it isn't from the API
+
+    agent.set_model("demo-fast")  # a model whose default isn't known
+    assert "Wren doesn't know what that is for demo-fast" in run_command(agent, "/usage").text
+
+
+def test_usage_separates_what_wren_sent_from_what_the_provider_reported(tmp_path):
+    agent, store = make(tmp_path, ["one", "two"])
+    assert "Last request: (none yet)" in run_command(agent, "/usage").text
+
+    run(agent, "hi")
+    first = run_command(agent, "/usage").text
+    assert "Last request was sent with: no effort setting, so the model's default applied" in first
+    assert "(Wren's record: fake doesn't report the effort it used)" in first
+    assert "Thinking in the last reply: 0 of" in first and "(as reported by fake" in first
+
+    agent.set_effort("high")
+    assert "sent with: no effort setting" in run_command(agent, "/usage").text  # asked for, not yet sent
+    run(agent, "again")
+    second = run_command(agent, "/usage").text
+    assert "Last request was sent with: effort high" in second
+    assert "Thinking in the last reply: 200 of" in second  # the measurable effect
+
+
+def test_thinking_tokens_are_saved_and_restored_with_the_other_totals(tmp_path):
+    agent, store = make(tmp_path, ["one"])
+    agent.set_effort("high")
+    run(agent, "hi")
+    assert load(store.path).usage.thinking_tokens == 200
 
 
 def test_usage_shows_which_model_actually_answered(tmp_path):

@@ -29,6 +29,25 @@ from wren.messages import (
 
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")  # lowest first
 
+# What each model does when no effort is sent. The API does not report
+# this, for any model, so it's copied from Anthropic's documentation and can
+# go stale: a model that isn't listed is reported as "unknown", never
+# guessed. Checked October 2026.
+DEFAULT_EFFORT_SOURCE = "per Anthropic's documentation, October 2026; the API doesn't report it"
+DOCUMENTED_DEFAULT_EFFORT = {
+    "claude-opus-5-5": "medium",
+    "claude-haiku-5-5": "medium",
+    "claude-fable-5-1": "high",
+    "claude-fable-5": "high",
+    "claude-opus-5": "high",
+    "claude-opus-4-8": "high",
+    "claude-opus-4-7": "high",
+    "claude-opus-4-6": "high",
+    "claude-sonnet-5-5": "high",
+    "claude-sonnet-5": "high",
+    "claude-sonnet-4-6": "high",
+}
+
 _KNOWN_STOP_REASONS = {"end_turn", "max_tokens", "tool_use", "stop_sequence", "refusal"}
 
 
@@ -50,6 +69,11 @@ class AnthropicProvider:
         if effort is None or not effort.supported:
             return []
         return [level for level in EFFORT_LEVELS if getattr(getattr(effort, level, None), "supported", False)]
+
+    def default_effort(self) -> str | None:
+        return DOCUMENTED_DEFAULT_EFFORT.get(self.model)
+
+    default_effort_source = DEFAULT_EFFORT_SOURCE
 
     def models(self) -> list[str]:
         # Asked of the API, not written down here: a list in the code would
@@ -108,6 +132,9 @@ class AnthropicProvider:
             stop_reason=_stop_reason(final.stop_reason),
             usage=_usage(final.usage),
             model=final.model,  # from the response, not from self.model
+            # Read back from the request we built, so it's what was really
+            # sent. The response has no field saying what effort was used.
+            effort_sent=request.get("output_config", {}).get("effort"),
         )
 
 
@@ -118,6 +145,7 @@ def _usage(api_usage: Any) -> Usage:
         # None when caching played no part in the request.
         cache_read_tokens=getattr(api_usage, "cache_read_input_tokens", None) or 0,
         cache_write_tokens=getattr(api_usage, "cache_creation_input_tokens", None) or 0,
+        thinking_tokens=getattr(getattr(api_usage, "output_tokens_details", None), "thinking_tokens", None) or 0,
     )
 
 

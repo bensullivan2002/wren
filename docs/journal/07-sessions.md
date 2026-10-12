@@ -188,6 +188,29 @@ Three details:
 
 Like switching model, changing effort resets the cache for one request, and Wren says so. A session records its effort and resuming restores it.
 
+### What can be proved about effort, and what can't
+
+For the model there is proof: the response names the model that answered. You asked for the same for effort, and the honest answer is that there isn't any. Looking through the response types turned up two facts:
+
+- **The response has no field saying what effort was used.**
+- **The API doesn't say what a model's default effort is,** only which levels it accepts.
+
+So `/usage` shows what there is, and labels each line with where it comes from:
+
+```
+Effort asked for: the model's default, which is medium for claude-opus-5-5  (per Anthropic's documentation, October 2026; the API doesn't report it)
+Last request was sent with: no effort setting, so the model's default applied  (Wren's record: anthropic doesn't report the effort it used)
+Thinking in the last reply: 1,204 of 1,650 output tokens  (as reported by anthropic; more effort usually means more)
+```
+
+Three different kinds of knowledge, kept apart on purpose:
+
+1. **The default** is copied from documentation into a small table in the provider. It will go stale, so it carries its date, and a model that isn't in the table is reported as unknown, never guessed.
+2. **What was sent** is read back from the request Wren actually built. It proves Wren asked. It doesn't prove the API obeyed.
+3. **Thinking tokens** are the provider's own count of how much of the reply was private reasoning. This is the only measurement, and it's indirect: change effort, send a comparable message, and watch it move.
+
+It would have been easy to print "effort: high (confirmed)". The discipline here is the same as for the model line, turned round: **say what you measured, say what you only believe, and don't let one pass for the other.**
+
 ## Idea 9: one picker, three uses
 
 The app has a `Picker` widget: Textual's `OptionList` plus a note of what each row stands for and what to do with the choice. `/model`, `/effort` and `/resume` all use it, and `wren --resume` simply opens the session picker as the app starts. Like a permission question, it sits in the conversation and takes the focus; Escape closes it.

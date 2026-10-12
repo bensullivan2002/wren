@@ -153,8 +153,47 @@ def switch_effort(agent: Agent, effort: str | None) -> str:
     return note
 
 
-def effort_name(agent: Agent) -> str:
-    return agent.provider.effort or "the model's default"
+def effort_name(agent: Agent, explain: bool = False) -> str:
+    """The effort in use, in words. With `explain`, a default is spelled
+    out: what it is for this model, and how we know."""
+    provider = agent.provider
+    if provider.effort:
+        return provider.effort
+    if not explain:
+        return "the model's default"
+    default = default_effort(agent)
+    if default is None:
+        return f"the model's default (Wren doesn't know what that is for {provider.model})"
+    source = getattr(provider, "default_effort_source", "")
+    return f"the model's default, which is {default} for {provider.model}" + (f"  ({source})" if source else "")
+
+
+def default_effort(agent: Agent) -> str | None:
+    try:
+        return agent.provider.default_effort()
+    except Exception:
+        return None
+
+
+def _effort_evidence(agent: Agent) -> list[str]:
+    """What can honestly be said about the effort the last reply was given.
+
+    For the model, the API names the one that answered. For effort it says
+    nothing: no response field reports the level used. So there are two
+    lesser things to show, each labelled for what it is. One is Wren's own
+    record of what it sent. The other is a number the provider does report,
+    which moves with effort: how much of the reply was thinking.
+    """
+    call = agent.last_call
+    name = agent.provider.name
+    if call is None:
+        return ["Last request: (none yet)"]
+    sent = f"effort {call.effort_sent}" if call.effort_sent else "no effort setting, so the model's default applied"
+    return [
+        f"Last request was sent with: {sent}  (Wren's record: {name} doesn't report the effort it used)",
+        f"Thinking in the last reply: {call.usage.thinking_tokens:,} of {call.usage.output_tokens:,} output tokens"
+        f"  (as reported by {name}; more effort usually means more)",
+    ]
 
 
 def effort_list(agent: Agent) -> tuple[list[str], str]:
@@ -244,10 +283,14 @@ def _usage(agent: Agent) -> str:
         f"This conversation: {u.sent_tokens:,} tokens in · {u.output_tokens:,} out",
         f"  of the input, {u.cache_read_tokens:,} were read from the cache (about a tenth of the price)",
         f"Conversation now: {context_meter(agent)}",
-        f"Model asked for: {agent.provider.model}  ·  effort: {effort_name(agent)}",
-        # The second line is the provider's word, not ours. If /model is
-        # really working, it changes after the next reply.
+        "",
+        f"Model asked for: {agent.provider.model}",
+        # This line is the provider's word, not ours. If /model is really
+        # working, it changes after the next reply.
         f"Last reply came from: {agent.answered_by or '(no reply yet)'}  (as reported by {agent.provider.name})",
+        "",
+        f"Effort asked for: {effort_name(agent, explain=True)}",
+        *_effort_evidence(agent),
     ]
     return "\n".join(lines)
 

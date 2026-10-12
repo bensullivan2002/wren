@@ -41,6 +41,12 @@ class Provider(Protocol):
         setting, lowest first. Empty if it has none. May make a network call."""
         ...
 
+    def default_effort(self) -> str | None:
+        """What the current model does when no effort is set, if known.
+        None means unknown. This may come from documentation, not from the
+        API, so it can be out of date: say where it came from when showing it."""
+        ...
+
     def models(self) -> list[str]:
         """The models this provider offers right now, for a picker to show.
         May make a network call. Best first, if there's a natural order."""

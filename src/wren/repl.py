@@ -25,7 +25,15 @@ from typing import Any, Callable, TextIO
 
 from wren import __version__
 from wren.agent import Agent, Compacted, CompactionStarted, ToolFinished, ToolStarted, TurnFinished
-from wren.commands import compaction_note, effort_list, format_call, model_list, run_command, session_label
+from wren.commands import (
+    compaction_note,
+    default_effort,
+    effort_list,
+    format_call,
+    model_list,
+    run_command,
+    session_label,
+)
 from wren.memory import Memory
 from wren.sessions import SessionStore
 from wren.messages import Completed, TextDelta
@@ -261,9 +269,11 @@ class Repl:
             self.say(problem)
             return
         current = self.agent.provider.effort
+        usual = default_effort(self.agent)
         for level in ["default", *levels]:
             in_use = level == current or (level == "default" and current is None)
-            self.say(f"  {level}" + (dim("  (in use)") if in_use else ""))
+            means = f" (which is {usual} for this model)" if level == "default" and usual else ""
+            self.say(f"  {level}{means}" + (dim("  (in use)") if in_use else ""))
         self.say(dim("Switch with /effort LEVEL"))
 
     def list_sessions(self) -> None:

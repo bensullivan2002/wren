@@ -52,6 +52,7 @@ from wren.agent import Agent, Compacted, CompactionStarted, ToolFinished, ToolSt
 from wren.commands import (
     budget_used,
     compaction_note,
+    default_effort,
     effort_list,
     format_call,
     model_list,
@@ -476,7 +477,9 @@ class WrenApp(App):
             await self.note(problem)
             return
         current = self.agent.provider.effort
-        rows = [("default: let the model decide" + ("   (in use)" if current is None else ""), None)]
+        usual = default_effort(self.agent)
+        means = f": {usual} for this model" if usual else ": let the model decide"
+        rows = [(f"default{means}" + ("   (in use)" if current is None else ""), None)]
         rows += [(level + ("   (in use)" if level == current else ""), level) for level in levels]
         await self._open_picker(f"Effort for {self.agent.provider.model}", rows, self._effort_chosen)
 

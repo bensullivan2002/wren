@@ -427,3 +427,10 @@ You asked for an effort setting, and for it to cope with providers that bundle e
 
 *Why:* the levels differ between models, and an unsupported one fails every request. Checking would need a network call during the switch.
 *Cost:* you set effort again after changing model. Wren tells you when it has dropped one. Open to challenge: keeping the level when the new model reports it as supported would be kinder.
+
+### D68. `/usage` reports effort with its sources, and doesn't claim confirmation
+*Step 7 · design*
+
+You asked what a model's default effort is, and for evidence of the effort used, as there is for the model. The API reports neither. So `/usage` shows: the default for the model from a table of documented values, with its date and "the API doesn't report it" (unknown models are shown as unknown); the effort the last request was sent with, labelled as Wren's own record; and the thinking tokens the provider reported for the last reply, the one measurable effect of effort.
+*Not chosen:* showing "effort: high" as if confirmed. Leaving the default unexplained (what you reported). Guessing a default for models not in the table.
+*Cost:* a hard-coded table, against the grain of D62 and D66. It exists only because the API has no way to ask.
