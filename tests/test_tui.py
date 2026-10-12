@@ -231,6 +231,17 @@ async def test_a_24_row_terminal_fits_a_full_prompt_above_the_footer(tmp_path):
         assert footer.region.bottom <= app.screen.region.bottom
 
 
+async def test_a_worker_result_arriving_as_the_app_closes_is_ignored(tmp_path):
+    # A worker (here the git lookup, started at mount) can hand back its
+    # result while the app is closing, after the footer has gone. That used
+    # to raise NoMatches, failing the worker and so the app. Found by CI.
+    app = make_app(tmp_path)
+    async with app.run_test() as pilot:
+        await app.query_one("#footer").remove()
+        app._git_found(None)  # what the worker's call_from_thread runs
+        await pilot.pause()
+
+
 async def test_existing_history_opens_with_the_same_pinned_logo(tmp_path):
     app = make_app(tmp_path, ["An earlier answer"])
     list(app.agent.run_turn("An earlier question"))

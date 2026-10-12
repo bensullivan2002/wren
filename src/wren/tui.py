@@ -44,6 +44,7 @@ from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.geometry import Size
 from textual.message import Message as TextualMessage
 from textual.widget import Widget
@@ -999,7 +1000,13 @@ class WrenApp(App):
             self._maybe_look_up_rate()  # Wren may have been open past midnight
 
     def _show_status(self) -> None:
-        self.query_one("#footer", FooterRows).redraw()
+        # A worker's result (the git branch, say) can arrive while the app is
+        # closing, after the footer has gone. There's nothing left to redraw.
+        try:
+            footer = self.query_one("#footer", FooterRows)
+        except NoMatches:
+            return
+        footer.redraw()
 
     @work(thread=True, exclusive=True, group="git")
     def refresh_git(self) -> None:

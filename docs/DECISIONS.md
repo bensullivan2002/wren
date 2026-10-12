@@ -744,7 +744,7 @@ Tests and the logo generator are exempt from bandit's rules: they assert, run co
 - `pip-audit` checks every package in `uv.lock`, dev tools included, against PyPI's records of known vulnerabilities. It runs with CI, and weekly so that a newly published one shows up in a quiet week.
 - Dependabot opens a weekly pull request for the Python packages and another for the actions. It waits a week after a release before proposing it, since a hijacked release is usually pulled within days.
 
-*Repository settings, not files (yours to switch on, free on a public repository):* CodeQL's default setup, secret scanning with push protection, Dependabot alerts and security updates.
+*Repository settings, not files (you chose them all, as long as they're free; they are, on a public repository):* CodeQL's default setup, Dependabot alerts and security updates, switched on with this step. Secret scanning with push protection was already on, as it is by default for public repositories.
 *Not chosen:* the standalone `bandit` (ruff's `S` rules are the same checks, without a second tool). The hook versions in `.pre-commit-config.yaml` aren't left to Dependabot: `pre-commit autoupdate` updates them, deliberately (D109's cost).
 
 ### D112. pre-commit runs the quick checks on each commit; CI runs the same list
@@ -765,10 +765,10 @@ Ruff 0.17 also formats Python code blocks inside Markdown, and wanted to rewrite
 ### D114. Locally, run the tests for what changed; CI runs them all
 *Issue #11 · you*
 
-A session runs the tests for the code it changed (the matching `tests/test_<module>.py`, or `-k`) and leaves the full suite to CI, checking `gh pr checks` before merging. It saves the time, and the tokens, of running and reading the whole suite each time. CI catches what a narrow run misses, as long as nothing merges with CI failing: making CI a required check on `main` (a repository setting) enforces that.
+A session runs the tests for the code it changed (the matching `tests/test_<module>.py`, or `-k`) and leaves the full suite to CI, checking `gh pr checks` before merging. It saves the time, and the tokens, of running and reading the whole suite each time. CI catches what a narrow run misses, as long as nothing merges with CI failing. So `main` is protected: a pull request can't merge until all six CI jobs pass. You can still override it as an admin, and a branch needn't be up to date with `main` first (one person working rarely needs that, and it costs a rerun per merge). The dependency audit is required too: a vulnerability newly published for a dependency blocks merging until it's updated, which is the point.
 *Not chosen:* `pytest-testmon`, which records which tests run which code and picks the tests itself (automatic, but another dependency and a data file, and it misses what it can't trace, such as a file a test reads).
 
 ### D115. Type checking will use basedpyright, as its own piece of work
 *Issue #11 · you*
 
-Not part of this step: how much code it would ask to change hasn't been measured. When it comes, it's another CI job, and probably a hook.
+Not part of this step: how much code it would ask to change hasn't been measured. When it comes, it's another CI job, and probably a hook. The questions to settle are in [issue #15](https://github.com/bensullivan2002/wren/issues/15).
