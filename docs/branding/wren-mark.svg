@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Wren mark</title>
+  <desc id="desc">A right-facing wren with an upright tail and a code-chevron cut out of its wing.</desc>
+  <path fill="#B86B3E" fill-rule="evenodd" d="M7 7 L18 12 L28 29 C31 27 34 24 35 21 C35 14 39 9 46 9 C52 9 56 13 56 19 L62 23 L55 27 C54 39 45 49 34 52 L34 57 H40 V60 H30 V53 H26 V57 H20 V54 H23 V52 C14 50 9 45 9 38 C9 35 10 32 12 30 Z M48 18 A2 2 0 1 0 44 18 A2 2 0 1 0 48 18 Z M26 32 H30 L38 39 L30 46 H26 L33 39 Z"/>
+</svg>

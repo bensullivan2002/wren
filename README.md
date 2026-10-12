@@ -1,5 +1,10 @@
 # Wren
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/branding/wren-logo-dark.svg">
+  <img src="docs/branding/wren-logo-light.svg" alt="Wren — a small bird with a code-chevron wing" width="360" height="120">
+</picture>
+
 A small, readable coding-agent harness for the terminal, built step by step so every part can be understood.
 
 > **Status: step 8 of the roadmap.** Wren is a full-screen terminal app that chats with Claude or OpenAI's models, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first. It saves every conversation so you can resume it, switches models mid-conversation, reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable. The shell is not sandboxed, so read what you approve.
@@ -170,6 +175,7 @@ The docs are written to teach, not just to reference:
 
 - **[Architecture](docs/ARCHITECTURE.md)**: how Wren is put together right now, and how a turn flows through it.
 - **[Decisions](docs/DECISIONS.md)**: every significant choice we made, and why.
+- **[Logo kit](docs/branding/)**: light/dark wordmarks, small pixel icons, and a terminal-friendly bird.
 - **[Build journal](docs/journal/)**: one entry per step, explaining the ideas behind what we built.
   1. [Foundations: a chat loop you own](docs/journal/01-foundations.md)
   2. [Tools: the agent loop](docs/journal/02-tools.md)
