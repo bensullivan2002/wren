@@ -182,12 +182,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="report stale assets without writing anything")
     args = parser.parse_args()
+    outputs = {HERE / name: content for name, content in artifacts().items()}
+    # Installed apps cannot reach the repo's docs. Bundle the same mark in
+    # the Python package, and keep it in sync through this generator.
+    outputs[HERE.parent.parent / "src" / "wren" / "wren-terminal.txt"] = outputs[HERE / "wren-terminal.txt"]
     stale = []
-    for name, content in artifacts().items():
-        path = HERE / name
+    for path, content in outputs.items():
         if args.check:
             if not path.exists() or path.read_bytes() != content:
-                stale.append(name)
+                stale.append(str(path.relative_to(HERE.parent.parent)))
         else:
             path.write_bytes(content)
     if stale:

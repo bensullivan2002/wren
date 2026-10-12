@@ -205,6 +205,8 @@ Three objects cross between them: each event (worker to app, in order, one at a 
 
 The screen is a column: a header line, the scrolling transcript, a status line, and the prompt box. The transcript holds one widget per thing that happened: your message, a reply, a tool call, a question, a note. All text from outside (model, files, commands) is passed as Rich `Text` or with `markup=False`, so it's never read as Textual markup.
 
+New conversations show a theme-coloured bird in the scrolling transcript; `/clear` redraws it. It is a `Static` widget only, never a model message or session record. Resumed histories open at their latest message without a new welcome banner. The mark is loaded with `importlib.resources` from `wren/wren-terminal.txt`, so installed apps do not depend on the repo's docs or working directory. The branding generator keeps this packaged copy identical to the design asset. Below 20 columns or 20 rows, the welcome falls back to `wren`, adapting as the terminal is resized. Plain mode is unchanged.
+
 ## Permission scopes
 
 | Tool | Asks? | "Always" scope | Covers |

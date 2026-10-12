@@ -508,3 +508,10 @@ You asked to change provider without restarting. `/provider` opens a picker (or 
 You asked for commands to open the way they do in Claude Code and Codex: inline, and dismissed with Escape. Reference output (`/usage`, `/help`, `/history`, `/tools`, `/system`, `/memory`, `/permissions`) and the pickers now open in a panel above the prompt, and nothing is added to the transcript.
 *Design details:* commands that change something (`/clear`, `/remember`, `/model NAME`, `/compact`) and errors still leave a note in the transcript, as a record. With the panel open, Escape closes it and does not also stop a running turn. A permission question closes the panel. This revises D38 for pickers, which used to sit in the transcript; permission questions stay there.
 *Not chosen:* a full-screen modal (it hides the conversation you may be asking about).
+
+### D81. New TUI conversations show the terminal Wren logo
+*Branding follow-up · you*
+
+You expected the logo to appear after restarting Wren. The original logo PR shipped assets and README branding only; the follow-up puts the bird in the scrolling transcript at startup and after `/clear`.
+*Design details:* the welcome is a widget, not a model message or saved session record. Existing histories resume without a new banner. The mark is bundled as package data and kept in sync by the branding generator, so installation and working directory do not matter. It inherits the theme's accent and falls back to `wren` below 20 columns or 20 rows, updating on resize.
+*Not chosen:* a permanent eight-row header (less room for the conversation), a repo-relative asset path (breaks installed apps), or a logo in plain/piped output (decoration in scripts).

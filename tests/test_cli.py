@@ -36,6 +36,7 @@ def test_chat_with_the_fake_model():
     assert result.returncode == 0
     assert "You said: hello wren" in result.stdout
     assert "[1] user" in result.stdout and "[2] assistant" in result.stdout
+    assert not set("▀▄█") & set(result.stdout)  # the TUI logo must not leak into pipes
 
 
 def test_the_fake_model_drives_a_real_tool_call(tmp_path):
