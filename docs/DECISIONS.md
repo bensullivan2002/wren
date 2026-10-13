@@ -872,3 +872,10 @@ Every provider has a `billing` ("API key", "ChatGPT plan", "free"). The footer s
 *Step 10 · design*
 
 If the saved sign-in lacks the plan permission (you declined it), `wren login` asks OpenAI to show the consent screen again (`prompt=consent`), with the full set of scopes. An ordinary sign-in never forces it. The docs' newer `force_reconsent=true` waits until OpenAI confirms it's deployed for Wren.
+
+### D131. On the plan route, the reply is read from the finished-item events
+*Step 10, found in your first real run · design*
+
+Your first test with a real account saved every reply as `(no reply)`: text streamed, but tool calls never ran. A probe of the live route (13 October 2026) showed why. Its `response.completed` carries the usage but an **empty** `output`, and each item (message, tool call, reasoning) arrives once, finished, in a `response.output_item.done` event. `read_stream` now collects those by `output_index` and uses them when the final event has none. A reply that spent output tokens but yielded no item Wren can read is now an error ("a bug in Wren"), not a silent empty reply. Checked live afterwards: a `list_files` call came back as `function_call` with namespace `wren`, ran, and the request carrying its result was accepted (D127's namespace round trip).
+*Not chosen:* always building the reply from the item events (the API-key route and the SDK use the final event; this keeps both shapes working). Rebuilding text from the deltas (it loses tool calls and reasoning). The SDK's own recovery, which only covers a final event with *no* `output` field, not an empty one.
+*Lesson:* the fakes were built from the docs, and the docs' example only waits for `response.completed`. The tests' fake stream now has the live shape.

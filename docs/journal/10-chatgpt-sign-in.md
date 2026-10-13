@@ -204,6 +204,21 @@ API key or anything else: the request stopped.
 
 The first line goes into the conversation's error note too (the agent keeps the first line), so the model knows why the turn stopped. A refusal before the request is even admitted can come with no code at all, just `{"detail": "..."}`. Wren shows that text as it is, under advice chosen by the HTTP status.
 
+## Idea 10: what the first real run found
+
+The first test with a real account looked like a hang: after the first reply, messages seemed to go nowhere. The session file told a different story. Every turn reached the model, and OpenAI reported output tokens each time, yet every reply was saved as `(no reply)`. The first reply's text had shown up only because it streamed as deltas. A tool call doesn't stream as text, so "list the Python files" ended silently, with nothing run.
+
+A probe printing only the *shape* of the live stream found it:
+
+```text
+response.output_item.done index=0 item.type=function_call name=list_files namespace=wren
+response.completed: status=completed output has 0 item(s) [] output_tokens=23
+```
+
+On this route the final event's `output` is empty, and each finished item comes in its own `response.output_item.done` event. So `read_stream` now keeps those, and uses them when the final event has none (D131). It also refuses to pass off a reply it couldn't read as an empty one: a turn that spent output tokens but produced nothing readable is now an error.
+
+Two lessons. Fakes built from documentation test your reading of the documentation, not the service, which is why the spike's first real run mattered. And a placeholder like `(no reply)` is a place for bugs to hide: when "nothing" is a possible answer, check that it really was nothing.
+
 ## Python worth knowing from this step
 
 - **`dataclasses.field(repr=False)`** leaves a field out of the generated `__repr__`. Here it keeps tokens out of anything printed.
@@ -216,7 +231,7 @@ The first line goes into the conversation's error note too (the agent keeps the 
 
 ## Known limits (on the list for later)
 
-- **Untried with a real account.** Everything is tested against fakes built from OpenAI's docs and the SDK's types. Real sign-in, a streamed turn and a tool round trip need your browser and your ChatGPT account (see "Things to try").
+- **Only partly tried with a real account.** Signing in, streamed replies and a tool round trip work live (after Idea 10's fix). The rest of "Things to try" is still to do; until then, those parts are tested only against fakes built from OpenAI's docs.
 - **One account.** No account picker; signing in as someone else is refused. To start over, delete `~/.wren/auth/chatgpt.json`. ([#22](https://github.com/bensullivan2002/wren/issues/22))
 - **No automatic retry.** A temporary failure (503, `…_unavailable`) stops the turn, and you send the message again. The docs suggest bounded backoff. ([#23](https://github.com/bensullivan2002/wren/issues/23))
 - **The sign-in is in a file, not the macOS Keychain.** ([#24](https://github.com/bensullivan2002/wren/issues/24))
@@ -239,4 +254,4 @@ The first line goes into the conversation's error note too (the agent keeps the 
 
 ## What's next
 
-First, trying it with a real account, and fixing what that finds. The known limits above are issues #22 to #28, for whenever they're wanted. Then step 11: extensions (MCP, subagents, hooks).
+First, finishing "Things to try" with a real account, and fixing what that finds. The known limits above are issues #22 to #28, for whenever they're wanted. Then step 11: extensions (MCP, subagents, hooks).

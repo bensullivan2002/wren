@@ -143,7 +143,7 @@ What to know:
 - **It's your plan's allowance, not a new one.** Requests count against the same limits as ChatGPT and any other app you've allowed. See and limit them at [chatgpt.com/settings/usage](https://chatgpt.com/settings/usage). Plan usage isn't priced per token, so the footer's cost shows it as unknown.
 - **Wren never switches who pays.** `--auth` is read once, at startup. If the plan can't be used (not signed in, the permission declined, a usage limit, a temporary fault), the request stops with an error that says why; it isn't retried with your API key, another provider or bought credits. To pay another way, start Wren with `--auth api-key`. Whatever your plan settings say about credits is up to them: Wren doesn't choose.
 - **Where it's kept.** `~/.wren/auth/`, readable only by you, and out of reach of commands Wren runs in its sandbox. Codex's sign-in files aren't touched.
-- **Limits of this first version** ([issue #19](https://github.com/bensullivan2002/wren/issues/19), a spike): one ChatGPT account; untried against a real account so far; a temporary failure isn't retried by itself; `--max-tokens` doesn't apply (this route refuses the setting); the browser must be on the same computer. Details in [journal 10](docs/journal/10-chatgpt-sign-in.md).
+- **Limits of this first version** ([issue #19](https://github.com/bensullivan2002/wren/issues/19), a spike): one ChatGPT account; tried against a real account for streamed replies and a tool call, and still being tried for the rest; a temporary failure isn't retried by itself; `--max-tokens` doesn't apply (this route refuses the setting); the browser must be on the same computer. Details in [journal 10](docs/journal/10-chatgpt-sign-in.md).
 
 ### Models
 
