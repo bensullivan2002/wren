@@ -11,6 +11,10 @@ dependencies = [
     # Tool inputs are Pydantic models. The anthropic SDK already depends on
     # Pydantic, but we import it ourselves, so we say so.
     "pydantic>=2",
+    # Signing in with ChatGPT (auth/chatgpt.py): checks the ID token's
+    # signature against OpenAI's published keys. `[crypto]` brings in the
+    # `cryptography` package, which does the RSA maths.
+    "pyjwt[crypto]>=2.10",
     # The full-screen terminal interface (tui.py). Brings in Rich, which
     # renders the markdown and coloured text.
     "textual>=8",

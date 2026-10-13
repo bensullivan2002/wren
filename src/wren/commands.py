@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from wren.agent import Agent, Compacted
-from wren.config import API_KEYS, COMPACTION_MARGIN, default_choice
+from wren.config import API_KEYS, CHATGPT, COMPACTION_MARGIN, default_choice
 from wren.memory import Memory
 from wren.messages import (
     Message,
@@ -183,16 +183,37 @@ def missing_key(provider_name: str) -> str | None:
     return key[0] if key is not None and not os.environ.get(key[0]) else None
 
 
+def on_plan(agent: Agent, provider_name: str) -> bool:
+    """Whether this run pays for that provider with a ChatGPT plan, not a key."""
+    return provider_name == "openai" and agent.auth == CHATGPT
+
+
+def still_needed(agent: Agent, provider_name: str) -> str | None:
+    """What a provider still needs before this run can use it, in a few
+    words, or None if nothing."""
+    if on_plan(agent, provider_name):
+        from wren.auth.chatgpt import ChatGPTAuthError, ChatGPTSession
+
+        try:
+            ChatGPTSession().check()  # reads the saved sign-in; sends nothing
+        except ChatGPTAuthError:
+            return "`wren login`, for ChatGPT plan usage"
+        return None
+    variable = missing_key(provider_name)
+    return f"{variable} to be set" if variable else None
+
+
 def provider_choices(
     agent: Agent, user: UserDefaults | None = None
 ) -> list[tuple[str, str]]:
     """Each provider, with a note on where it stands: (label, name)."""
     rows = []
     for name in PROVIDERS:
+        needs = still_needed(agent, name) if name != agent.provider.name else None
         if name == agent.provider.name:
             note = f"   (in use, with {agent.provider.model})"
-        elif missing_key(name):
-            note = f"   (needs {missing_key(name)} to be set)"
+        elif needs:
+            note = f"   (needs {needs})"
         else:
             note = f"   ({agent.model_last_used_with(name) or default_choice(name, user)[0]})"
         rows.append((name + note, name))
@@ -217,7 +238,7 @@ def switch_provider(
         return f"no provider called {name}. There are: {', '.join(PROVIDERS)}", False
     if name == agent.provider.name:
         return f"Already using {name}.", True
-    variable = missing_key(name)
+    variable = None if on_plan(agent, name) else missing_key(name)
     if variable:
         return (
             f"{name} needs an API key: set {variable} in your shell and start Wren again.",
@@ -229,11 +250,15 @@ def switch_provider(
         if model == default_model:
             effort = default_level
     try:
-        provider = make_provider(name, model, effort)
-    except Exception as e:  # noqa: BLE001 - the SDK refused to start, for whatever reason
+        # Built the way this run started (agent.auth), so switching away
+        # and back can't change who pays.
+        provider = make_provider(name, model, effort, auth=agent.auth)
+    except Exception as e:  # noqa: BLE001 - the SDK refused to start, or you're not signed in
         return f"couldn't start {name}: {e}", False
     agent.set_provider(provider)
     note = f"Now using {name}, with {provider.model}."
+    if on_plan(agent, name):
+        note += " Paid for by your ChatGPT plan."
     if agent.messages:
         note += " Its first reply re-reads the conversation at full price, and the earlier model's private reasoning doesn't carry over."
     return note, True
@@ -470,6 +495,8 @@ def _usage(agent: Agent) -> str:
         f"Conversation now: {context_meter(agent)}",
         *_budget_explained(agent),
         "",
+        # Wren's record of how it sends requests, set when it started.
+        f"Paid for by: {getattr(agent.provider, 'billing_note', '') or agent.provider.billing}",
         f"Model asked for: {agent.provider.model}",
         # This line is the provider's word, not ours. If /model is really
         # working, it changes after the next reply.

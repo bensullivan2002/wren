@@ -1,6 +1,6 @@
 # Architecture
 
-*Describes Wren as of **step 9**. This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
+*Describes Wren as of **step 10**. This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
 
 ## The big picture
 
@@ -17,6 +17,8 @@ flowchart LR
     provider -.->|stream events| agent
     provider --- anthropic["AnthropicProvider"] --> api[("Claude API")]
     provider --- openai["OpenAIProvider"] --> oai[("OpenAI API")]
+    openai -.->|"--auth chatgpt: a token per request"| auth["<b>ChatGPT sign-in</b><br/>auth/<br/><i>~/.wren/auth, owner-only</i>"]
+    auth -->|"sign in, refresh, revoke"| oaiauth[("auth.openai.com")]
     provider --- fake["FakeProvider<br/>(tests, offline demo)"]
     agent -->|"run(name, args)"| registry["<b>ToolRegistry</b><br/>tools/registry.py"]
     registry -.->|ToolResult| agent
@@ -29,7 +31,7 @@ flowchart LR
     sh -->|"outside_sandbox, or no sandbox on this system"| os[("Your machine<br/>(not fenced)")]
 ```
 
-Solid arrows are calls; dotted arrows are what comes back, or a callback. One front end runs at a time: the full-screen app in a terminal, the plain REPL with `--plain` or when input or output is a pipe.
+Solid arrows are calls; dotted arrows are what comes back, or a callback. One front end runs at a time: the full-screen app in a terminal, the plain REPL with `--plain` or when input or output is a pipe. `wren login`, `wren logout` and `wren auth-status` don't start a conversation at all: `cli.py` hands them to `auth/cli.py` and exits.
 
 ## The parts
 
@@ -41,7 +43,11 @@ Solid arrows are calls; dotted arrows are what comes back, or a callback. One fr
 | **Memory** | `memory.py` | Find and read the memory files (`WREN.md`, `AGENTS.md`); render them for the prompt; append `/remember` notes | The file helpers |
 | **Agent** | `agent.py` | Own the conversation; run the agent loop; keep history valid and truthful; track its size and compact it | A `Provider`, a `ToolRegistry`, the message types |
 | **Messages** | `messages.py` | Provider-neutral types; the history rules (`history_problems`) | Nothing else |
-| **Provider** | `providers/` | Translate to a vendor's API and back; stream the reply; ask for caching; report token use; list its models; know their prices | The vendor SDK, the message types |
+| **Provider** | `providers/` | Translate to a vendor's API and back; stream the reply; ask for caching; report token use; list its models; know their prices; say who pays | The vendor SDK, the message types |
+| **Plan route** | `providers/openai_plan.py` | The rules for OpenAI requests paid from a ChatGPT plan: the request's shape, reading the stream to `response.completed`, the account's model list, error advice | The OpenAI SDK, `openai.py`'s translation |
+| **ChatGPT sign-in** | `auth/chatgpt.py`, `auth/callback.py` | OAuth with PKCE: the browser sign-in and its loopback callback, checking the ID token and scopes, refreshing (one at a time), signing out | PyJWT, the standard library, `auth/store.py` |
+| **Credential store** | `auth/store.py` | Keep the sign-in and host ID in `~/.wren/auth/`: owner-only, atomic writes, a lock for refreshing | Nothing of Wren's |
+| **Sign-in commands** | `auth/cli.py` | `wren login`, `wren logout`, `wren auth-status`: run the above and print what happened | The sign-in and the store |
 | **Tool registry** | `tools/registry.py` | Look up tools, check arguments, get permission, run, turn failures into error results, cap output | The `Tool` interface, `Permissions` |
 | **Tool base** | `tools/base.py` | What a tool is; turn an `Input` model into a schema and into checked arguments | Pydantic |
 | **Permissions** | `tools/permissions.py` | Remember what's "always" allowed this session, and whether auto mode is on; otherwise ask, through a callback | Nothing else |
@@ -55,7 +61,7 @@ Solid arrows are calls; dotted arrows are what comes back, or a callback. One fr
 | **Sessions** | `sessions.py` | Write the conversation to a JSON Lines file as it happens; list and load saved sessions | The message types |
 | **Commands** | `commands.py` | Slash commands, returning text for either front end to show; resuming a session, switching model | The `Agent`, `Memory`, `SessionStore` |
 
-The rule behind this table: **each part knows as little as possible about the others.** The agent never prints and never touches files. Tools don't know there's a model, and never call `input()`. Nothing outside `providers/anthropic.py` knows what Anthropic's JSON looks like, and nothing outside `providers/openai.py` knows OpenAI's. Nothing outside `tui.py` knows about Textual. That's what lets us swap the model, have two interfaces, add tools, or test any part alone.
+The rule behind this table: **each part knows as little as possible about the others.** The agent never prints and never touches files. Tools don't know there's a model, and never call `input()`. Nothing outside `providers/anthropic.py` knows what Anthropic's JSON looks like, and nothing outside `providers/openai.py` and `openai_plan.py` knows OpenAI's. Nothing outside `auth/` knows how signing in works, or sees a token except the provider sending it. Nothing outside `tui.py` knows about Textual. That's what lets us swap the model, have two interfaces, add tools, or test any part alone.
 
 ## Anatomy of a tool
 
@@ -109,7 +115,7 @@ Memory lives in the system prompt, which compaction doesn't touch, so it survive
 
 ## Providers
 
-A provider turns Wren's neutral history into one vendor's request, and that vendor's reply back into neutral types. The `Provider` protocol is: `name`, `model`, `effort`, `stream(...)`, `models()`, `efforts()`, `default_effort()`, `context_window()`. `context_window()` returns the current model's window in tokens, or None if it isn't known, and may make a network call. The provider's `context_window_source` says where the number came from, so `/usage` can show it.
+A provider turns Wren's neutral history into one vendor's request, and that vendor's reply back into neutral types. The `Provider` protocol is: `name`, `model`, `billing` (who pays, in a word or two), `effort`, `stream(...)`, `models()`, `efforts()`, `default_effort()`, `context_window()`. `context_window()` returns the current model's window in tokens, or None if it isn't known, and may make a network call. The provider's `context_window_source` says where the number came from, so `/usage` can show it.
 
 | | `anthropic` | `openai` | `fake` |
 | --- | --- | --- | --- |
@@ -121,11 +127,25 @@ A provider turns Wren's neutral history into one vendor's request, and that vend
 | Effort levels | asked of the API, per model | every level offered; the API can't be asked | fixed |
 | Context window | asked of the API (`max_input_tokens`), per model | a dated table from OpenAI's model pages; the API can't be asked | 200,000, or none for `demo-large` |
 | Default model and effort | `claude-opus-5-5`, `xhigh` | `gpt-6.1-sol`, `xhigh` | `demo`, none |
-| Key | `ANTHROPIC_API_KEY` | `OPENAI_API_KEY` | none |
+| Paid for by (`billing`) | `ANTHROPIC_API_KEY` ("API key") | `OPENAI_API_KEY` ("API key"), or with `--auth chatgpt` your ChatGPT plan ("ChatGPT plan") | nothing ("free") |
 
 Each provider stores its own reasoning as a `ReasoningBlock` tagged with its name, and leaves out any block tagged with another's. `Usage` means the same thing from every provider: `input_tokens` is the uncached part, and `sent_tokens` is everything sent.
 
 `Completed` keeps effort sources separate: `effort_sent` is Wren's request record; `effort_reported` is optional response metadata. OpenAI reads the latter from `response.reasoning.effort`, never from the request. `Agent.last_call` carries it to `/usage` in both front ends; absent or null effort is shown as "not reported". Last-call metadata isn't persisted in session files.
+
+### Paying with a ChatGPT plan
+
+`--auth` (or `WREN_OPENAI_AUTH`) chooses how OpenAI is paid for: `api-key` (the default) or `chatgpt`. `Config.auth` holds it, `cli.py` passes it to `make_provider` and to the agent (`agent.auth`), and `commands.switch_provider` passes `agent.auth` on, so `/provider` and resuming rebuild OpenAI the same way. Nothing else sets it.
+
+With `chatgpt`, `make_provider` builds a `ChatGPTSession` (`auth/chatgpt.py`), checks a sign-in with plan permission is saved (else raises `SignInRequired` or `PlanUsageDisabled`, which `cli.py` prints, and `/provider` reports), and gives it to `OpenAIProvider` as `plan`. That provider then has `client = None` and a `_plan_client` maker instead. For each request (and `models()`):
+
+1. `plan.access_token()` reads `~/.wren/auth/chatgpt.json`; if the token has under five minutes left, it takes `flock` on `chatgpt.lock`, re-reads, and refreshes only if still needed, saving every new value in one atomic write.
+2. `openai_plan.make_client(token)`: an SDK client with that token as its bearer key, the public `base_url`, and `max_retries=0`.
+3. `openai_plan.build_request`: `store: false`, `stream: true`, no `max_output_tokens`, tools inside one namespace (`wren`), and `namespace: "wren"` on tool calls in the history. Everything else is `openai.py`'s translation.
+4. `client.responses.create(**request)`, read by `openai_plan.read_stream`: text deltas pass through; `response.completed` or `response.incomplete` gives the final `Response`; `response.failed`, an `error` event, or a stream that ends without either raises `PlanRequestError`. SDK errors become `PlanRequestError` through `explain`, with advice for each documented code.
+5. `_completed(final, request)` builds the `Completed`, as on the API-key route.
+
+`prices()` is None on this route, and `billing_note` (for `/usage`) names the signed-in account. **Signing in** (`wren login`) is `chatgpt.sign_in`: start `CallbackServer` on `127.0.0.1:1455` (or any free port), open the browser at `LoginAttempt.authorize_url()` (fresh state, nonce and PKCE pair; the saved client ID and hints if there's a registration, else `dynamic_agent_client`), wait for the callback, then `finish_login`: check the state, then the error, then the client ID; swap the code for tokens; `verify_id_token`; check it's the same account; save. **Signing out** takes the same lock, revokes the refresh token at the `revocation_endpoint` (retrying network faults and 5xx), and keeps only the registration (`Credentials.signed_out`).
 
 ## Sessions
 
@@ -149,7 +169,7 @@ Each provider stores its own reasoning as a `ReasoningBlock` tagged with its nam
 
 ## Switching provider, model and effort
 
-`Agent.set_provider` replaces the agent's provider object. `commands.switch_provider` builds the new one with `make_provider`, after checking its API key is set, using the model this conversation last used with that provider, or else the provider's default (`config.default_choice`: the saved one, else Wren's own). When that is the default model it gets the default effort too, as at startup. The history is untouched; each provider leaves out the other's `ReasoningBlock`s. Resuming a session returns to its provider when that provider's key is available.
+`Agent.set_provider` replaces the agent's provider object. `commands.switch_provider` builds the new one with `make_provider(..., auth=agent.auth)`, after checking its API key is set (or, for OpenAI on the plan route, leaving `make_provider` to check the sign-in), using the model this conversation last used with that provider, or else the provider's default (`config.default_choice`: the saved one, else Wren's own). When that is the default model it gets the default effort too, as at startup. The history is untouched; each provider leaves out the other's `ReasoningBlock`s. Resuming a session returns to its provider when that provider's key is available.
 
 
 A provider has a `model` and an `effort` (None for the model's default), both read on each request. `Agent.set_model` and `Agent.set_effort` set them and tell the journal; switching model puts effort back to None.
@@ -227,7 +247,7 @@ The screen is a column: a top-docked logo, a bottom-docked footer, and between t
 
 The theme-coloured bird is a top-docked `Static` outside the transcript, pinned at the top left in new and resumed conversations. Chatting, scrolling, `/clear` and history redraws do not move or recreate it. It is never a model message or session record. The mark is loaded with `importlib.resources` from `wren/wren-terminal.txt`, so installed apps do not depend on the repo's docs or working directory. The branding generator keeps this packaged copy identical to the design asset. Below 20 columns or 30 rows (`LOGO_MIN_WIDTH`, `LOGO_MIN_HEIGHT`), the welcome falls back to `wren`, adapting as the terminal is resized; 30 rows is what the bird, the footer and a full prompt need while leaving the conversation 6 (D96). Plain mode is unchanged.
 
-**The footer** (`FooterRows`) has six fixed rows: settings (model, effort, provider, `auto: on` in auto mode, git branch, folder, session), the context bar against the compaction budget (or, with no budget, the size and why: "compaction off", "window unknown: never compacted", "window not looked up yet"), spending, time, tool calls, and what Wren is doing now. `footer.py` builds them from the agent, the app's `RunStats` and a little app state (busy, git, session); `tui.py` only puts them on screen. A row never wraps: each part has a `keep` score, and `fit` drops the least important parts that don't fit. The footer is redrawn on the app's tick (ten times a second while busy, once a second otherwise), not on every event. Cost comes from each provider's `prices()`, a dated table in US dollars copied from its pricing page, and is shown in pounds at the day's rate from `exchange.py` (in dollars until there is one). The footer is the app's alone; the REPL prints a summary line after each turn instead.
+**The footer** (`FooterRows`) has six fixed rows: settings (model, effort, provider with who pays in one part, `provider: openai (ChatGPT plan)`, `auto: on` in auto mode, git branch, folder, session), the context bar against the compaction budget (or, with no budget, the size and why: "compaction off", "window unknown: never compacted", "window not looked up yet"), spending, time, tool calls, and what Wren is doing now. `footer.py` builds them from the agent, the app's `RunStats` and a little app state (busy, git, session); `tui.py` only puts them on screen. A row never wraps: each part has a `keep` score, and `fit` drops the least important parts that don't fit. The footer is redrawn on the app's tick (ten times a second while busy, once a second otherwise), not on every event. Cost comes from each provider's `prices()`, a dated table in US dollars copied from its pricing page, and is shown in pounds at the day's rate from `exchange.py` (in dollars until there is one). The footer is the app's alone; the REPL prints a summary line after each turn instead.
 
 ## Permissions, auto mode and the sandbox
 
@@ -286,14 +306,23 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 25. **Containment is established by Wren, never claimed by the model.** `contained` comes from the resolved path, and a command goes unasked only if Wren will run it in the sandbox; the model can only opt out, with `outside_sandbox`.
 26. **What you're asked about is what runs.** The shell's `permission()` and `run()` both decide sandboxing with `_sandboxed(args)`, so a command that wasn't asked about can only run in the sandbox.
 27. **Paths are never pasted into the sandbox profile.** They're passed as parameters, so a folder's name can't change what the profile says. The one regular expression gets the project's path as a parameter too, already escaped.
+28. **Who pays never changes by itself.** The route is set at startup (`--auth`, `WREN_OPENAI_AUTH`) and carried by `agent.auth` through every provider switch. On the plan route the provider has no API-key client, and every failure stops the request: nothing retries it another way.
+29. **A plan-route reply counts only if the stream says it finished** (`response.completed`, or `response.incomplete` for a partial reply). A failure or a stream that just ends raises, and the turn is closed as for any error.
+30. **Tokens are never shown, logged or readable by a sandboxed command.** The record is owner-only and written atomically, tokens are left out of its `repr`, the callback server logs nothing, and `.wren/auth` is in the sandbox's `CREDENTIALS`.
+31. **An ID token is believed only after its signature, issuer, audience, expiry and nonce are checked,** with the algorithm taken from OpenAI's key, never from the token. Plan usage needs the `chatgpt.tokens.use.direct` scope as granted, not as asked for.
+32. **Refreshing is one at a time, across processes,** and re-reads the record after taking the lock, so a rotated refresh token is never spent twice.
 
 ## Where the next steps plug in
 
 | Coming in | Plugs in at |
 | --- | --- |
-| Step 10: MCP | More tools in the `ToolRegistry`, provided by other programs; each needs a `permission()` story (and leaves `contained` false) |
-| Step 10: subagents | A second `Agent` with its own history, run as a tool of the first |
-| Step 10: hooks | Around `ToolRegistry.run` and at turn boundaries in `Agent` |
+| Step 11: MCP | More tools in the `ToolRegistry`, provided by other programs; each needs a `permission()` story (and leaves `contained` false) |
+| Step 11: subagents | A second `Agent` with its own history, run as a tool of the first |
+| Step 11: hooks | Around `ToolRegistry.run` and at turn boundaries in `Agent` |
+| Later: more than one ChatGPT account | `CredentialStore`, keyed by issued client ID; an account picker; `finish_login`'s same-account check becomes a choice |
+| Later: retrying temporary plan-usage failures | `openai_plan.explain` already tells them apart; a bounded backoff around `_stream_on_plan` |
+| Later: the Keychain for the sign-in | `CredentialStore.load` and `save` |
+| Later: `/login` inside the app | `auth/chatgpt.sign_in`, on a worker, with `say` writing notes to the transcript |
 | Later: saved permission rules | Loaded into `Permissions.always` at startup |
 | Later: a sandbox on Linux | `sandbox.available()` and `sandbox.command()`, with bubblewrap or Landlock |
 | Later: a reviewer for commands outside the sandbox | `Permissions.allows`, before it asks you |

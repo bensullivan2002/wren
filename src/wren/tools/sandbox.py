@@ -80,6 +80,7 @@ CREDENTIALS = (
     ".pypirc",
     ".npmrc",
     "Library/Keychains",
+    ".wren/auth",  # Wren's own ChatGPT sign-in (auth/store.py)
 )
 
 

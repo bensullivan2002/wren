@@ -126,7 +126,7 @@ class Repl:
         provider, tools = self.agent.provider, self.agent.tools
         effort = f" ({provider.effort} effort)" if provider.effort else ""
         self.say(
-            f"{bold('wren')} {__version__} {dim(f'· {provider.name} · {provider.model}{effort} · {len(tools)} tools')}"
+            f"{bold('wren')} {__version__} {dim(f'· {provider.name} · {provider.model}{effort} · billing: {provider.billing} · {len(tools)} tools')}"
         )
         self.say(dim("Type a message, /help for commands, Ctrl-D to quit."))
         if self.memory and self.memory.files:

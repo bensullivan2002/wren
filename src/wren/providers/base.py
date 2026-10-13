@@ -21,6 +21,10 @@ from wren.messages import Message, Prices, StreamEvent, ToolSpec
 class Provider(Protocol):
     name: str  # e.g. "anthropic"
     model: str  # e.g. "claude-sonnet-5-5". Read on every request, so it can be changed between them.
+    # Who pays for requests, in a word or two ("API key", "ChatGPT plan"),
+    # for the footer. Fixed for the provider's life: a provider never
+    # changes how it's paid for by itself (config.AUTH_ROUTES).
+    billing: str
 
     # Effort: how hard the model should work on each reply (how much it
     # thinks, how thorough it is), traded against speed and cost. Providers

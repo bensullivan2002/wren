@@ -789,3 +789,86 @@ You were approving too many commands, and asked for commands in the sandbox to r
 *Design details:* returning None, rather than a request marked as allowed, keeps `contained` to one meaning (an ordinary file edit, for auto mode), and `permission()` and `run()` still decide sandboxing with the same `_sandboxed` (invariant 26). The `shell:<word>` scope remains only where there's no sandbox. `/permissions` says that commands in the sandbox run without asking, and `/auto` that it adds edits.
 *Not chosen:* allowing them through `Permissions` with a new flag on the request (a request built only to be waved through). Keeping the question in normal mode (where you started).
 *Cost:* in normal mode, a sandboxed command can now change any ordinary file in the project without a question, while `edit_file` asks before the same change. What it writes for later (a test, a `Makefile`, `WREN.md`) runs or is read outside the sandbox later, so read `git diff` before running or committing. When Wren runs Wren's own tests, the sandbox's tests fail, because a sandbox can't start inside another (journal 09); the model has to run them with `outside_sandbox`.
+
+### D118. A ChatGPT plan is a way to pay for OpenAI, not a provider
+*Step 10 ([issue #19](https://github.com/bensullivan2002/wren/issues/19)) · you*
+
+`--auth chatgpt` (or `WREN_OPENAI_AUTH=chatgpt`) makes the OpenAI provider pay from your ChatGPT plan; `--auth api-key`, the default, keeps your API key. Same provider, model, API and translation: `OpenAIProvider` takes a `plan` (a signed-in `ChatGPTSession`), and the plan route's own rules live in `providers/openai_plan.py`. Wren keeps its own agent loop, history, tools and permissions.
+*Why:* the issue asked to keep choosing a provider separate from authenticating, and the code agrees: both routes send the same items and read the same replies.
+*Not chosen:* a separate `chatgpt` provider (less code, but it ties "which model" to "who pays"). Codex's SDK or app-server (a vendor's agent loop, which the issue rules out: Wren is for learning by building, and stays provider-agnostic).
+
+### D119. Who pays is chosen once, at startup, and nothing in Wren changes it
+*Step 10 · design, from the issue's rule*
+
+The route comes from the flag or the environment variable only. It isn't a saved default (D85 and D86's `settings.json`), and on the plan route the provider has no API-key client at all (`self.client = None`). A failed request, a usage limit or a failed refresh stops the request with an error; nothing retries it another way. The agent carries the route (`agent.auth`), so `/provider` and resuming a session rebuild OpenAI the same way: if you're not signed in, switching to OpenAI fails rather than using `OPENAI_API_KEY`. `--auth` affects OpenAI only.
+*Why:* the issue's rule ("never silently fall back to a paid API key, another provider, or purchased usage; switching billing routes must be explicit"). A flag or a line in your shell profile is something you can see you did; a saved setting isn't.
+*Not chosen:* saving it with the model (convenient, but invisible). Passing the route through both front ends and `run_command` (correct too, but a parameter threaded through half a dozen signatures to reach one call).
+*Cost:* `agent.auth` is a field the agent holds but doesn't use.
+
+### D120. PyJWT checks the ID token's signature
+*Step 10 · you*
+
+A new dependency, `pyjwt[crypto]` (which brings `cryptography`). `verify_id_token` fetches OpenAI's published keys (from the OpenID configuration's `jwks_uri`), picks the one the token's `kid` names, and checks the signature, issuer, audience (Wren's issued client ID), expiry (with 60 seconds' leeway) and that `sub` is there; then Wren compares the nonce. The algorithm comes from OpenAI's key, never from the token's header, and only public-key algorithms are accepted, so the HS256 forgery fails (journal 10, Idea 4).
+*Not chosen:* `authlib` (a whole OAuth framework, for one check). `joserfc` (fine, less used). Checking RSA signatures by hand (not safe to write ourselves).
+
+### D121. `wren login`, `wren logout`, `wren auth-status` are terminal commands
+*Step 10 · you*
+
+Subcommands of `wren`, like `codex login`. They print and exit; `wren` with no command starts a conversation as before.
+*Why:* sign-in opens a browser and waits, which needs no screen of its own, and works the same with or without the full-screen app.
+*Not chosen, for now:* `/login` inside the app, as Claude Code does (more UI work: a follow-up).
+
+### D122. The sign-in is kept in `~/.wren/auth/`, owner-only, out of the sandbox's reach
+*Step 10 · you (the place) · design (how)*
+
+`chatgpt.json` holds the record OpenAI's docs suggest (identity, issued client ID, host ID, tokens, granted scopes, when they arrived); `host.json` holds the host ID. The folder is `0700`; files are written `0600` from creation (`mkstemp`), then renamed into place, so a crash never leaves half a record. Tokens have `repr=False`. `.wren/auth` is added to the sandbox's `CREDENTIALS` (D103), so a sandboxed command can't print them to the model. Codex's credential files are never read or written.
+*Not chosen, for now:* the macOS Keychain (the `keyring` package; a follow-up). Keeping the tokens in Wren's process only (you'd sign in every time).
+
+### D123. One ChatGPT account for now
+*Step 10 · you*
+
+Wren keeps one registration. Signing in again reuses it; signing in as a different account is refused, and nothing is replaced. The record is keyed by its issued client ID, so more accounts can be added later.
+*Cost:* to switch accounts, delete `~/.wren/auth/chatgpt.json` and sign in again. The old registration stays at OpenAI until you disconnect it in ChatGPT's settings.
+
+### D124. The sign-in's own requests use the standard library
+*Step 10 · design*
+
+The token, key, discovery and revocation requests (a handful of small JSON requests) use `urllib.request`, behind a two-method `Http` protocol that the tests replace. Only `https` addresses are opened. Inference still goes through the OpenAI SDK, with the access token as its `api_key`, as OpenAI's docs show.
+*Why:* the SDKs now use `httpx2` rather than `httpx`, and depending directly on a library for four requests would be one more thing to keep up with.
+*Cost:* a little more code than `httpx` would need.
+
+### D125. The host ID is a random `urn:uuid`
+*Step 10 · design*
+
+Made once per computer, before the first sign-in, and kept in `host.json`, which signing out doesn't touch. It identifies the computer to OpenAI and nothing else, so it says nothing about you.
+*Not chosen:* the docs' recommended JWK thumbprint (it needs a key pair Wren has no other use for, and OpenAI doesn't check possession of the key yet).
+
+### D126. Refreshing: five minutes early, one at a time, read again after the lock
+*Step 10 · design*
+
+`ChatGPTSession.access_token()` runs before every request (and model list). It refreshes when the token has under five minutes left, holding `flock` on `chatgpt.lock`, and re-reads the record once it has the lock, so a refresh by another Wren is used rather than repeated (journal 10, Idea 6). Access token, expiry, scopes and the rotated refresh token are saved together, in one write; the verified ID token is kept as it was. `earliest_refresh_at` is honoured when it's a number (its format isn't documented). A dead refresh token clears the tokens but keeps the registration; a network fault or 5xx keeps everything. Signing out takes the same lock, tries revocation three times (immediately, then after 1 and 3 seconds) on a network fault or 5xx, and always forgets the tokens, saying whether OpenAI confirmed it.
+*Not chosen:* refreshing on a 401 and retrying the request (a 401 here can also mean a missing permission, and a retry is a second request you didn't ask for). A lock inside the process only (two terminals would race).
+
+### D127. The plan route's requests follow its documented limits
+*Step 10 · design*
+
+`store: false` and `stream: true`; the whole history in `input`; no `max_output_tokens` (refused); the system prompt in `instructions`; Wren's tools in one namespace, `wren`, with `namespace: "wren"` on tool calls sent back; `include: ["reasoning.encrypted_content"]` and effort as on the API-key route. The SDK client is made per request with `base_url` fixed to the public API and `max_retries=0`. The stream's events are read directly: only `response.completed` (or `response.incomplete`, a partial reply) gives a reply; `response.failed`, an `error` event, or a stream that just ends, raise. The model list is the account's own (`GET /models`, entries with `visibility: "list"`, in the server's order).
+*Not chosen:* the SDK's `responses.stream` helper (used on the API-key route, unchanged: it assembles the reply itself, which leaves less room to tell a failure after streamed text from a cut-off stream). Per-tool namespaces (more shapes to get wrong, for nothing).
+*Cost:* `--max-tokens` has no effect on this route. The namespace round trip is the part most likely to differ from the docs; it's first on the list to try.
+
+### D128. Plan-usage errors say what happened and what to do, and stop
+*Step 10 · design*
+
+Each documented error code (`subscription_sharing_usage_limit_exceeded` and the rest) has a sentence of advice in `openai_plan.ADVICE`; an admission refusal with only `{"detail": ...}` gets advice by HTTP status, with the detail shown as text. Underneath: the HTTP status, code, `param` and request ID, and "Wren didn't switch to an API key or anything else". Limits link to https://chatgpt.com/settings/usage.
+*Not chosen, for now:* automatic retries with backoff for the temporary ones (`…_unavailable`, 503): a follow-up. Today you send the message again.
+
+### D129. Who pays is shown beside the provider, everywhere
+*Step 10 · design*
+
+Every provider has a `billing` ("API key", "ChatGPT plan", "free"). The footer shows it in the same part as the provider, `provider: openai (ChatGPT plan)`, so one is never shown without the other, at any width. The REPL's first line says `billing: …`; `/usage` says "Paid for by" in a sentence (`billing_note`), with the signed-in account and the usage link. The plan route has no price (`prices()` is None), so its calls show as unpriced.
+*Not chosen:* a separate `billing:` part in the footer (tried first: at 80 columns the footer dropped the provider to fit it, and the two could be shown apart).
+
+### D130. Asking for plan permission again uses `prompt=consent`
+*Step 10 · design*
+
+If the saved sign-in lacks the plan permission (you declined it), `wren login` asks OpenAI to show the consent screen again (`prompt=consent`), with the full set of scopes. An ordinary sign-in never forces it. The docs' newer `force_reconsent=true` waits until OpenAI confirms it's deployed for Wren.

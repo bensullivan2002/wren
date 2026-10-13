@@ -54,6 +54,17 @@ API_KEYS = {
     "anthropic": ("ANTHROPIC_API_KEY", "the Claude Console"),
     "openai": ("OPENAI_API_KEY", "the OpenAI platform dashboard"),
 }
+
+# How Wren pays for OpenAI's models: the --auth flag, or WREN_OPENAI_AUTH.
+#   api-key   your OpenAI API key, billed to your API account (the default)
+#   chatgpt   your ChatGPT plan's allowance, after `wren login` (auth/chatgpt.py)
+# This is chosen once, when Wren starts, and nothing in Wren changes it: not
+# a failed request, not running out of plan usage, not /provider. Who pays
+# only ever changes because you said so.
+API_KEY = "api-key"
+CHATGPT = "chatgpt"
+AUTH_ROUTES = (API_KEY, CHATGPT)
+
 # The most the model may write in one reply, *including* its private
 # thinking, which current models do before answering and which can't be
 # switched off. It's a ceiling, not a cost: you pay for what's written.
@@ -84,6 +95,7 @@ class Config:
     # just short of the model's window); 0: never compact automatically.
     context_budget: int | None = None
     effort: str | None = None  # None: whatever the model does by default
+    auth: str = API_KEY  # how OpenAI is paid for: one of AUTH_ROUTES
 
     @classmethod
     def load(
@@ -95,12 +107,22 @@ class Config:
         max_steps: int | None = None,
         context_budget: int | None = None,
         effort: str | None = None,
+        auth: str | None = None,
         env: Mapping[str, str] = os.environ,
         user: UserDefaults | None = None,
     ) -> Config:
         """Build a Config. Arguments are command-line flags (None = not given);
-        `user` is where the saved defaults are read from."""
+        `user` is where the saved defaults are read from. Raises ValueError
+        for a WREN_OPENAI_AUTH that isn't one of AUTH_ROUTES."""
         provider = provider or env.get("WREN_PROVIDER") or DEFAULT_PROVIDER
+        # Not a saved default, on purpose: switching who pays should be
+        # something you can see you did, on the command line or in your
+        # shell profile, not a setting picked up from a file.
+        auth = auth or env.get("WREN_OPENAI_AUTH") or API_KEY
+        if auth not in AUTH_ROUTES:
+            raise ValueError(
+                f"WREN_OPENAI_AUTH is {auth!r}: it should be one of {', '.join(AUTH_ROUTES)}"
+            )
         # The defaults depend on the provider: a Claude model name means
         # nothing to OpenAI.
         default_model, default_effort = default_choice(provider, user)
@@ -126,6 +148,7 @@ class Config:
                 else int(env.get("WREN_MAX_STEPS") or DEFAULT_MAX_STEPS)
             ),
             effort=effort,
+            auth=auth,
             context_budget=(
                 context_budget
                 if context_budget is not None

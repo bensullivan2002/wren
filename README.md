@@ -9,11 +9,11 @@ A small, readable coding-agent harness for the terminal, built step by step so e
 
 [![CI](https://github.com/bensullivan2002/wren/actions/workflows/ci.yml/badge.svg)](https://github.com/bensullivan2002/wren/actions/workflows/ci.yml)
 
-> **Status: step 9 of the roadmap.** Wren is a full-screen terminal app that chats with Claude or OpenAI's models, explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first, or not, in auto mode. On macOS its commands run in a sandbox: no network, and writes only inside the project, so they don't need asking about. It saves every conversation so you can resume it, switches models mid-conversation, reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable.
+> **Status: step 10 of the roadmap.** Wren is a full-screen terminal app that chats with Claude or OpenAI's models (with an API key, or, for OpenAI, your ChatGPT plan), explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first, or not, in auto mode. On macOS its commands run in a sandbox: no network, and writes only inside the project, so they don't need asking about. It saves every conversation so you can resume it, switches models mid-conversation, reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable.
 
 ## Quickstart
 
-You need Python 3.10 or newer and an API key from Anthropic or OpenAI.
+You need Python 3.10 or newer and an API key from Anthropic or OpenAI, or a ChatGPT plan (see "Paying with your ChatGPT plan").
 
 ```bash
 git clone https://github.com/bensullivan2002/wren.git
@@ -40,7 +40,7 @@ The full-screen app asks permission in place:
 
 Type in the box at the bottom. Replies stream into the conversation as rendered markdown. Each tool call shows as one line; edits show their diff, and commands the end of their output.
 
-Below the box, a footer keeps six rows up to date: the model, effort, provider, git branch and folder; how full the context is; what you've spent and how fast; how long the session and the current turn have taken; which tools have been called; and what Wren is doing right now. Everything in it counts from when you opened Wren. Cost comes from a price table in each provider, copied from its pricing page; a model that isn't in the table shows `£?`. It's shown in pounds at the day's European Central Bank rate, which the app looks up the first time it opens each day (the one network call Wren makes that isn't to the model) and keeps in `~/.wren/exchange-rate.json`. Until it has a rate, it shows dollars. In a narrow terminal, the least important parts are left out.
+Below the box, a footer keeps six rows up to date: the model, effort, provider and who pays (`provider: openai (ChatGPT plan)`), git branch and folder; how full the context is; what you've spent and how fast; how long the session and the current turn have taken; which tools have been called; and what Wren is doing right now. Everything in it counts from when you opened Wren. Cost comes from a price table in each provider, copied from its pricing page; a model that isn't in the table shows `£?`. It's shown in pounds at the day's European Central Bank rate, which the app looks up the first time it opens each day (the one network call Wren makes that isn't to the model) and keeps in `~/.wren/exchange-rate.json`. Until it has a rate, it shows dollars. In a narrow terminal, the least important parts are left out.
 
 | Key | What it does |
 | --- | --- |
@@ -123,6 +123,28 @@ The files are plain text, readable only by your user account, and kept until you
 
 `export WREN_PROVIDER=openai` makes OpenAI the default, and `/provider` switches in the middle of a conversation: the conversation carries over, the next reply is billed in full once, and the previous model's private reasoning is left behind. A provider whose key isn't set can't be chosen. Everything else works the same on either. The OpenAI provider is tested against the SDK's types but has not yet been run against the live API. A conversation resumed under a different provider carries on, without the earlier model's private reasoning.
 
+### Paying with your ChatGPT plan
+
+OpenAI's models can be paid for from your ChatGPT plan instead of an API key:
+
+```bash
+wren login                                  # sign in with ChatGPT in your browser, once
+wren --provider openai --auth chatgpt       # or: export WREN_OPENAI_AUTH=chatgpt
+```
+
+| Command | What it does |
+| --- | --- |
+| `wren login` | Opens your browser to sign in with ChatGPT and allow Wren to use your plan. Again later: signs back in to the same account |
+| `wren auth-status` | Shows the saved sign-in: the account, whether plan usage is allowed, how long the token lasts. Never shows a token |
+| `wren logout` | Ends the session at OpenAI and deletes the tokens (keeps the registration, so `wren login` is quicker next time) |
+
+What to know:
+
+- **It's your plan's allowance, not a new one.** Requests count against the same limits as ChatGPT and any other app you've allowed. See and limit them at [chatgpt.com/settings/usage](https://chatgpt.com/settings/usage). Plan usage isn't priced per token, so the footer's cost shows it as unknown.
+- **Wren never switches who pays.** `--auth` is read once, at startup. If the plan can't be used (not signed in, the permission declined, a usage limit, a temporary fault), the request stops with an error that says why; it isn't retried with your API key, another provider or bought credits. To pay another way, start Wren with `--auth api-key`. Whatever your plan settings say about credits is up to them: Wren doesn't choose.
+- **Where it's kept.** `~/.wren/auth/`, readable only by you, and out of reach of commands Wren runs in its sandbox. Codex's sign-in files aren't touched.
+- **Limits of this first version** ([issue #19](https://github.com/bensullivan2002/wren/issues/19), a spike): one ChatGPT account; untried against a real account so far; a temporary failure isn't retried by itself; `--max-tokens` doesn't apply (this route refuses the setting); the browser must be on the same computer. Details in [journal 10](docs/journal/10-chatgpt-sign-in.md).
+
 ### Models
 
 `/model` lists the models your provider offers and switches to the one you pick (to change provider, use `/provider`); `/model NAME` switches directly. The conversation carries over. The first reply from a new model costs full price for the whole conversation, because the cache is kept per model. `/usage` shows the model the API reports as having written the last reply, so you can confirm a switch took effect. `--model` or `WREN_MODEL` sets the model Wren starts with.
@@ -181,6 +203,7 @@ Each setting can come from a flag, an environment variable, or the default, in t
 | `--max-steps`  | `WREN_MAX_STEPS`     | no limit            |
 | `--context-budget` | `WREN_CONTEXT_BUDGET` | none: just short of the model's window |
 | `--effort`     | `WREN_EFFORT`        | your saved default, else `xhigh` (for the default model); another model: its own |
+| `--auth`       | `WREN_OPENAI_AUTH`   | `api-key` (or `chatgpt`, after `wren login`); OpenAI only, and never saved |
 | `--resume [ID]` |                     |                     |
 | `--plain`      |                      | off                 |
 
@@ -203,6 +226,7 @@ The docs are written to teach, not just to reference:
   7. [Sessions, and switching models](docs/journal/07-sessions.md)
   8. [A second provider: OpenAI](docs/journal/08-openai.md)
   9. [Auto mode, and a sandbox to make it safe](docs/journal/09-auto-mode.md)
+  10. [Paying with a ChatGPT plan: signing in with OAuth](docs/journal/10-chatgpt-sign-in.md)
 
 ## Roadmap
 
@@ -215,7 +239,8 @@ The docs are written to teach, not just to reference:
 - [x] **7. Sessions**: conversations saved as they happen, a picker to resume them, and model switching
 - [x] **8. A second provider**: OpenAI, through the same interface as Claude
 - [x] **9. Auto mode**: a sandbox for commands (macOS), and `/auto` to stop asking about what it contains
-- [ ] **10. Extensions**: subagents, MCP servers, hooks
+- [x] **10. Paying with a ChatGPT plan**: `wren login` (OAuth with PKCE), and `--auth chatgpt` for OpenAI's models, never falling back to an API key (a spike: [issue #19](https://github.com/bensullivan2002/wren/issues/19))
+- [ ] **11. Extensions**: subagents, MCP servers, hooks
 
 ## Development
 
@@ -257,7 +282,13 @@ src/wren/
     base.py         the Provider interface
     anthropic.py    Claude, via the Anthropic Messages API
     openai.py       OpenAI's models, via the Responses API
+    openai_plan.py  the same, paid for by a ChatGPT plan: its request rules and errors
     fake.py         a pretend model for tests and the offline demo
+  auth/
+    chatgpt.py      Sign in with ChatGPT: OAuth with PKCE, the ID token, refresh, sign-out
+    callback.py     the one-request web server the browser returns to
+    store.py        where the sign-in is kept (~/.wren/auth/, owner-only)
+    cli.py          wren login, wren logout, wren auth-status
   tools/
     base.py         the Tool interface; Pydantic inputs -> schema and checked arguments
     registry.py     looks up, checks, gets permission for, runs and caps every tool call
