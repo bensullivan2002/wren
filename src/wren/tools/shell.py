@@ -91,6 +91,7 @@ class Shell(Tool):
         "chain with && when you need to. Commands get no keyboard input, so avoid anything interactive, "
         f"and are stopped after the timeout ({DEFAULT_TIMEOUT} seconds unless you set it). "
         "Don't start servers or other programs that never exit. "
+        "Use github_read instead for supported GitHub reads: it needs no approval. "
         + (_SANDBOX_RULES if sandbox.available() else "")
         + "Prefer list_files, read_file, search and edit_file to ls, cat, grep and sed: their output is "
         "shaped for you and they need less approval. The user may be asked to approve a command, and sees "
@@ -218,17 +219,23 @@ def command_word(command: str) -> str | None:
 
 
 def _run(
-    command: str | list[str], cwd, timeout: int, should_stop: Callable[[], bool]
+    command: str | list[str],
+    cwd,
+    timeout: float,
+    should_stop: Callable[[], bool],
+    *,
+    env: dict[str, str] | None = None,
 ) -> tuple[str, int, str | None]:
     """Run `command`: a command line for the shell, or a list of arguments
-    (the sandboxed form, which starts its own shell inside the sandbox).
+    (a sandboxed shell, or a dedicated tool's fixed program arguments).
     Returns (output, exit code, why it was stopped early: "timeout",
     "cancelled", or None if it finished)."""
     posix = os.name == "posix"
-    process = subprocess.Popen(  # noqa: S603 - running the command is the point; you approved it
+    process = subprocess.Popen(  # noqa: S603 - sandboxed/approved shell, or fixed read-only tool arguments
         command,
         shell=isinstance(command, str),
         cwd=cwd,
+        env=env,
         stdin=subprocess.DEVNULL,  # anything that tries to read input gets "end of file" at once
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,  # interleave errors with output, as a terminal would
