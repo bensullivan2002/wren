@@ -2,6 +2,8 @@
 
 *Step 6 · October 2026*
 
+> This chapter records the original design. [Issue #17](https://github.com/bensullivan2002/wren/issues/17) later separated steering (`WREN.md` / `AGENTS.md`) from remembered context (`MEMORY.md`). `/remember` now writes only working-directory `MEMORY.md`; neither steering nor ancestor memory is changed. See [the current architecture](../ARCHITECTURE.md#steering-and-memory-files) and [D132](../DECISIONS.md#d132-steering-and-remembered-context-are-separate-files). The examples below are kept as they were.
+
 ## What we built
 
 Wren now reads standing instructions from files, at the start of every conversation:

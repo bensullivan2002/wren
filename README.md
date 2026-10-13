@@ -74,7 +74,7 @@ Wren asks before every file edit (unless you turn on auto mode, below) and every
 
 **Auto mode.** `/auto` stops the questions for edits to the project's files too. Wren still asks before a command outside the sandbox, and before an edit to `.envrc`, `.vscode`, `.idea`, `.claude` or `.codex`. The footer shows `auto: on` while it lasts; `/auto` again turns it off, and quitting forgets it. Without a sandbox, auto mode still asks about every command.
 
-Two things neither the sandbox nor auto mode protects against: what Wren writes for later (a test or a `Makefile` runs outside the sandbox when *you* run it), and edits to memory files such as `WREN.md`, which steer future conversations. A command in the sandbox can change any ordinary file in the project without a question, in either mode. Read the changes (`git diff`) before you run or commit them.
+Two things neither the sandbox nor auto mode protects against: what Wren writes for later (a test or a `Makefile` runs outside the sandbox when *you* run it), and edits to steering and memory files (`WREN.md`, `AGENTS.md`, `MEMORY.md`), which influence future conversations. A command in the sandbox can change any ordinary file in the project without a question, in either mode. Read the changes (`git diff`) before you run or commit them.
 
 | Command         | What it does                                          |
 | --------------- | ----------------------------------------------------- |
@@ -91,8 +91,8 @@ Two things neither the sandbox nor auto mode protects against: what Wren writes 
 | `/resume`       | Go back to an earlier conversation in this folder     |
 | `/permissions`  | Show what you've said Wren may always do this session |
 | `/auto`         | Switch auto mode on or off                            |
-| `/memory`       | Show which memory files are loaded                    |
-| `/remember X`   | Add the note X to the project's memory file           |
+| `/memory`       | Show loaded steering and memory files                |
+| `/remember X`   | Add X to working-directory `MEMORY.md`                |
 | `/clear`        | Start a fresh conversation (the old one stays saved)  |
 | `/quit`         | Exit                                                  |
 
@@ -155,21 +155,26 @@ What to know:
 
 `/usage` separates the current model's documented default effort, the effort Wren sent with the last request, the effort returned by the API (OpenAI's `response.reasoning.effort`, when present), and the last reply's thinking-token count. Missing response effort is shown as "not reported", never filled in from local settings. Response effort is metadata from the API, not a measurement of how hard the model actually worked. This last-call metadata isn't saved across restarts; send a message after restarting or resuming to check it.
 
-### Memory: standing instructions
+### Steering and memory
 
-Wren reads instructions from files at the start of every conversation and puts them in its system prompt:
+Wren reads two independent kinds of files at the start of every conversation and puts them in separate sections of its system prompt:
 
 | File | For |
 | --- | --- |
-| `~/.wren/WREN.md` | Your preferences, in every project |
-| `WREN.md` in the project | How to build and test, conventions, what to leave alone |
+| `~/.wren/WREN.md` | Personal steering: your preferences, in every project |
+| `WREN.md` in the project | Project steering: how to build and test, conventions, what to leave alone |
 | `AGENTS.md` in the project | The same, under the [open-standard](https://agents.md) name; used where a folder has no `WREN.md` |
+| `MEMORY.md` in the project | Remembered context: facts, lessons and notes saved for later |
 
-Project files are looked for in the working directory and each folder above it, up to the top of the git repository. Where files disagree, the more specific one wins, and what you say in the conversation wins over all of them. Keep them short: they're sent with every request.
+Project files are looked for in the working directory and each folder above it, up to the top of the git repository. Outside a repository, only the working directory counts. `MEMORY.md` is loaded independently: it never shadows `WREN.md` or `AGENTS.md`. There is no personal `~/.wren/MEMORY.md`.
 
-`/remember run the tests with make check` adds a line to the project's file. Changes take effect in the next conversation (`/clear`, or restart). Wren tells you at startup which files it loaded; `/memory` lists them.
+Within each kind, more specific files take precedence. Explicit steering wins over conflicting memory, and what you say in the conversation wins over both. Memory may be stale; Wren is told to check the current code before relying on it. Keep both kinds short: they're sent with every request.
 
-**These files steer the model, and in a repository you've cloned, you didn't write them.** They can't approve anything: every edit and command still asks you first.
+`/remember tests live in spec/` appends a note only to `MEMORY.md` in the **working directory**, creating it if needed. It never changes steering files or an ancestor's memory. Wren does not save notes unprompted. Changes take effect in the next conversation (`/clear`, restart, or resume), not mid-conversation; both sections survive compaction unchanged. Startup announcements, `/memory`, and the footer distinguish steering from memory.
+
+Existing `WREN.md` and `AGENTS.md` files continue loading as steering. Nothing is migrated automatically: move remembered notes into `MEMORY.md` yourself if you want to separate older mixed files.
+
+**Both kinds influence the model, and in a repository you've cloned, you didn't write them.** Neither can grant permission or bypass the tools' permission checks.
 
 ### Long conversations
 
@@ -267,7 +272,7 @@ src/wren/
   cli.py            entry point: flags -> config -> provider + tools -> agent -> a front end
   config.py         settings and where they come from
   prompts.py        the system prompt, and the prompt used to compact a conversation
-  memory.py         finds and loads WREN.md / AGENTS.md; /remember
+  memory.py         loads steering (WREN.md / AGENTS.md) and memory (MEMORY.md); /remember
   sessions.py       saves conversations as JSON Lines; lists and loads them
   settings.py       the model and effort you chose to keep (~/.wren/settings.json)
   agent.py          owns the conversation; runs the agent loop; compacts it

@@ -48,8 +48,8 @@ COMMANDS = """\
 /resume        go back to an earlier conversation in this folder (/resume ID)
 /permissions   show what you've said Wren may always do this session
 /auto          switch auto mode on or off: no questions for edits to the project's files
-/memory        show which memory files (WREN.md, AGENTS.md) are loaded
-/remember X    add the note X to the project's memory file
+/memory        show loaded steering (WREN.md, AGENTS.md) and memory (MEMORY.md)
+/remember X    add the note X to MEMORY.md in the working directory
 /clear         start a fresh conversation (the old one stays saved)
 /quit          exit"""
 
@@ -119,7 +119,9 @@ def run_command(
 
     if name == "/memory":
         return CommandResult(
-            memory.describe() if memory else "Memory files are switched off.",
+            memory.describe()
+            if memory
+            else "Steering and memory files are switched off.",
             panel=True,
         )
     if name == "/remember":

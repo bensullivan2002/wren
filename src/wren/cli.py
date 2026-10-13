@@ -166,8 +166,8 @@ def main(argv: list[str] | None = None) -> int:
     memory = Memory(root)
 
     def system_prompt() -> str:
-        # Called now, and again whenever the conversation is cleared, so a
-        # memory file edited mid-session is picked up by the next conversation.
+        # Called now, and again whenever the conversation is cleared, so
+        # steering or memory edits are picked up by the next conversation.
         memory.load()
         return build_system_prompt(root, memory=memory.render())
 

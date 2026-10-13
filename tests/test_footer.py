@@ -453,8 +453,18 @@ def test_the_idle_footer_shows_the_settings_and_the_keys(tmp_path):
     )  # a branch name is text, never markup
     assert "session id: 20261012-101500-ab12 (resumed)" in shown[0]
     assert "context: ▰▰▰▱▱▱▱▱▱▱ 28% · 42k/150k" in shown[1]
+    assert "steering files: off" in shown[1]
     assert "memory files: off" in shown[1]
     assert shown[5] == wren.footer.KEY_HINTS
+
+
+def test_footer_counts_steering_and_memory_independently(tmp_path):
+    agent = make_agent(tmp_path)
+    state = AppState(steering_files=2, memory_files=1)
+    shown = rows(agent, RunStats(Clock()), state)[1]
+    assert "steering files: 2" in shown and "memory files: 1" in shown
+    state.memory_files = 0
+    assert "memory files: 0" in rows(agent, RunStats(Clock()), state)[1]
 
 
 def test_with_no_budget_the_context_row_says_why(tmp_path):

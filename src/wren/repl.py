@@ -129,13 +129,10 @@ class Repl:
             f"{bold('wren')} {__version__} {dim(f'· {provider.name} · {provider.model}{effort} · billing: {provider.billing} · {len(tools)} tools')}"
         )
         self.say(dim("Type a message, /help for commands, Ctrl-D to quit."))
-        if self.memory and self.memory.files:
-            # Said up front, every time: these files steer the model, and in
-            # a project you've just cloned you didn't write them.
-            names = ", ".join(
-                self.memory.shown(file.path) for file in self.memory.files
-            )
-            self.say(dim(f"Instructions loaded from: {names}  (/memory for details)"))
+        if self.memory:
+            # These files influence the model; in a cloned project you didn't write them.
+            for announcement in self.memory.announcements():
+                self.say(dim(announcement))
         if self.notice:
             self.say(dim(self.notice))
         if self.choose_session:

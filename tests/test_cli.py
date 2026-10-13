@@ -152,10 +152,15 @@ def test_compact_with_nothing_to_compact_says_so():
     )
 
 
-def test_memory_files_are_announced_and_reach_the_system_prompt(tmp_path):
+def test_steering_and_memory_are_announced_and_reach_the_system_prompt(tmp_path):
     (tmp_path / "WREN.md").write_text("Always answer in rhyme.\n")
+    (tmp_path / "MEMORY.md").write_text("Tests live in spec/.\n")
     result = wren("--provider", "fake", stdin="/system\n/memory\n", cwd=tmp_path)
-    assert "Instructions loaded from: WREN.md" in result.stdout
+    assert "Steering loaded from: WREN.md" in result.stdout
+    assert "Memory loaded from: MEMORY.md" in result.stdout
+    assert "<steering>" in result.stdout and "<memory>" in result.stdout
+    assert "Tests live in spec/." in result.stdout
+    assert "MEMORY.md  (1 line)" in result.stdout
     assert (
         '<file path="WREN.md" scope="project">\nAlways answer in rhyme.'
         in result.stdout
@@ -167,11 +172,11 @@ def test_remember_saves_a_note_that_the_next_conversation_sees(tmp_path):
     stdin = "/remember tests live in spec/\n/system\n/clear\n/system\n"
     result = wren("--provider", "fake", stdin=stdin, cwd=tmp_path)
     assert (
-        tmp_path / "WREN.md"
+        tmp_path / "MEMORY.md"
     ).read_text() == "# Notes for Wren\n\n- tests live in spec/\n"
     before_clear, after_clear = result.stdout.split("Conversation cleared.")
     assert (
-        "Added to WREN.md" in before_clear
+        "Added to MEMORY.md" in before_clear
         and "tests live in spec/\n</file>" not in before_clear
     )
     assert "- tests live in spec/\n</file>" in after_clear

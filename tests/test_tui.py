@@ -722,20 +722,31 @@ async def test_compact_runs_in_the_background_and_reports_what_it_saved(tmp_path
         assert app.focused is app.prompt
 
 
-async def test_loaded_memory_files_are_announced_and_remember_adds_to_them(tmp_path):
+async def test_steering_and_memory_are_announced_and_remember_only_writes_memory(
+    tmp_path,
+):
     (tmp_path / "home").mkdir()
     (tmp_path / "WREN.md").write_text("Be brief.\n")
+    (tmp_path / "MEMORY.md").write_text("Tests live in spec/.\n")
     app = make_app(tmp_path, memory=Memory(tmp_path, home=tmp_path / "home"))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(200, 40)) as pilot:
         await until(
             pilot,
-            lambda: "Instructions loaded from: WREN.md" in screen_text(app),
-            "the announcement",
+            lambda: "Memory loaded from: MEMORY.md" in screen_text(app),
+            "the announcements",
         )
+        assert "Steering loaded from: WREN.md" in screen_text(app)
+        assert "steering files: 1" in footer_text(app)
+        assert "memory files: 1" in footer_text(app)
+        await say(app, pilot, "/memory")
+        await pilot.pause()
+        assert "Steering:" in panel_text(app) and "Memory:" in panel_text(app)
+        await pilot.press("escape")
         await say(app, pilot, "/remember use tabs")
         await pilot.pause()
-        assert "Added to WREN.md" in screen_text(app)
-    assert (tmp_path / "WREN.md").read_text() == "Be brief.\n- use tabs\n"
+        assert "Added to MEMORY.md" in screen_text(app)
+    assert (tmp_path / "WREN.md").read_text() == "Be brief.\n"
+    assert (tmp_path / "MEMORY.md").read_text() == "Tests live in spec/.\n- use tabs\n"
 
 
 async def test_the_model_picker_switches_model_and_updates_the_footer(tmp_path):

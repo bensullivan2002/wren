@@ -150,9 +150,9 @@ class Agent:
         # again, and can never change who pays without you saying so.
         self.auth = auth
         # The system prompt can be given as a function that builds it. Then
-        # it's built now, and again each time the conversation is reset: the
-        # point at which a changed memory file can be picked up for free,
-        # since a new conversation starts a new cache anyway.
+        # it's built now, and again when the conversation is reset or restored:
+        # steering and memory changes can then be picked up for free, since
+        # a new conversation starts a new cache anyway.
         self._build_system_prompt = system_prompt if callable(system_prompt) else None
         self.system_prompt: str = (
             system_prompt() if callable(system_prompt) else system_prompt
@@ -534,6 +534,10 @@ class Agent:
         if context_tokens is None:
             context_tokens = sum(_characters(message) for message in self.messages) // 4
         self.context_tokens = context_tokens
+        # Resuming starts a new conversation snapshot, like /clear, but
+        # without discarding the restored history or resetting its journal.
+        if self._build_system_prompt is not None:
+            self.system_prompt = self._build_system_prompt()
 
     def set_model(self, model: str) -> None:
         """Switch to a different model, from the next request on.
