@@ -580,8 +580,16 @@ def _auto(agent: Agent) -> str:
     permissions = agent.tools.permissions
     permissions.auto = not permissions.auto
     if not permissions.auto:
-        return "Auto mode is off: Wren asks before every edit again."
-    return f"Auto mode is on. {_auto_rules()} /auto again turns it off."
+        return "Auto mode is off: Wren asks before every edit again." + _github_rules(
+            agent
+        )
+    return f"Auto mode is on. {_auto_rules()}{_github_rules(agent)} /auto again turns it off."
+
+
+def _github_rules(agent: Agent) -> str:
+    if agent.tools.get("github_read") is None:
+        return ""
+    return " Supported GitHub reads via github_read run without asking; GitHub writes keep the shell's approval rules."
 
 
 # Shared by /auto and /permissions. Sandboxed commands never ask (D117).
@@ -616,7 +624,8 @@ def _permissions(agent: Agent) -> str:
         asks = "every edit, and every command outside the sandbox"
     else:
         rules, asks = "", "every edit and command"
-    intro = f"{rules}\n\n" if rules else ""
+    rules += _github_rules(agent)
+    intro = f"{rules.strip()}\n\n" if rules else ""
     if not permissions.always:
         return f"{intro}Nothing is always allowed: Wren asks before {asks}."
     labels = "\n".join(f"  {label}" for label in permissions.always.values())
@@ -672,6 +681,11 @@ def plain_call(call: ToolUseBlock) -> tuple[str, str]:
             shorten(" ".join(str(said).split()), 110) if said else "Run a command"
         )
         return headline, "$ " + shorten(" ".join(args["command"].split()), 200)
+    if call.name == "github_read":
+        number = args.get("number")
+        return f"Read GitHub {args.get('repo', '?')}" + (
+            f" #{number}" if number else ""
+        ), str(args.get("operation", "?"))
     if call.name == "read_file" and path:
         start = args.get("offset")
         return f"Read {path}" + (f" from line {start}" if start else ""), ""

@@ -9,7 +9,7 @@ A small, readable coding-agent harness for the terminal, built step by step so e
 
 [![CI](https://github.com/bensullivan2002/wren/actions/workflows/ci.yml/badge.svg)](https://github.com/bensullivan2002/wren/actions/workflows/ci.yml)
 
-> **Status: step 10 of the roadmap.** Wren is a full-screen terminal app that chats with Claude or OpenAI's models (with an API key, or, for OpenAI, your ChatGPT plan), explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first, or not, in auto mode. On macOS its commands run in a sandbox: no network, and writes only inside the project, so they don't need asking about. It saves every conversation so you can resume it, switches models mid-conversation, reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable.
+> **Status: step 10 of the roadmap.** Wren is a full-screen terminal app that chats with Claude or OpenAI's models (with an API key, or, for OpenAI, your ChatGPT plan), explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first, or not, in auto mode. On macOS its shell commands run in a sandbox: no network, and writes only inside the project, so they don't need asking about. A dedicated read-only tool reads GitHub issues and PRs without approval on every platform; GitHub writes still follow shell permissions. It saves every conversation so you can resume it, switches models mid-conversation, reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable.
 
 ## Quickstart
 
@@ -95,6 +95,16 @@ Two things neither the sandbox nor auto mode protects against: what Wren writes 
 | `/remember X`   | Add X to working-directory `MEMORY.md`                |
 | `/clear`        | Start a fresh conversation (the old one stays saved)  |
 | `/quit`         | Exit                                                  |
+
+### GitHub reads without approval
+
+Ask Wren to read an issue or PR, for example: “Read issue 12 and its comments in bensullivan2002/wren.” The dedicated `github_read` tool makes fixed read-only requests to GitHub.com without asking, in normal or auto mode and on every platform. Install the [GitHub CLI](https://cli.github.com/) (`gh`) and sign in with `gh auth login` first; Wren uses that sign-in, not a new token store. The installed executable must be outside the project and temporary folders.
+
+Supported operations: `repo`, `issue_list`, `issue_view`, `issue_comments`, `pr_list`, `pr_view`, `pr_comments`, `pr_diff`, `pr_checks`. Inputs include an explicit `repo` (`owner/name`) and, where needed, `number`. Lists default to open items; `state` can also be `closed` or `all`. Comments include PR conversation and inline review comments; checks include check runs and commit statuses for the PR's current head commit.
+
+Collections return one page per call (`page`, default 1; `per_page`, default 30, maximum 100). Increase the page to read more. Output is capped at 20,000 characters; reduce `per_page` or request a specific item if truncated. GitHub's issue list also includes PRs. Bodies live in the view operation; comments are separate. Responses and private-repository contents enter the conversation and saved session like file reads.
+
+This does **not** allow arbitrary GitHub shell commands, API endpoints, GraphQL or Enterprise hosts. Commenting, closing, creating, merging, deleting and other writes keep the shell's existing sandbox/approval rules. Existing user-granted “always allow gh” rules remain broad: a read through this tool does not create one. General shell commands still cannot reach GitHub or read gh credentials inside the sandbox.
 
 ### Saved conversations
 
@@ -192,7 +202,8 @@ Every request re-sends the whole conversation, so a long session costs more with
 | `search`     | Find lines matching a regular expression across the project     |
 | `edit_file`  | Replace an exact piece of text in a file (asks first)           |
 | `write_file` | Create a file, or replace one completely (asks first)           |
-| `shell`      | Run a command: tests, git, builds (asks first)                  |
+| `shell`      | Run a command: tests, git, builds (asks unless sandboxed)       |
+| `github_read` | Read GitHub.com issues, PRs and repository metadata (never asks) |
 
 The file tools are confined to the working directory, skip folders like `.git`, `node_modules` and `.venv` when listing and searching, and never write inside `.git`. **`shell` is confined only by the sandbox** (macOS): a command can read most of what you can, and one run outside the sandbox, or on a system without one, can do anything you can. The permission prompt is the safeguard for those.
 
@@ -232,6 +243,8 @@ The docs are written to teach, not just to reference:
   8. [A second provider: OpenAI](docs/journal/08-openai.md)
   9. [Auto mode, and a sandbox to make it safe](docs/journal/09-auto-mode.md)
   10. [Paying with a ChatGPT plan: signing in with OAuth](docs/journal/10-chatgpt-sign-in.md)
+
+Additional entries: [GitHub reads without opening the shell's fence (issue #12)](docs/journal/12-github-reads.md).
 
 ## Roadmap
 
@@ -303,6 +316,7 @@ src/wren/
     list_files.py   ┐
     read_file.py    ├ read-only tools
     search.py       ┘
+    github_read.py  fixed GitHub.com REST reads via authenticated gh (never asks)
     edit_file.py    ┐
     write_file.py   ├ tools that change things (and ask first)
     shell.py        ┘

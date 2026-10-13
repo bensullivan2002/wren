@@ -1,6 +1,6 @@
 # Architecture
 
-*Describes Wren as of **step 10**. This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
+*Describes Wren as of **step 10**, plus the GitHub read-only tool (issue #12). This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
 
 ## The big picture
 
@@ -25,6 +25,7 @@ flowchart LR
     registry -->|"allows(request)?"| perms["<b>Permissions</b><br/>tools/permissions.py"]
     perms -.->|"ask(request)"| ui
     registry --> ro["list_files · read_file · search<br/><i>read-only, never ask</i>"] --> fs[("Your project<br/>(working directory only)")]
+    registry --> gh["github_read<br/><i>fixed REST GETs, never asks</i>"] --> github[("GitHub.com<br/>(via installed, authenticated gh)")]
     registry --> rw["edit_file · write_file<br/><i>ask first, except ordinary files in auto mode</i>"] --> fs
     registry --> sh["shell<br/><i>asks first, except sandboxed commands, which never ask</i>"]
     sh -->|"by default (macOS)"| sb["<b>Sandbox</b><br/>tools/sandbox.py<br/><i>writes: project and temp only<br/>no network</i>"] --> fs
@@ -52,6 +53,7 @@ Solid arrows are calls; dotted arrows are what comes back, or a callback. One fr
 | **Tool base** | `tools/base.py` | What a tool is; turn an `Input` model into a schema and into checked arguments | Pydantic |
 | **Permissions** | `tools/permissions.py` | Remember what's "always" allowed this session, and whether auto mode is on; otherwise ask, through a callback | Nothing else |
 | **Tools** | `tools/*.py` | Do one job each; describe themselves to the model, and their effects to the user | The working directory (via `ToolContext`) |
+| **GitHub reads** | `tools/github_read.py` | Construct fixed GitHub.com REST GETs, never shell strings; use the installed gh sign-in | The tool base, `shell._run`, the standard library |
 | **Sandbox** | `tools/sandbox.py` | Build the `sandbox-exec` command and Seatbelt profile that fence a shell command (macOS) | Nothing of Wren's (the standard library only) |
 | **App** | `tui.py` | The full-screen front end (Textual): run each turn on a worker thread, draw events as widgets, ask permission questions, stop on Escape | The `Agent`, the event types, Textual |
 | **Run stats** | `stats.py` | Keep a running account since Wren opened: tokens, cost, turns, times, tool calls. Fed events by the app | The event types, `Provider.prices` |
@@ -257,7 +259,7 @@ The theme-coloured bird is a top-docked `Static` outside the transcript, pinned 
 
 | Tool | Asks? | In auto mode | "Always" scope | Covers |
 | --- | --- | --- | --- | --- |
-| `list_files`, `read_file`, `search` | never | never | | |
+| `list_files`, `read_file`, `search`, `github_read` | never | never | | |
 | `edit_file`, `write_file` | yes | only for a path through `.envrc`, `.vscode`, `.idea`, `.claude` or `.codex` | `edit` | all file edits (working directory only, never `.git`) |
 | `shell`, in the sandbox | never | never | | |
 | `shell`, `outside_sandbox`, simple command | yes | yes | `shell-outside:<first word>` | commands outside the sandbox starting with that word |
@@ -277,6 +279,16 @@ Scopes live in `Permissions.always`, and auto mode in `Permissions.auto`, in mem
 - writing to `/dev/null` and the like; reading system settings; a short list of system services (`mach-lookup`).
 
 No network rule is allowed, so there is no network. Paths are parameters (`-D`), made real with `os.path.realpath` (`/tmp` is `/private/tmp`). A sandboxed command that exits non-zero gets `SANDBOX_NOTE` added to its result, telling the model where it ran and how to ask to leave.
+
+### GitHub reads outside the shell sandbox
+
+`github_read` is a read-only tool, registered by `default_tools`, so its inherited `permission()` returns None. It accepts a closed set of operations and an explicit `owner/repo`, not a command, host, endpoint, HTTP method or arbitrary flags. Pydantic validates repository characters and matching arguments (number for item reads, state for lists, page/per_page for collections). Dot traversal names are refused. Wren constructs `gh api --hostname github.com --method GET ENDPOINT` as an argument list, never a shell string. It runs outside the shell sandbox on all platforms, using the user's existing gh authentication. No sandbox network or credential rule is relaxed.
+
+`repo`, issue/PR lists and views use fixed repository REST endpoints. `issue_comments` returns conversation comments; `pr_comments` additionally reads inline review comments. `pr_diff` sends a fixed diff Accept header. `pr_checks` reads the head SHA with the fixed jq expression `.head.sha`, validates it as hexadecimal, and reads that commit's check runs and combined statuses. Each collection gets one explicit page (default 30, maximum 100 items); there is no automatic pagination. The REST issue list also contains PRs.
+
+The executable is found on PATH and resolved; an executable in the project or temporary folders is refused because sandboxed commands can write there. The installed CLI, inherited authentication and local gh configuration are trusted. A copied subprocess environment disables `GH_DEBUG`, forced terminal output and interactive prompts; credentials are handled by gh, not printed by Wren. `shell._run` takes the argument list (`shell=False`) and this environment, retaining its no-stdin, polling and process-group kill behaviour. One monotonic deadline covers all requests; cancellation is checked between requests too. Success and failure results are capped at 20,000 characters. Like shell, the runner buffers subprocess output before truncation; it is not a streaming memory limit.
+
+`/permissions`, `/auto` and `plain_call` describe the read-only path in both front ends. GitHub writes and unsupported reads remain ordinary shell calls with existing prompts and “always” scopes. This tool creates no permission grant. Remote content, including private repository data, goes into history and sessions; it is untrusted text, not authority to change permissions.
 
 ## Rules that always hold
 
@@ -307,14 +319,15 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 22. **A restored history is valid or it isn't used.** `restore` ties off loose ends, then `history_problems` must be empty.
 23. **Session files are outside the project and private to the user** (`0o700` folders, `0o600` files).
 24. **However the app closes, it releases its worker thread.**
-25. **Containment is established by Wren, never claimed by the model.** `contained` comes from the resolved path, and a command goes unasked only if Wren will run it in the sandbox; the model can only opt out, with `outside_sandbox`.
-26. **What you're asked about is what runs.** The shell's `permission()` and `run()` both decide sandboxing with `_sandboxed(args)`, so a command that wasn't asked about can only run in the sandbox.
+25. **Containment is established by Wren, never claimed by the model.** `contained` comes from the resolved path, and a shell command goes unasked only if Wren will run it in the sandbox; the model can only opt out, with `outside_sandbox`.
+26. **What you're asked about is what runs.** The shell's `permission()` and `run()` both decide sandboxing with `_sandboxed(args)`, so a shell command that wasn't asked about can only run in the sandbox.
 27. **Paths are never pasted into the sandbox profile.** They're passed as parameters, so a folder's name can't change what the profile says. The one regular expression gets the project's path as a parameter too, already escaped.
 28. **Who pays never changes by itself.** The route is set at startup (`--auth`, `WREN_OPENAI_AUTH`) and carried by `agent.auth` through every provider switch. On the plan route the provider has no API-key client, and every failure stops the request: nothing retries it another way.
 29. **A plan-route reply counts only if the stream says it finished** (`response.completed`, or `response.incomplete` for a partial reply). A failure or a stream that just ends raises, and the turn is closed as for any error.
 30. **Tokens are never shown, logged or readable by a sandboxed command.** The record is owner-only and written atomically, tokens are left out of its `repr`, the callback server logs nothing, and `.wren/auth` is in the sandbox's `CREDENTIALS`.
 31. **An ID token is believed only after its signature, issuer, audience, expiry and nonce are checked,** with the algorithm taken from OpenAI's key, never from the token. Plan usage needs the `chatgpt.tokens.use.direct` scope as granted, not as asked for.
 32. **Refreshing is one at a time, across processes,** and re-reads the record after taking the lock, so a rotated refresh token is never spent twice.
+33. **GitHub reads never grant shell permissions.** `github_read` constructs only fixed GitHub.com REST GETs, with validated identifiers, and executes an argument list. No model input can choose a method, host, endpoint, jq expression or command; GitHub writes remain under the existing shell permissions.
 
 ## Where the next steps plug in
 
