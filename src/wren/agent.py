@@ -37,7 +37,7 @@ from collections.abc import Callable, Generator, Iterator
 from contextlib import closing
 from dataclasses import dataclass, field
 
-from wren.config import COMPACTION_MARGIN, DEFAULT_MAX_STEPS
+from wren.config import API_KEY, COMPACTION_MARGIN, DEFAULT_MAX_STEPS
 from wren.messages import (
     Completed,
     Message,
@@ -141,8 +141,14 @@ class Agent:
         tools: ToolRegistry | None = None,
         max_steps: int = DEFAULT_MAX_STEPS,
         context_cap: int | None = None,
+        auth: str = API_KEY,
     ) -> None:
         self.provider = provider
+        # How this run pays for OpenAI (config.AUTH_ROUTES), chosen when Wren
+        # started. The agent doesn't use it; it's kept here so that switching
+        # provider (/provider, resuming a session) builds OpenAI the same way
+        # again, and can never change who pays without you saying so.
+        self.auth = auth
         # The system prompt can be given as a function that builds it. Then
         # it's built now, and again each time the conversation is reset: the
         # point at which a changed memory file can be picked up for free,

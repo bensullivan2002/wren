@@ -1016,6 +1016,23 @@ def test_a_sandboxed_command_cannot_read_credentials(
 
 
 @sandbox_only
+def test_a_sandboxed_command_cannot_read_wrens_chatgpt_sign_in(
+    tools, tmp_path_factory, monkeypatch
+):
+    # Whatever a command prints goes to the model: the tokens must not.
+    home = tmp_path_factory.mktemp("home")
+    (home / ".wren" / "auth").mkdir(parents=True)
+    (home / ".wren" / "auth" / "chatgpt.json").write_text('{"access_token": "tok"}')
+    monkeypatch.setenv("HOME", str(home))
+    result = ok(
+        tools.run(
+            "shell", {"description": WHY, "command": "cat ~/.wren/auth/chatgpt.json"}
+        )
+    )
+    assert "Operation not permitted" in result.content and "tok" not in result.content
+
+
+@sandbox_only
 def test_outside_the_sandbox_is_asked_about_even_in_auto_mode(
     tools, user, tmp_path_factory
 ):

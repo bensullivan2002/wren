@@ -34,12 +34,17 @@ We keep the conversation ourselves and send all of it each time
 (`store=False`), as with Claude. OpenAI can also keep it on its servers and
 take just an id; that would make this provider work differently from every
 other part of Wren, which assumes the history lives in `agent.messages`.
+
+There are two ways to pay, chosen when Wren starts (config.AUTH_ROUTES): an
+API key, or your ChatGPT plan after `wren login`. Same model, same API,
+same translation; the plan route's own rules are in openai_plan.py, and
+`plan` below is what switches it on.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from decimal import Decimal
 from typing import Any
 
@@ -193,15 +198,54 @@ class OpenAIProvider:
     default_effort_source = DEFAULT_EFFORT_SOURCE
 
     def __init__(
-        self, model: str, client: Any = None, effort: str | None = None
+        self,
+        model: str,
+        client: Any = None,
+        effort: str | None = None,
+        plan: Any = None,
+        plan_client: Callable[[str], Any] | None = None,
     ) -> None:
         self.model = model
         self.effort = effort
-        # The SDK reads OPENAI_API_KEY from the environment by itself.
-        # Tests pass in a fake `client` instead, so no network is needed.
-        self.client = client if client is not None else openai.OpenAI()
+        # `plan`: a signed-in auth.chatgpt.ChatGPTSession, to pay with your
+        # ChatGPT plan. None: pay with your API key.
+        self.plan = plan
+        if plan is None:
+            self.billing = "API key"
+            # The SDK reads OPENAI_API_KEY from the environment by itself.
+            # Tests pass in a fake `client` instead, so no network is needed.
+            self.client = client if client is not None else openai.OpenAI()
+        else:
+            from wren.providers import openai_plan
+
+            self.billing = "ChatGPT plan"
+            # No API-key client at all on this route, so nothing in this
+            # provider can quietly pay with one. Each request makes its own
+            # client, with a fresh access token (tests pass a fake maker).
+            self.client = None
+            self._plan_client = plan_client or openai_plan.make_client
+
+    @property
+    def billing_note(self) -> str:
+        """Who pays, in a sentence, for /usage."""
+        if self.plan is None:
+            return "your OpenAI API key (OPENAI_API_KEY), billed to your API account"
+        from wren.providers.openai_plan import USAGE_SETTINGS_URL
+
+        try:
+            who = self.plan.credentials().email or "your ChatGPT account"
+        except Exception:  # noqa: BLE001 - signed out since: say so, don't fail /usage
+            who = "a ChatGPT sign-in that's no longer there"
+        return (
+            f"your ChatGPT plan, signed in as {who}. It shares your plan's limits with "
+            f"ChatGPT and other apps; see {USAGE_SETTINGS_URL}"
+        )
 
     def models(self) -> list[str]:
+        if self.plan is not None:
+            from wren.providers.openai_plan import list_models
+
+            return list_models(self._plan_client(self.plan.access_token()))
         ids = [model.id for model in self.client.models.list()]
         chat = [
             i
@@ -220,6 +264,10 @@ class OpenAIProvider:
         return "medium" if self.model.startswith("gpt-5.6-") else None
 
     def prices(self) -> Prices | None:
+        if self.plan is not None:
+            # Plan usage isn't charged per token: it counts against your
+            # plan's limits. So there's no price, and cost shows as unknown.
+            return None
         return DOCUMENTED_PRICES.get(self.model)
 
     def context_window(self) -> int | None:
@@ -235,6 +283,9 @@ class OpenAIProvider:
         tools: Sequence[ToolSpec] = (),
         max_tokens: int,
     ) -> Iterator[StreamEvent]:
+        if self.plan is not None:
+            yield from self._stream_on_plan(system, messages, tools)
+            return
         request: dict[str, Any] = {
             "model": self.model,
             "input": to_input_items(messages),
@@ -263,16 +314,43 @@ class OpenAIProvider:
                     yield TextDelta(event.delta)
             final = stream.get_final_response()
 
-        message = from_response(final)
-        yield Completed(
-            message=message,
-            stop_reason=_stop_reason(final, message),
-            usage=_usage(final.usage),
-            model=final.model,  # from the response, not from self.model
-            effort_sent=request.get("reasoning", {}).get("effort"),
-            # Response metadata, not a fallback to the requested setting.
-            effort_reported=getattr(getattr(final, "reasoning", None), "effort", None),
+        yield _completed(final, request)
+
+    def _stream_on_plan(
+        self, system: str, messages: list[Message], tools: Sequence[ToolSpec]
+    ) -> Iterator[StreamEvent]:
+        from wren.providers import openai_plan
+
+        # A sign-in problem (signed out, plan usage not allowed, a refresh
+        # that failed) raises here, before anything is sent: the request
+        # stops, and nothing tries another way to pay.
+        client = self._plan_client(self.plan.access_token())
+        request = openai_plan.build_request(
+            model=self.model,
+            effort=self.effort,
+            system=system,
+            messages=messages,
+            tools=tools,
         )
+        try:
+            with client.responses.create(**request) as events:
+                final = yield from openai_plan.read_stream(events)
+        except openai.APIError as e:
+            raise openai_plan.explain(e) from e
+        yield _completed(final, request)
+
+
+def _completed(final: Any, request: dict[str, Any]) -> Completed:
+    message = from_response(final)
+    return Completed(
+        message=message,
+        stop_reason=_stop_reason(final, message),
+        usage=_usage(final.usage),
+        model=final.model,  # from the response, not from self.model
+        effort_sent=request.get("reasoning", {}).get("effort"),
+        # Response metadata, not a fallback to the requested setting.
+        effort_reported=getattr(getattr(final, "reasoning", None), "effort", None),
+    )
 
 
 # --- Translation: Wren -> OpenAI ----------------------------------------------

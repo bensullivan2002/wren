@@ -49,6 +49,8 @@ from wren.prompts import COMPACT_PROMPT
 
 class FakeProvider:
     name = "fake"
+    billing = "free"
+    billing_note = "nothing: the fake provider makes no requests"
 
     def __init__(
         self,

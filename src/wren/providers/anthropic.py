@@ -109,6 +109,7 @@ _KNOWN_STOP_REASONS = {"end_turn", "max_tokens", "tool_use", "stop_sequence", "r
 
 class AnthropicProvider:
     name = "anthropic"
+    billing = "API key"
 
     def __init__(
         self, model: str, client: Any = None, effort: str | None = None

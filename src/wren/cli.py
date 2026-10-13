@@ -13,6 +13,9 @@ There are two front ends, and the agent can't tell them apart:
 
     WrenApp (tui.py)   the full-screen app: what you get in a terminal
     Repl (repl.py)     plain text in, plain text out: `--plain`, pipes, scripts
+
+And three commands that don't start a conversation at all, for signing in
+with ChatGPT (auth/cli.py): `wren login`, `wren logout`, `wren auth-status`.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from pathlib import Path
 from wren import __version__
 from wren.agent import Agent
 from wren.commands import resume_session
-from wren.config import API_KEYS, Config
+from wren.config import API_KEYS, AUTH_ROUTES, CHATGPT, Config
 from wren.memory import Memory
 from wren.prompts import build_system_prompt
 from wren.providers import PROVIDERS, make_provider
@@ -77,26 +80,62 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="use the plain line-by-line interface, not the full-screen app",
     )
+    parser.add_argument(
+        "--auth",
+        choices=AUTH_ROUTES,
+        help="how OpenAI is paid for: your API key (the default), or your ChatGPT plan "
+        "after `wren login` (env: WREN_OPENAI_AUTH)",
+    )
     parser.add_argument("--version", action="version", version=f"wren {__version__}")
+    commands = parser.add_subparsers(dest="command", metavar="COMMAND")
+    commands.add_parser(
+        "login", help="sign in with ChatGPT, to use your ChatGPT plan (--auth chatgpt)"
+    )
+    commands.add_parser(
+        "logout", help="sign out of ChatGPT, and delete the saved tokens"
+    )
+    commands.add_parser(
+        "auth-status",
+        help="show the saved ChatGPT sign-in, and whether plan usage is allowed",
+    )
     return parser.parse_args(argv)
+
+
+def run_auth_command(command: str) -> int:
+    # Imported only here: Wren with an API key never loads any of it.
+    from wren.auth import cli as auth_cli
+
+    if command == "login":
+        return auth_cli.login()
+    if command == "logout":
+        return auth_cli.logout()
+    return auth_cli.status()
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.command:
+        return run_auth_command(args.command)
     defaults = (
         UserDefaults()
     )  # ~/.wren/settings.json: what was chosen with Enter in the pickers
-    config = Config.load(
-        user=defaults,
-        provider=args.provider,
-        model=args.model,
-        max_tokens=args.max_tokens,
-        max_steps=args.max_steps,
-        context_budget=args.context_budget,
-        effort=args.effort,
-    )
+    try:
+        config = Config.load(
+            user=defaults,
+            provider=args.provider,
+            model=args.model,
+            max_tokens=args.max_tokens,
+            max_steps=args.max_steps,
+            context_budget=args.context_budget,
+            effort=args.effort,
+            auth=args.auth,
+        )
+    except ValueError as e:  # a setting in the environment that makes no sense
+        print(f"wren: {e}", file=sys.stderr)
+        return 1
 
-    key = API_KEYS.get(config.provider)
+    on_plan = config.provider == "openai" and config.auth == CHATGPT
+    key = None if on_plan else API_KEYS.get(config.provider)
     if key is not None and not os.environ.get(key[0]):
         variable, where = key
         print(
@@ -108,7 +147,20 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     root = Path.cwd()
-    provider = make_provider(config.provider, config.model, config.effort)
+    if on_plan:
+        from wren.auth.chatgpt import ChatGPTAuthError
+
+        try:
+            provider = make_provider(
+                config.provider, config.model, config.effort, auth=config.auth
+            )
+        except ChatGPTAuthError as e:  # not signed in, or plan usage not allowed
+            print(f"wren: {e}", file=sys.stderr)
+            return 1
+    else:
+        provider = make_provider(
+            config.provider, config.model, config.effort, auth=config.auth
+        )
     permissions = Permissions()
     tools = ToolRegistry(default_tools(), root=root, permissions=permissions)
     memory = Memory(root)
@@ -126,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
         tools,
         config.max_steps,
         context_cap=config.context_budget,
+        auth=config.auth,
     )
 
     # From here on, every message is written to a session file as it's added.

@@ -479,12 +479,22 @@ def test_with_no_budget_the_context_row_says_why(tmp_path):
     assert "context: 42k (compaction off)" in rows(agent, RunStats(Clock()))[1]
 
 
+def test_who_pays_is_shown_with_the_provider_even_when_space_is_short(tmp_path):
+    agent = make_agent(tmp_path)
+    agent.provider.billing = "ChatGPT plan"
+    for width in (200, 70):
+        assert (
+            "provider: fake (ChatGPT plan)"
+            in rows(agent, RunStats(Clock()), width=width)[0]
+        )
+
+
 def test_auto_mode_shows_in_the_settings_row_while_it_is_on(tmp_path):
     agent = make_agent(tmp_path)
     assert "auto: on" not in rows(agent, RunStats(Clock()))[0]
     agent.tools.permissions.auto = True
     assert rows(agent, RunStats(Clock()))[0].startswith(
-        "model: demo · effort: default · provider: fake · auto: on"
+        "model: demo · effort: default · provider: fake (free) · auto: on"
     )
 
 

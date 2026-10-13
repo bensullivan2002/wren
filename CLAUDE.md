@@ -21,17 +21,17 @@ Wren is a coding-agent harness for the terminal, built step by step by Claude wi
 
 ## Status
 
-Steps 1 to 9 are done (see the roadmap in README.md). Steps 8 and 9 were unplanned additions: an OpenAI provider (D69), then auto mode with a macOS sandbox for commands (D100–D107). Extensions moved to step 10.
+Steps 1 to 10 are done (see the roadmap in README.md). Steps 8 to 10 were unplanned additions: an OpenAI provider (D69), auto mode with a macOS sandbox for commands (D100–D107), then paying for OpenAI with a ChatGPT plan (issue #19, a spike: `wren login`, `--auth chatgpt`, D118–D130). Extensions moved to step 11.
 
 **CI is in place (issue #11, D108–D115):** ruff lint and format, pre-commit, `pip-audit`, Dependabot, and the tests on Linux and macOS. Merge branches with a merge commit, never squash: `.git-blame-ignore-revs` names the reformat commit by its hash. `main` requires all six CI jobs to pass, by name (D114): renaming a job in `ci.yml` or changing its matrix means updating the branch protection too, or pull requests wait for ever on a check that never reports. Type checking is still to come: Ben wants **basedpyright** (D115), as its own piece of work: issue #15.
 
 **Auto mode (step 9) is untried with a real model.** Ask Ben how a real model copes with `outside_sandbox` (journal 09, "Things to try" 7). He confirmed the sandbox stays on in normal mode too (D101). A `--auto` flag is wanted, as its own piece of work: issue #9. Since then (Ben's call), commands in the sandbox never ask, in either mode, so auto mode only adds ordinary file edits (D117); and the sandbox protects `.git`, `.claude` and the rest in every folder, worktrees included (D116).
 
-**First thing next session: ask Ben how the OpenAI provider behaved with a real key.** It is tested only against a stand-in client built from the SDK's types (journal 08). Likely trouble spots, in order: replaying reasoning items between tool calls (`store: False`), an `/effort` level the model rejects, and the model-list filter. Fix what he finds first.
+**First thing next session: ask Ben how ChatGPT sign-in behaved with his real account** (journal 10, "Things to try": the tool-call namespace round trip is the likeliest to be wrong, then the model list's shape and `earliest_refresh_at`). It's tested only against fakes built from OpenAI's docs. Fix what he finds, then turn journal 10's known limits into issues if he wants them. **Also ask how the OpenAI provider behaved with a real key.** It is tested only against a stand-in client built from the SDK's types (journal 08). Likely trouble spots, in order: replaying reasoning items between tool calls (`store: False`), an `/effort` level the model rejects, and the model-list filter. Fix what he finds first.
 
 Confirmed by Ben against the real Anthropic API: `/usage`, `/compact`, `/history`, the model picker, and effort (a controlled low-versus-high comparison). Still unconfirmed there: tool loops with reasoning blocks (D45), cache reads showing in `/usage`, and resuming after a model switch.
 
-**Then: step 10, extensions.** It is three separate pieces; the first question for Ben is which to build first, and each should be its own commit and journal entry:
+**Then: step 11, extensions.** It is three separate pieces; the first question for Ben is which to build first, and each should be its own commit and journal entry:
 
 - **MCP** (tools from other programs). Questions: stdio servers only, or HTTP too; hand-written client or the official `mcp` Python SDK (it is async: see D34); where servers are configured; and how permissions work for tools Wren did not write (every MCP tool call should ask, with "always" per tool). Check the current MCP spec first.
 - **Subagents** (a task handed to a fresh conversation). Questions: which tools a subagent gets, whether it can ask the user for permission, how its result returns, whether it may use a different (cheaper) model or provider, and whether they run in parallel (D34 again).
@@ -40,7 +40,7 @@ Confirmed by Ben against the real Anthropic API: `/usage`, `/compact`, `/history
 Things Ben has decided that aren't obvious from the code:
 
 - **No ACP / Toad.** An ACP mode was built and removed in step 4 (D33): he found driving Wren through another program confusing, and wants no second way in. Don't re-propose it before step 8, and only if he raises it.
-- **He tests with a paid API balance, not his Claude subscription.** Don't build subscription (OAuth) login.
+- **He tests Claude with a paid API balance, not his Claude subscription.** Don't build Claude subscription (OAuth) login. ChatGPT plan sign-in is different: he asked for it (issue #19), and it exists (`auth/`, D118–D130). Who pays must never change by itself (D119): no fallback from the plan to an API key, ever.
 - **He likes a full-screen, Claude Code-like feel:** input box at the bottom, conversation above, questions in place.
 - **Wren is multi-provider (Claude and OpenAI), and he may want more.** Keep provider differences behind the `Provider` interface, and have front ends ask the provider what it offers; adding a provider should touch only `providers/`, `config.py` and `cli.py`. An "OpenAI-compatible" Chat Completions provider for other vendors was offered and deferred (D70).
 - **He wants evidence, not assertion, in what Wren reports about itself.** He asked how to verify the model actually in use, then the same for effort. `/usage` labels each line with its source (reported by the provider, Wren's own record, or documentation with a date); keep to that, and never present a setting Wren sent as something the API confirmed (D64, D68).

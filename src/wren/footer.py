@@ -1,7 +1,7 @@
 """The footer: the rows at the bottom of the app that say what Wren is set
 to, what it has spent, and what it's doing.
 
-    model: claude-sonnet-5-5 · effort: high · provider: anthropic │ git: main · uncommitted: 2 │ ~/code/wren
+    model: claude-sonnet-5-5 · effort: high · provider: anthropic (API key) │ git: main · uncommitted: 2 │ ~/code/wren
     context: ▰▰▰▱▱▱▱▱▱▱ 28% · 42k/150k │ cache hit: 91% · compactions: 0 │ memory files: 1 · always allowed: 1
     cost: £2.71 · burn: £0.12/min │ in: 52k · out: 48k · cache read: 1.1M · cache write: 61k · thinking: 12k
     session: 23:10 · turns: 7 │ this turn: 0:42 · tokens/turn: 38k (avg 31k) │ first word: 1.8s
@@ -100,7 +100,10 @@ def _settings(agent: Agent, stats: RunStats, state: AppState) -> list[list[Part]
         [
             Part(kv("model", provider.model, "bold"), 9),
             Part(kv("effort", provider.effort or "default", "bold"), 9),
-            Part(kv("provider", provider.name), 7),
+            # Who pays goes in the same part as the provider, so one is
+            # never shown without the other: a run on your ChatGPT plan and
+            # a run on your API key can't be mistaken for each other.
+            Part(kv("provider", f"{provider.name} ({provider.billing})"), 8),
         ]
     ]
     if agent.tools.permissions.auto:
