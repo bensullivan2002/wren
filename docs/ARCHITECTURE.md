@@ -39,8 +39,8 @@ Solid arrows are calls; dotted arrows are what comes back, or a callback. One fr
 | --- | --- | --- | --- |
 | **Entry point** | `cli.py` | Parse flags, load config, build everything, pick and start a front end | Everything (the only file that does) |
 | **Config** | `config.py` | Decide each setting: flag, then env var, then default | Nothing else |
-| **Prompts** | `prompts.py` | The system prompt (who the model is, how to work, the memory files, plus live facts: folder, OS, date) and the compaction prompt | Nothing else |
-| **Memory** | `memory.py` | Find and read the memory files (`WREN.md`, `AGENTS.md`); render them for the prompt; append `/remember` notes | The file helpers |
+| **Prompts** | `prompts.py` | The system prompt (who the model is, how to work, steering and memory, plus live facts: folder, OS, date) and the compaction prompt | Nothing else |
+| **Steering and memory** | `memory.py` | Load steering (`WREN.md`, `AGENTS.md`) and context (`MEMORY.md`) independently; render separate sections; append `/remember` only to working-directory `MEMORY.md` | The file helpers |
 | **Agent** | `agent.py` | Own the conversation; run the agent loop; keep history valid and truthful; track its size and compact it | A `Provider`, a `ToolRegistry`, the message types |
 | **Messages** | `messages.py` | Provider-neutral types; the history rules (`history_problems`) | Nothing else |
 | **Provider** | `providers/` | Translate to a vendor's API and back; stream the reply; ask for caching; report token use; list its models; know their prices; say who pays | The vendor SDK, the message types |
@@ -100,18 +100,22 @@ What happens when you type *"rename helper to assist in util.py"* and press Ente
 
 **If the turn is cut short** between steps 2 and 8 (Escape or Ctrl-C, a network error, a bad API key), nothing is deleted. `Agent._close_unfinished_turn` ties off the loose ends: every unanswered tool request gets a result (the real one if the tool finished, otherwise a note that it was cut short or never ran), and a closing assistant note records where and why the turn stopped, after any text that had already streamed.
 
-## Memory files
+## Steering and memory files
 
-At the start of a conversation, `Memory.load` reads, in this order:
+At the start of a conversation, `Memory.load` builds two independent lists:
 
-1. `~/.wren/WREN.md` (personal);
-2. for each folder from the top of the git repository down to the working directory: `WREN.md`, or `AGENTS.md` if that folder has no `WREN.md`. Outside a repository, only the working directory.
+- `steering_files`: `~/.wren/WREN.md` (personal), then for each folder from the git repository's root down to the working directory, `WREN.md` or `AGENTS.md` if there is no `WREN.md`.
+- `files`: `MEMORY.md` in each of those project folders, independently of steering. No personal memory file is loaded.
 
-Empty files are skipped; each is capped at 20,000 characters. `Memory.render` wraps them in a `<memory>` section, each file labelled with its path and scope, under a header saying how to weigh them and that they can't grant permission. `build_system_prompt` places that section between the fixed text and the environment.
+Outside a repository, only the working directory counts. Empty and unreadable files are skipped; each is capped at 20,000 characters. A git worktree's `.git` file is a repository boundary too.
 
-`cli.py` gives the agent a *function* that builds the system prompt. The agent calls it when it's created and on `reset()` (`/clear`), and at no other time, so the prompt is fixed for the length of a conversation. Both front ends announce the loaded files at startup. `/remember` appends to the project file nearest the working directory (creating `WREN.md` if there is none); the change is seen from the next conversation.
+`Memory.render` produces separate `<steering>` and `<memory>` sections, each file labelled with its path and scope. Steering is standing instructions; memory is remembered context that may be stale and should be checked against current code. More specific files take precedence within each kind; explicit steering wins over conflicting memory, and the user's conversation requests win over both. Neither kind can grant permission. `build_system_prompt` places both sections between the fixed text and the environment. The fixed text tells the model to save notes only when asked, only to working-directory `MEMORY.md`, using the ordinary edit tools.
 
-Memory lives in the system prompt, which compaction doesn't touch, so it survives compaction unchanged.
+`cli.py` gives the agent a *function* that builds the system prompt. The agent calls it when created, on `reset()` (`/clear`), and after successfully restoring a session. The prompt is fixed for the length of a conversation. Both front ends announce steering and memory separately; `/memory` lists the loaded snapshot in two groups, and the footer counts each kind separately.
+
+`/remember` appends only to `MEMORY.md` in the working directory, creating it if needed. Steering and ancestor memory files are never changed. The loaded snapshot stays unchanged until the next conversation. Existing mixed steering files are not migrated automatically.
+
+Both sections live in the system prompt, which compaction doesn't touch, so both survive compaction unchanged.
 
 ## Providers
 
@@ -295,9 +299,9 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 14. **Compaction is all or nothing.** It either replaces the whole history with a summary or leaves it exactly as it was.
 15. **Reasoning blocks are returned as they came:** same data, same position. Only the provider that produced one looks inside it.
 16. **Requests are built identically every time,** with new content only at the end, so the cached prefix stays valid.
-17. **The system prompt is fixed for the length of a conversation.** Memory files are read when a conversation starts, and not again until the next.
-18. **Memory files can't grant permission.** They are text in the prompt; the permission check in the registry doesn't read them.
-19. **Memory is looked for only in the home directory's `.wren/`, and from the working directory up to the top of its git repository.**
+17. **The system prompt is fixed for the length of a conversation.** Steering and memory are read when a conversation starts, and not again until the next.
+18. **Steering and memory can't grant permission.** They are text in the prompt; the permission check in the registry doesn't read them.
+19. **Personal steering is looked for only in the home directory's `.wren/`; project steering and memory only from the working directory up to the top of its git repository.** `/remember` writes only working-directory `MEMORY.md`, never steering or ancestor memory.
 20. **Every message enters the history through `Agent._add`,** so the journal sees each one, in order, as it happens.
 21. **A session file is only ever appended to.** Nothing already written is changed, including by compaction.
 22. **A restored history is valid or it isn't used.** `restore` ties off loose ends, then `history_problems` must be empty.

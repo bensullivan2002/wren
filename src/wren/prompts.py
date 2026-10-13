@@ -2,8 +2,8 @@
 
 The model knows nothing about where it's running: not your operating system,
 not your folder, not even today's date. The harness has to tell it. So the
-system prompt has three parts: who the model should be (fixed text), the
-project's memory files if there are any (see memory.py), and an
+system prompt has three parts: who the model should be (fixed text), separate
+steering and memory sections if there are files (see memory.py), and an
 <environment> section that the harness fills in from the real world.
 
 The tools' own descriptions are sent separately (see tools/), so this prompt
@@ -32,6 +32,12 @@ project's tests if it has them.
 The user may be asked to approve an edit or a command, and can decline. If they
 do, don't retry or work around it: say what you wanted to do and ask how
 they'd like to proceed. Never claim to have done something you haven't.
+
+When the user asks you to remember something for future conversations, add it
+only to MEMORY.md in the working directory, creating it if needed, with your
+edit tools. Never append remembered notes to WREN.md or AGENTS.md. Do not save
+notes unprompted. Changes on disk are loaded in the next conversation, not
+partway through this one.
 
 The user reads your replies in a terminal, so keep them concise. Short
 paragraphs and plain lists read best; avoid large tables. When you mention

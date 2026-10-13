@@ -470,6 +470,7 @@ class WrenApp(App):
             stopping=self._stop.is_set(),
             frame=self._frame,
             git=self.git,
+            steering_files=len(self.memory.steering_files) if self.memory else None,
             memory_files=len(self.memory.files) if self.memory else None,
             session_id=self.sessions.current_id if self.sessions else None,
             resumed=self.resumed,
@@ -560,13 +561,11 @@ class WrenApp(App):
                 await self.add(pending[call.id])
 
     async def _announce_memory(self) -> None:
-        # Said up front, every time: these files steer the model, and in a
-        # project you've just cloned you didn't write them.
-        if self.memory and self.memory.files:
-            names = ", ".join(
-                self.memory.shown(file.path) for file in self.memory.files
-            )
-            await self.note(f"Instructions loaded from: {names}  (/memory for details)")
+        # Said up front: both kinds influence the model, and in a cloned
+        # project you didn't write them.
+        if self.memory:
+            for announcement in self.memory.announcements():
+                await self.note(announcement)
 
     @property
     def transcript(self) -> VerticalScroll:

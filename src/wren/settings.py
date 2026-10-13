@@ -2,7 +2,7 @@
 
 Choosing a model or an effort with Enter in the picker means "make this my
 default", and a default has to outlive the process. It's kept in one small
-file, next to the saved sessions and the personal memory file:
+file, next to the saved sessions and the personal steering file:
 
     ~/.wren/settings.json
 

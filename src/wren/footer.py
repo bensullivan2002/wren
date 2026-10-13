@@ -2,7 +2,7 @@
 to, what it has spent, and what it's doing.
 
     model: claude-sonnet-5-5 · effort: high · provider: anthropic (API key) │ git: main · uncommitted: 2 │ ~/code/wren
-    context: ▰▰▰▱▱▱▱▱▱▱ 28% · 42k/150k │ cache hit: 91% · compactions: 0 │ memory files: 1 · always allowed: 1
+    context: ▰▰▰▱▱▱▱▱▱▱ 28% · 42k/150k │ cache hit: 91% · compactions: 0 │ steering files: 1 · memory files: 1 · always allowed: 1
     cost: £2.71 · burn: £0.12/min │ in: 52k · out: 48k · cache read: 1.1M · cache write: 61k · thinking: 12k
     session: 23:10 · turns: 7 │ this turn: 0:42 · tokens/turn: 38k (avg 31k) │ first word: 1.8s
     tool calls: 24 · read_file 12 · shell 5 · search 4 · edit_file 3 │ files changed: 3 · tool errors: 1
@@ -62,7 +62,8 @@ class AppState:
     stopping: bool = False
     frame: int = 0  # which spinner character to show
     git: GitState | None = None  # None: not a git repository, or git isn't installed
-    memory_files: int | None = None  # None: memory files are switched off
+    steering_files: int | None = None  # None: file loading is switched off
+    memory_files: int | None = None
     session_id: str | None = None  # None: nothing saved yet
     resumed: bool = False
     gbp_per_usd: Decimal | None = (
@@ -153,6 +154,7 @@ def _context(agent: Agent, stats: RunStats, state: AppState) -> list[list[Part]]
         )
     hit = stats.cache_hit()
     allowed = len(agent.tools.permissions.always)
+    steering = "off" if state.steering_files is None else str(state.steering_files)
     memory = "off" if state.memory_files is None else str(state.memory_files)
     return [
         [Part(meter, 9)],
@@ -161,6 +163,7 @@ def _context(agent: Agent, stats: RunStats, state: AppState) -> list[list[Part]]
             Part(kv("compactions", str(stats.compactions)), 3),
         ],
         [
+            Part(kv("steering files", steering), 4),
             Part(kv("memory files", memory), 4),
             # Yellow when it's not zero: some edits or commands are going ahead without a question.
             Part(kv("always allowed", str(allowed), "yellow" if allowed else ""), 5),
