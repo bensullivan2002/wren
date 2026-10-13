@@ -51,10 +51,22 @@ class FakePlan:
         return SimpleNamespace(email="ben@example.com")
 
 
-def events(final, chunks=(), end="response.completed"):
+def events(final, chunks=(), end="response.completed", items_in_final=False):
+    """A stream shaped like the live plan route's (checked 13 October 2026):
+    each finished item arrives in its own `response.output_item.done`
+    event, and the final event's `output` is EMPTY. `items_in_final` gives
+    the other shape, where the final event carries the items too."""
     out = [SimpleNamespace(type="response.created")]
     out += [SimpleNamespace(type="response.output_text.delta", delta=c) for c in chunks]
     if end:
+        if not items_in_final and end != "response.failed":
+            out += [
+                SimpleNamespace(
+                    type="response.output_item.done", output_index=i, item=item
+                )
+                for i, item in enumerate(final.output)
+            ]
+            final = final.model_copy(update={"output": []})
         out.append(SimpleNamespace(type=end, response=final))
     return out
 
@@ -227,6 +239,37 @@ def test_an_incomplete_reply_is_a_partial_reply_not_a_failure():
     client = FakePlanClient(events(partial, end="response.incomplete"))
     done = run(plan_provider(client))[-1]
     assert done.message.text == "Half" and done.stop_reason == "refusal"
+
+
+def test_the_reply_is_read_from_the_finished_item_events():
+    # What the live route does, and what the first version missed: the
+    # final event's output is empty, so every reply read as "(no reply)",
+    # and a tool call was never run.
+    final = response([REASONING, text_item("Listing."), NAMESPACED_CALL])
+    stream = events(final)
+    assert stream[-1].response.output == []  # the fake really has the live shape
+    done = run(plan_provider(FakePlanClient(stream)))[-1]
+    assert [type(b).__name__ for b in done.message.content] == [
+        "ReasoningBlock",
+        "TextBlock",
+        "ToolUseBlock",
+    ]
+    assert done.message.tool_uses[0].name == "shout" and done.stop_reason == "tool_use"
+
+
+def test_items_carried_in_the_final_event_are_read_as_they_are():
+    final = response([text_item("All here.")])
+    client = FakePlanClient(events(final, items_in_final=True))
+    assert run(plan_provider(client))[-1].message.text == "All here."
+
+
+def test_a_reply_wren_cannot_read_is_an_error_not_silence():
+    # Output tokens were spent, but no item came in any form Wren reads.
+    final = response([]).model_copy(update={"output": []})
+    stream = [SimpleNamespace(type="response.completed", response=final)]
+    error, _ = turn_fails(FakePlanClient(stream))
+    assert isinstance(error, PlanRequestError)
+    assert "20 tokens" in str(error) and "bug in Wren" in str(error)
 
 
 # --- When it goes wrong: the request stops, and nothing else pays ---------------------

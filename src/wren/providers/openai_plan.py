@@ -13,6 +13,7 @@ OpenAI's "preview limitations" (checked 13 October 2026):
     tools: a flat list of functions       tools: grouped in a namespace (refused flat)
     max_output_tokens sent                max_output_tokens refused, so not sent
     the SDK's stream helper               the raw events: done means response.completed
+    the reply in the final event          the reply in output_item.done events (final: empty)
     the SDK retries 429s and 5xx          no retries: a limit stops the request
     models.list(): {"data": [...]}        GET /models: {"models": [...]}, own order
 
@@ -110,12 +111,24 @@ def read_stream(events: Any) -> Generator[TextDelta, None, Any]:
         (nothing)             the connection ended part-way
 
     The SDK raises some failures itself, as openai.APIError: see `explain`.
+
+    Where the reply's ITEMS come from (its text, tool calls and reasoning)
+    is the surprise on this route. Elsewhere, the final event carries them
+    all, in `response.output`. Here it carries the usage, but an EMPTY
+    output (checked on the live route, 13 October 2026): each item arrives
+    once, finished, in a `response.output_item.done` event as it completes.
+    So those are collected, by position, and used when the final event
+    has none. Missing that made every reply read as empty: text still
+    streamed, but tool calls were never seen, so they never ran.
     """
     final = None
+    done: dict[int, Any] = {}  # output_index -> the finished item
     for event in events:
         kind = getattr(event, "type", None)
         if kind == "response.output_text.delta":
             yield TextDelta(event.delta)
+        elif kind == "response.output_item.done":
+            done[event.output_index] = event.item
         elif kind in ("response.completed", "response.incomplete"):
             final = event.response
         elif kind == "response.failed":
@@ -134,6 +147,18 @@ def read_stream(events: Any) -> Generator[TextDelta, None, Any]:
         raise PlanRequestError(
             "The reply stopped before it finished: the stream ended without saying it was "
             "complete. Nothing was retried; send your message again to try again."
+        )
+    if not getattr(final, "output", None) and done:
+        final = final.model_copy(update={"output": [done[i] for i in sorted(done)]})
+    usage = getattr(final, "usage", None)
+    if not getattr(final, "output", None) and getattr(usage, "output_tokens", 0):
+        # The model wrote something, and none of it reached us in a form
+        # Wren reads. Say so, rather than carry on as if it said nothing:
+        # a silent empty reply is how the bug above went unnoticed.
+        raise PlanRequestError(
+            f"OpenAI says the model wrote a reply ({usage.output_tokens} tokens), but none of "
+            "it arrived in a form Wren reads. Nothing was retried. This is a bug in Wren: "
+            "please report it."
         )
     return final
 
