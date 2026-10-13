@@ -231,7 +231,7 @@ Two lessons. Fakes built from documentation test your reading of the documentati
 
 ## Known limits (on the list for later)
 
-- **Only partly tried with a real account.** Signing in, streamed replies and a tool round trip work live (after Idea 10's fix). The rest of "Things to try" is still to do; until then, those parts are tested only against fakes built from OpenAI's docs.
+- **Declining the plan permission hasn't been tried live.** Everything else in "Things to try" worked with a real account on 13 October 2026 (after Idea 10's fix). Number 7 was skipped, so it's still tested only against fakes built from OpenAI's docs.
 - **One account.** No account picker; signing in as someone else is refused. To start over, delete `~/.wren/auth/chatgpt.json`. ([#22](https://github.com/bensullivan2002/wren/issues/22))
 - **No automatic retry.** A temporary failure (503, `…_unavailable`) stops the turn, and you send the message again. The docs suggest bounded backoff. ([#23](https://github.com/bensullivan2002/wren/issues/23))
 - **The sign-in is in a file, not the macOS Keychain.** ([#24](https://github.com/bensullivan2002/wren/issues/24))
@@ -239,7 +239,7 @@ Two lessons. Fakes built from documentation test your reading of the documentati
 - **The model picker shows slugs** (`gpt-6-luna`), not the list's `display_name`. ([#26](https://github.com/bensullivan2002/wren/issues/26))
 - **The loopback callback needs a browser on the same machine**, so it won't work over SSH. ([#27](https://github.com/bensullivan2002/wren/issues/27))
 - **`--max-tokens` does nothing on this route**, and the footer's cost shows `$?`: plan usage has no per-token price. ([#28](https://github.com/bensullivan2002/wren/issues/28))
-- **The `earliest_refresh_at` format isn't documented.** Wren honours it when it's a number (Unix seconds) and otherwise ignores it.
+- **The `earliest_refresh_at` format isn't documented, and hasn't been seen.** Wren honours it when it's a number (Unix seconds) and otherwise ignores it. Refreshing worked live either way.
 
 ## Things to try
 
@@ -254,4 +254,4 @@ Two lessons. Fakes built from documentation test your reading of the documentati
 
 ## What's next
 
-First, finishing "Things to try" with a real account, and fixing what that finds. The known limits above are issues #22 to #28, for whenever they're wanted. Then step 11: extensions (MCP, subagents, hooks).
+The spike did what issue #19 asked: Wren signs in with ChatGPT and pays from the plan, through its own agent loop, confirmed with a real account. The known limits above are issues #22 to #28, for whenever they're wanted. Then step 11: extensions (MCP, subagents, hooks).
