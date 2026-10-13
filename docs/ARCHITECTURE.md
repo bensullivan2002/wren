@@ -319,10 +319,13 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 | Step 11: MCP | More tools in the `ToolRegistry`, provided by other programs; each needs a `permission()` story (and leaves `contained` false) |
 | Step 11: subagents | A second `Agent` with its own history, run as a tool of the first |
 | Step 11: hooks | Around `ToolRegistry.run` and at turn boundaries in `Agent` |
-| Later: more than one ChatGPT account | `CredentialStore`, keyed by issued client ID; an account picker; `finish_login`'s same-account check becomes a choice |
-| Later: retrying temporary plan-usage failures | `openai_plan.explain` already tells them apart; a bounded backoff around `_stream_on_plan` |
-| Later: the Keychain for the sign-in | `CredentialStore.load` and `save` |
-| Later: `/login` inside the app | `auth/chatgpt.sign_in`, on a worker, with `say` writing notes to the transcript |
+| Later: more than one ChatGPT account (#22) | `CredentialStore`, keyed by issued client ID; an account picker; `finish_login`'s same-account check becomes a choice |
+| Later: retrying temporary plan-usage failures (#23) | `openai_plan.explain` already tells them apart; a bounded backoff around `_stream_on_plan` |
+| Later: the Keychain for the sign-in (#24) | `CredentialStore.load` and `save` |
+| Later: `/login` inside the app (#25) | `auth/chatgpt.sign_in`, on a worker, with `say` writing notes to the transcript |
+| Later: model display names (#26) | `Provider.models()` returning a label with each id; both pickers |
+| Later: signing in on a remote machine (#27) | A second host ID, and a way to move the credentials (OpenAI's "Self-hosted VMs" page) |
+| Later: cost and `--max-tokens` on the plan route (#28) | `footer._spending` and `/usage`, told by the provider that its calls aren't priced in money |
 | Later: saved permission rules | Loaded into `Permissions.always` at startup |
 | Later: a sandbox on Linux | `sandbox.available()` and `sandbox.command()`, with bubblewrap or Landlock |
 | Later: a reviewer for commands outside the sandbox | `Permissions.allows`, before it asks you |

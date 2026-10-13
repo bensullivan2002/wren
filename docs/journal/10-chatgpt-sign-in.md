@@ -232,13 +232,13 @@ Two lessons. Fakes built from documentation test your reading of the documentati
 ## Known limits (on the list for later)
 
 - **Untried with a real account.** Everything is tested against fakes built from OpenAI's docs and the SDK's types. Real sign-in, a streamed turn and a tool round trip need your browser and your ChatGPT account (see "Things to try").
-- **One account.** No account picker; signing in as someone else is refused. To start over, delete `~/.wren/auth/chatgpt.json`.
-- **No automatic retry.** A temporary failure (503, `…_unavailable`) stops the turn, and you send the message again. The docs suggest bounded backoff.
-- **The sign-in is in a file, not the macOS Keychain.**
-- **The model picker shows slugs** (`gpt-6-luna`), not the list's `display_name`.
-- **`--max-tokens` does nothing on this route**, and the footer's cost shows `$?`: plan usage has no per-token price.
-- **The loopback callback needs a browser on the same machine**, so it won't work over SSH.
-- **`/login` inside the app** isn't there yet: `wren login` is a terminal command.
+- **One account.** No account picker; signing in as someone else is refused. To start over, delete `~/.wren/auth/chatgpt.json`. ([#22](https://github.com/bensullivan2002/wren/issues/22))
+- **No automatic retry.** A temporary failure (503, `…_unavailable`) stops the turn, and you send the message again. The docs suggest bounded backoff. ([#23](https://github.com/bensullivan2002/wren/issues/23))
+- **The sign-in is in a file, not the macOS Keychain.** ([#24](https://github.com/bensullivan2002/wren/issues/24))
+- **`/login` inside the app** isn't there yet: `wren login` is a terminal command. ([#25](https://github.com/bensullivan2002/wren/issues/25))
+- **The model picker shows slugs** (`gpt-6-luna`), not the list's `display_name`. ([#26](https://github.com/bensullivan2002/wren/issues/26))
+- **The loopback callback needs a browser on the same machine**, so it won't work over SSH. ([#27](https://github.com/bensullivan2002/wren/issues/27))
+- **`--max-tokens` does nothing on this route**, and the footer's cost shows `$?`: plan usage has no per-token price. ([#28](https://github.com/bensullivan2002/wren/issues/28))
 - **The `earliest_refresh_at` format isn't documented.** Wren honours it when it's a number (Unix seconds) and otherwise ignores it.
 
 ## Things to try
@@ -254,4 +254,4 @@ Two lessons. Fakes built from documentation test your reading of the documentati
 
 ## What's next
 
-Once you've tried it, the follow-ups above can become issues. Then step 11: extensions (MCP, subagents, hooks).
+First, trying it with a real account, and fixing what that finds. The known limits above are issues #22 to #28, for whenever they're wanted. Then step 11: extensions (MCP, subagents, hooks).
