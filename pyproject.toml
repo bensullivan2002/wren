@@ -14,7 +14,7 @@ dependencies = [
     # Signing in with ChatGPT (auth/chatgpt.py): checks the ID token's
     # signature against OpenAI's published keys. `[crypto]` brings in the
     # `cryptography` package, which does the RSA maths.
-    "pyjwt[crypto]>=2.10",
+    "pyjwt[crypto]>=2.15.1",
     # The full-screen terminal interface (tui.py). Brings in Rich, which
     # renders the markdown and coloured text.
     "textual>=8",
