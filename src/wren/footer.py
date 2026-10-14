@@ -143,10 +143,12 @@ def _context(agent: Agent, stats: RunStats, state: AppState) -> list[list[Part]]
     budget = agent.context_budget  # read once: it's worked out from the model's window
     if budget:
         meter = Text.assemble(
-            ("context: ", "dim"), bar(agent.context_tokens / budget), " "
-        )
-        meter.append(
-            f"{budget_used(agent, budget)} · {tokens(agent.context_tokens)}/{tokens(budget)}"
+            ("context: ", "cyan"),
+            bar(agent.context_tokens / budget),
+            " ",
+            (budget_used(agent, budget), "bold"),
+            (" · ", "dim"),
+            f"{tokens(agent.context_tokens)}/{tokens(budget)}",
         )
     else:
         meter = kv(
@@ -181,7 +183,10 @@ def _spending(stats: RunStats, gbp_per_usd: Decimal | None) -> list[list[Part]]:
     rate = stats.cost_per_minute()
     burn = "—" if rate is None else f"{money(rate, gbp_per_usd)}/min{unknown}"
     return [
-        [Part(kv("cost", cost, "bold"), 9), Part(kv("burn", burn), 8)],
+        [
+            Part(kv("cost", cost, "bold magenta"), 9),
+            Part(kv("burn", burn, "magenta"), 8),
+        ],
         [
             Part(kv("in", tokens(u.input_tokens)), 8),
             Part(kv("out", tokens(u.output_tokens)), 8),
@@ -209,7 +214,7 @@ def _time(stats: RunStats) -> list[list[Part]]:
     first = stats.first_word_seconds
     return [
         [
-            Part(kv("session", clock(stats.elapsed())), 9),
+            Part(kv("session", clock(stats.elapsed()), "bold"), 9),
             Part(kv("turns", str(stats.turns)), 8),
         ],
         [Part(turn, 8), Part(kv("tokens/turn", per_turn), 6)],
@@ -218,7 +223,7 @@ def _time(stats: RunStats) -> list[list[Part]]:
 
 
 def _tools(stats: RunStats) -> list[list[Part]]:
-    calls = [Part(kv("tool calls", str(sum(stats.tool_calls.values()))), 8)]
+    calls = [Part(kv("tool calls", str(sum(stats.tool_calls.values())), "bold"), 8)]
     # Most used first; when space is short, the least used go first.
     for rank, (name, count) in enumerate(stats.tool_calls.most_common()):
         calls.append(Part(Text(f"{name} {count}"), max(2, 7 - rank)))
@@ -234,17 +239,16 @@ def _tools(stats: RunStats) -> list[list[Part]]:
 
 def _activity(agent: Agent, stats: RunStats, state: AppState) -> list[list[Part]]:
     if not state.busy:
-        return [[Part(Text(KEY_HINTS, style="dim"), 9)]]
-    spinner = Text(SPINNER[state.frame % len(SPINNER)] + " ", style="cyan")
+        return [[Part(key_hints(), 9)]]
+    spinner = Text(
+        SPINNER[state.frame % len(SPINNER)] + " ",
+        style="yellow" if state.stopping else "cyan",
+    )
     if state.stopping:
-        return [[Part(spinner + Text("stopping…"), 9)]]
+        return [[Part(spinner + Text("stopping…", style="bold yellow"), 9)]]
+    stop = Text.assemble(("esc", "bold cyan"), " to stop")
     if not stats.in_turn:  # /compact, or asking the API for a list of models
-        return [
-            [
-                Part(spinner + Text("working"), 9),
-                Part(Text("esc to stop", style="dim"), 8),
-            ]
-        ]
+        return [[Part(spinner + Text("working", style="bold cyan"), 9), Part(stop, 8)]]
     if stats.running_tool is not None:
         doing = Text("running " + shorten(format_call(stats.running_tool), 60))
     else:
@@ -256,9 +260,9 @@ def _activity(agent: Agent, stats: RunStats, state: AppState) -> list[list[Part]
     )  # no limit: no "/n"
     return [
         [
-            Part(spinner + Text(step), 9),
+            Part(spinner + Text(step, style="bold cyan"), 9),
             Part(doing, 7),
-            Part(Text("esc to stop", style="dim"), 8),
+            Part(stop, 8),
         ]
     ]
 
@@ -283,7 +287,7 @@ def fit(groups: list[list[Part]], width: int) -> Text:
     wide on its own, it's cut short with "…".
     """
     places = [(g, p) for g, group in enumerate(groups) for p in range(len(group))]
-    if not places:
+    if not places or width <= 0:
         return Text()
     by_importance = sorted(
         places, key=lambda place: (-groups[place[0]][place[1]].keep, place)
@@ -307,18 +311,34 @@ def fit(groups: list[list[Part]], width: int) -> Text:
 
 
 def _join(groups: list[list[Part]]) -> Text:
+    # Text(..., style="dim").join(...) would give the *whole result* a
+    # dim base style. A span styles only the separator's own characters.
     group_texts = [
-        Text(" · ", style="dim").join(part.text for part in group) for group in groups
+        Text.assemble((" · ", "dim")).join(part.text for part in group)
+        for group in groups
     ]
-    return Text(" │ ", style="dim").join(group_texts)
+    return Text.assemble((" │ ", "dim")).join(group_texts)
 
 
 # --- Formatting ----------------------------------------------------------------
 
 
+def key_hints() -> Text:
+    """Highlight the keys, not the descriptions; keep the wording in one place."""
+    hints = []
+    for hint in KEY_HINTS.split(" · "):
+        key, space, action = hint.partition(" ")
+        hints.append(Text.assemble((key, "bold cyan"), space + action))
+    return Text.assemble((" · ", "dim")).join(hints)
+
+
 def kv(key: str, value: str, style: str = "") -> Text:
-    """ "key: value", the key dimmed so the values stand out."""
-    return Text.assemble((f"{key}: ", "dim"), (value, style))
+    """ "key: value", with a readable cyan label and optional value emphasis.
+
+    Only separators and incidental details are dimmed; the labels are
+    information too, and need to stay legible on the footer's surface.
+    """
+    return Text.assemble((f"{key}: ", "cyan"), (value, style))
 
 
 def bar(fraction: float) -> Text:

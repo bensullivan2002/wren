@@ -14,6 +14,7 @@ import threading
 from decimal import Decimal
 
 import pytest
+from textual.color import Color
 from textual.widgets import Markdown, Static
 
 from wren.agent import INTERRUPTED_NOTE, Agent
@@ -110,6 +111,36 @@ def panel_text(app):
 def question(app):
     found = app.query(PermissionPrompt)
     return found.first() if found else None
+
+
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+async def test_footer_surface_and_styling_survive_resizing(tmp_path, theme):
+    app = make_app(tmp_path)
+    app.theme = theme
+    async with app.run_test(size=(160, 30)) as pilot:
+        footer = app.query_one("#footer")
+        assert footer.styles.background == Color.parse(
+            app.get_css_variables()["surface"]
+        )
+        assert footer.styles.background != app.screen.styles.background
+        assert footer.region.height == 6
+        assert footer.content_region.x == 1
+        assert len(footer.content.split("\n")) == 6
+        assert footer.content.spans  # Rich styling survives the widget's row join
+        wide = str(footer.content)
+
+        await pilot.resize_terminal(40, 24)
+        await until(pilot, lambda: footer.content_size.width == 38, "the narrow footer")
+        assert footer.region.height == 6
+        assert all(row.cell_len <= 38 for row in footer.content.split("\n"))
+        assert footer.content.spans
+        assert footer.region.bottom <= app.screen.region.bottom
+
+        await pilot.resize_terminal(160, 30)
+        await until(pilot, lambda: footer.content_size.width == 158, "the wide footer")
+        # The git worker may have added metadata; the headline still returns.
+        assert str(footer.content).startswith(wide.split(" │ ")[0])
+        assert footer.content.spans
 
 
 # --- Pinned logo --------------------------------------------------------------------

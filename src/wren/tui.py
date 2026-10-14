@@ -342,7 +342,16 @@ class FooterRows(Static):
     asks for them at its current width, and again whenever that changes.
     (Not called `Footer`: Textual has a widget of that name, for key hints.)"""
 
-    DEFAULT_CSS = f"FooterRows {{ dock: bottom; height: {FOOTER_ROWS}; padding: 0 1; }}"
+    DEFAULT_CSS = f"""
+    FooterRows {{
+        dock: bottom;
+        height: {FOOTER_ROWS};
+        padding: 0 1;
+        background: $surface;
+        color: $text;
+        text-wrap: nowrap;
+    }}
+    """
 
     def __init__(self, rows) -> None:
         super().__init__("", id="footer", markup=False)

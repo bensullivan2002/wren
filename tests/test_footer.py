@@ -12,6 +12,8 @@ import subprocess
 from decimal import Decimal
 
 import pytest
+from rich.console import Console
+from rich.style import Style
 from rich.text import Text
 
 import wren.footer
@@ -458,6 +460,75 @@ def test_the_idle_footer_shows_the_settings_and_the_keys(tmp_path):
     assert shown[5] == wren.footer.KEY_HINTS
 
 
+def style_of(text: Text, fragment: str) -> Style:
+    """The effective style at a piece of text, even after joining or fitting."""
+    return text.get_style_at_offset(Console(), text.plain.index(fragment))
+
+
+@pytest.mark.parametrize("width", [300, 60, 40])
+def test_labels_and_headline_values_stay_readable_after_fitting(tmp_path, width):
+    agent = make_agent(tmp_path)
+    agent.context_tokens = 42_000
+    shown = footer_rows(agent, RunStats(Clock()), AppState(), width)
+    for row, label in zip(
+        shown[:5],
+        ["model:", "context:", "cost:", "session:", "tool calls:"],
+        strict=True,
+    ):
+        assert style_of(row, label).color == Style.parse("cyan").color
+        assert not style_of(row, label).dim
+    for row, value in zip(
+        shown[:5], ["demo", "28%", "$0.00", "0:00", "0"], strict=True
+    ):
+        assert style_of(row, value).bold
+    assert style_of(shown[2], "$0.00").color == Style.parse("magenta").color
+
+
+def test_shortcut_keys_stand_out_without_dimming_the_actions(tmp_path):
+    shown = footer_rows(make_agent(tmp_path), RunStats(Clock()), AppState(), 300)[5]
+    assert shown.plain == wren.footer.KEY_HINTS
+    for key in ("enter", "ctrl+j", "/help", "ctrl+q"):
+        assert style_of(shown, key) == Style.parse("bold cyan")
+    for action in ("send", "new line", "quit"):
+        assert not style_of(shown, action).dim
+        assert not style_of(shown, action).bold
+    assert style_of(shown, " · ").dim
+
+
+def test_activity_highlights_the_step_stop_key_and_stopping_warning(tmp_path):
+    agent, stats = make_agent(tmp_path), RunStats(Clock())
+    stats.start_turn()
+    shown = footer_rows(agent, stats, AppState(busy=True), 300)[5]
+    assert style_of(shown, "step 1") == Style.parse("bold cyan")
+    assert style_of(shown, "esc") == Style.parse("bold cyan")
+    assert not style_of(shown, "to stop").dim
+    stopping = footer_rows(agent, stats, AppState(busy=True, stopping=True), 300)[5]
+    assert style_of(stopping, "stopping…") == Style.parse("bold yellow")
+
+
+def test_warning_and_error_colours_are_not_overridden_by_the_new_styling(tmp_path):
+    agent, stats = make_agent(tmp_path), RunStats(Clock())
+    agent.tools.permissions.auto = True
+    stats.tool_errors = 1
+    stats.record(completed(Usage(10), model="something-else"), agent.provider)
+    shown = footer_rows(agent, stats, AppState(), 500)
+    assert style_of(shown[0], "on") == Style.parse("yellow")
+    assert style_of(shown[0], "⚠") == Style.parse("yellow")
+    assert style_of(shown[4], "1") == Style.parse("red")
+
+
+def test_external_text_remains_literal_with_the_new_colours(tmp_path):
+    agent = make_agent(tmp_path)
+    agent.provider.model = "[red]model[/]"
+    shown = footer_rows(
+        agent, RunStats(Clock()), AppState(git=GitState("[bold]branch[/]", 0)), 500
+    )[0]
+    assert "model: [red]model[/]" in shown.plain
+    assert "git: [bold]branch[/]" in shown.plain
+    assert style_of(shown, "[red]") == Style.parse("bold")
+    assert not style_of(shown, "[bold]").bold
+
+
 def test_footer_counts_steering_and_memory_independently(tmp_path):
     agent = make_agent(tmp_path)
     state = AppState(steering_files=2, memory_files=1)
@@ -510,10 +581,11 @@ def test_auto_mode_shows_in_the_settings_row_while_it_is_on(tmp_path):
 
 def test_a_narrow_terminal_keeps_every_row_on_one_line(tmp_path):
     agent = make_agent(tmp_path)
-    for width in (100, 60, 30):
+    for width in (100, 60, 30, 10, 1, 0):
         shown = rows(agent, RunStats(Clock()), AppState(git=GitState("main", 0)), width)
         assert all(Text(row).cell_len <= width for row in shown)
-        assert shown[0].startswith("model: demo")  # the first thing kept
+        if width >= len("model: demo"):
+            assert shown[0].startswith("model: demo")  # the first thing kept
 
 
 def test_the_last_row_says_what_wren_is_doing(tmp_path):
