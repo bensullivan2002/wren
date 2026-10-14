@@ -513,7 +513,7 @@ class WrenApp(App):
 
     def on_resize(self, event: events.Resize) -> None:
         # Our handler runs before Textual updates the app's stored size.
-        for logo in self.query("#logo"):
+        for logo in self.query(Static).filter("#logo"):
             logo.update(self._logo_text(event.size))
 
     async def _draw_conversation(self) -> None:
@@ -829,6 +829,9 @@ class WrenApp(App):
         await self._open_picker("/resume", rows, self._session_chosen)
 
     async def _session_chosen(self, session) -> None:
+        if self.sessions is None:
+            await self.note("Session saving is not available.")
+            return
         try:
             self.notice = resume_session(self.agent, self.sessions, session)
         except (SessionError, ValueError) as e:

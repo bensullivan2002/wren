@@ -44,7 +44,7 @@ same translation; the plan route's own rules are in openai_plan.py, and
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from decimal import Decimal
 from typing import Any
 
@@ -246,6 +246,7 @@ class OpenAIProvider:
             from wren.providers.openai_plan import list_models
 
             return list_models(self._plan_client(self.plan.access_token()))
+        assert self.client is not None  # noqa: S101 - API-key route has a client
         ids = [model.id for model in self.client.models.list()]
         chat = [
             i
@@ -282,7 +283,7 @@ class OpenAIProvider:
         messages: list[Message],
         tools: Sequence[ToolSpec] = (),
         max_tokens: int,
-    ) -> Iterator[StreamEvent]:
+    ) -> Generator[StreamEvent, None, None]:
         if self.plan is not None:
             yield from self._stream_on_plan(system, messages, tools)
             return
@@ -308,6 +309,7 @@ class OpenAIProvider:
         # The same rule makes it work, though: the request must start the
         # same way every time (step 5).
 
+        assert self.client is not None  # noqa: S101 - API-key route has a client
         with self.client.responses.stream(**request) as stream:
             for event in stream:
                 if event.type == "response.output_text.delta":
@@ -318,7 +320,7 @@ class OpenAIProvider:
 
     def _stream_on_plan(
         self, system: str, messages: list[Message], tools: Sequence[ToolSpec]
-    ) -> Iterator[StreamEvent]:
+    ) -> Generator[StreamEvent, None, None]:
         from wren.providers import openai_plan
 
         # A sign-in problem (signed out, plan usage not allowed, a refresh

@@ -551,6 +551,8 @@ def _budget_explained(agent: Agent) -> list[str]:
     elif budget == cap:
         why = f"Compacts at: {budget:,} tokens, your --context-budget"
     else:
+        # A non-zero budget not supplied by the cap must come from the window.
+        assert window is not None  # noqa: S101 - states the budget invariant
         margin = int(window * COMPACTION_MARGIN)
         why = (
             f"Compacts at: {budget:,} tokens: the window, less {agent.max_tokens:,} for a reply "

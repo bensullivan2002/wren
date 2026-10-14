@@ -151,12 +151,13 @@ def read_stream(events: Any) -> Generator[TextDelta, None, Any]:
     if not getattr(final, "output", None) and done:
         final = final.model_copy(update={"output": [done[i] for i in sorted(done)]})
     usage = getattr(final, "usage", None)
-    if not getattr(final, "output", None) and getattr(usage, "output_tokens", 0):
+    output_tokens = getattr(usage, "output_tokens", 0)
+    if not getattr(final, "output", None) and output_tokens:
         # The model wrote something, and none of it reached us in a form
         # Wren reads. Say so, rather than carry on as if it said nothing:
         # a silent empty reply is how the bug above went unnoticed.
         raise PlanRequestError(
-            f"OpenAI says the model wrote a reply ({usage.output_tokens} tokens), but none of "
+            f"OpenAI says the model wrote a reply ({output_tokens} tokens), but none of "
             "it arrived in a form Wren reads. Nothing was retried. This is a bug in Wren: "
             "please report it."
         )

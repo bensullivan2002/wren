@@ -1071,6 +1071,15 @@ async def test_starting_with_resume_opens_the_same_picker(tmp_path):
         )
 
 
+async def test_a_session_choice_without_a_store_is_reported(tmp_path):
+    app = make_app(tmp_path)
+    async with app.run_test():
+        await app._session_chosen(None)
+        assert "Session saving is not available." in screen_text(app)
+        assert app.agent.messages == []
+        assert history_problems(app.agent.messages) == []
+
+
 async def test_resume_with_nothing_saved_just_says_so(tmp_path):
     app = make_app(tmp_path, saved=True, choose_session=True)
     async with app.run_test() as pilot:

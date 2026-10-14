@@ -263,22 +263,28 @@ Additional entries: [GitHub reads without opening the shell's fence (issue #12)]
 ## Development
 
 ```bash
-pip install -e ".[dev]"       # or: uv sync --extra dev
-pre-commit install            # once: lint and format the files in each commit
-pytest                        # the tests
-pre-commit run --all-files    # the lint and format checks, on every file
+uv sync --locked --extra dev
+uv run pre-commit install           # once: quick checks on each commit
+uv run pytest                       # the tests
+uv run basedpyright                 # static type checks on src/
+uv run pre-commit run --all-files    # lint, format, types and file checks
 git config blame.ignoreRevsFile .git-blame-ignore-revs   # once: blame looks past the big reformat
 ```
 
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first; the type-checking hook uses it to run the version pinned in `uv.lock`. `pip install -e ".[dev]"` still works, but the hook needs uv on your PATH.
+
 The tests use a fake model, so they need no API key and no network. The app's tests run it headless and press its keys.
+
+[basedpyright](https://docs.basedpyright.com) checks `src/` in **standard** mode, targeting Python 3.10 on all platforms. There is no baseline: the check must pass cleanly. Tests aren't type-checked yet. The hook checks all of `src/` when Python source, dependencies or its configuration changes, because a changed signature can break another module.
 
 **CI** runs on every pull request and every push to `main`:
 
 - the pre-commit checks: [ruff](https://docs.astral.sh/ruff/) lint and format, plus whitespace and file checks;
+- a separate **Type check** job running basedpyright with the same configuration and locked version as the hook;
 - `pip-audit` on the locked dependencies;
 - the tests on Linux and macOS, with Python 3.10 and 3.14. The sandbox's tests only run on macOS.
 
-Dependabot proposes dependency updates weekly. The choices behind all of this are D108 to D115 in [Decisions](docs/DECISIONS.md).
+Dependabot proposes dependency updates weekly. The choices behind all of this are D108 to D115 and D135 in [Decisions](docs/DECISIONS.md).
 
 ```
 src/wren/

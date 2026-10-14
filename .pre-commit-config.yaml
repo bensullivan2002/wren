@@ -1,7 +1,7 @@
 # Checks run on every `git commit` once you've run `pre-commit install`, and by
 # CI on every file (.github/workflows/ci.yml), so the two always agree.
 # Quick ones only: the tests run in CI. Update the versions with
-# `pre-commit autoupdate`.
+# `pre-commit autoupdate` (basedpyright uses uv.lock instead).
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -22,3 +22,14 @@ repos:
       - id: ruff-check
         args: [--fix]
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: basedpyright
+        name: Type check (basedpyright)
+        entry: uv run --locked --extra dev basedpyright
+        language: system
+        # A changed signature can break a different module: check all of src,
+        # not just staged files. Run for dependency and config changes too.
+        pass_filenames: false
+        files: ^(src/.*\.py|pyproject\.toml|uv\.lock|\.pre-commit-config\.yaml)$

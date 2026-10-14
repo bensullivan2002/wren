@@ -28,6 +28,7 @@ from __future__ import annotations
 import errno
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import cast
 from urllib.parse import parse_qs, urlsplit
 
 HOST = "127.0.0.1"  # not "localhost": the docs require the address itself
@@ -82,18 +83,19 @@ class _Server(HTTPServer):
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server: _Server
-
     def do_GET(self) -> None:
+        # Only _Server installs this handler. Keep the base class's mutable
+        # `server` type intact, and narrow it where we use our extra field.
+        server = cast(_Server, self.server)
         address = urlsplit(self.path)
         if address.path != CALLBACK_PATH:
             # A browser also asks for /favicon.ico, say. Not the answer.
             self.send_error(404)
             return
-        if self.server.answer is None:  # the first answer is the one used
+        if server.answer is None:  # the first answer is the one used
             # parse_qs gives each name a list of values; one is all we need.
             params = parse_qs(address.query, keep_blank_values=True)
-            self.server.answer = {name: values[0] for name, values in params.items()}
+            server.answer = {name: values[0] for name, values in params.items()}
         body = PAGE.encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
