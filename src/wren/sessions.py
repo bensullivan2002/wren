@@ -315,19 +315,18 @@ class SessionStore:
 
     def _write(self, record: dict[str, Any]) -> None:
         try:
-            if self.path is None:
-                self._start()
+            path = self.path if self.path is not None else self._start()
             # Opened, written and closed for every line. Slower than keeping
             # the file open, but each line is on disk before we move on,
             # and there's no open file to lose if Wren is killed.
-            with self.path.open("a", encoding="utf-8") as file:
+            with path.open("a", encoding="utf-8") as file:
                 file.write(json.dumps(record, ensure_ascii=False) + "\n")
         except OSError:
             # A full disk or a read-only home shouldn't stop the conversation.
             # It just isn't saved.
             pass
 
-    def _start(self) -> None:
+    def _start(self) -> Path:
         # 0o700 / 0o600: readable by you and nobody else on the machine.
         self.folder.mkdir(parents=True, exist_ok=True, mode=0o700)
         now = datetime.now()
@@ -347,6 +346,7 @@ class SessionStore:
                 "effort": self.effort,
             }
             file.write(json.dumps(meta) + "\n")
+        return self.path
 
     # --- Reading -------------------------------------------------------------------
 

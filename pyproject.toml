@@ -27,6 +27,8 @@ dev = [
     # Runs the lint and format checks in .pre-commit-config.yaml (which pins
     # their versions), on commit and in CI.
     "pre-commit>=4",
+    # Static type checks; uv.lock pins the version used by CI and the hook.
+    "basedpyright>=1.40.2",
 ]
 
 # `pip install -e .` puts a `wren` command on your PATH that calls wren.cli:main
@@ -44,6 +46,16 @@ packages = ["src/wren"]
 testpaths = ["tests"]
 asyncio_mode = "auto"  # lets a test be `async def`: needed to drive the Textual app
 pythonpath = ["src"]
+
+# Check production code at the oldest supported Python version, on every
+# platform. No baseline: existing findings are fixed, not hidden (D135).
+[tool.basedpyright]
+include = ["src"]
+typeCheckingMode = "standard"
+pythonVersion = "3.10"
+pythonPlatform = "All"
+venvPath = "."
+venv = ".venv"
 
 # Ruff lints and formats. Its version is pinned in .pre-commit-config.yaml;
 # run it with `pre-commit run --all-files`. The Python version it targets

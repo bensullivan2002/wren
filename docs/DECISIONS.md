@@ -906,3 +906,19 @@ Your first test with a real account saved every reply as `(no reply)`: text stre
 
 Cyan labels replace dim labels; headline values are bold, spending is magenta, and shortcut keys are highlighted separately from their descriptions. Yellow remains a warning (auto mode, always-allowed actions, stopping) and red an error or high-context signal. Separators and incidental metadata stay dim. A theme-aware surface and text colour distinguish the footer from the transcript without extra rows. Rich `Text` styling preserves literal external text and the existing priority-based fitting.
 *Not chosen:* borders, extra headings or blank rows (less room for the conversation, especially at 80×24); changing the information or fitting priorities (the issue likes the existing information); colouring every value (warnings and headline figures would no longer stand out).
+
+### D135. basedpyright checks src in standard mode, with no baseline
+*[Issue #15](https://github.com/bensullivan2002/wren/issues/15) · you (mode, scope, fix up front, CI and hook) · design (details)*
+
+After measuring every mode, you chose **standard**, **src only**, and fixing all findings before adoption. `pyproject.toml` targets Python 3.10 (the oldest supported version) on all platforms. The dev extra and `uv.lock` pin basedpyright for both the dedicated **Type check** CI job and the local pre-commit hook. No baseline, no type-checking ignores, no project-wide disabled rules.
+
+*Measured before changes:* basedpyright 1.40.2, 40 source files and 15 test files, targeting Python 3.10 on all platforms. Error counts for src / tests: off 0 / 0; basic 14 / 170; standard 15 / 172; strict 250 / 3,102; recommended 31 / 172, plus 839 / 3,247 warnings; all 872 / 3,419. The test measurement includes the sibling-import path pytest uses. Source checks took about 2.4 seconds on the development Mac; source and tests together about 3 seconds. These count diagnostics, not distinct bugs.
+
+*Fixes:* generator return types promise `.close()` (which interruption already requires); the journal is explicitly `Journal | None`; tool results enter a fresh `list[Block]`; optional values are narrowed at use; Textual queries specify the widget type. The callback handler narrows its server locally rather than overriding a mutable base-class field. Assertions state existing budget and billing-route invariants, rather than hiding findings with type ignores.
+
+*Hook:* `uv run --locked --extra dev basedpyright`, with no filenames, checks all of src when source, dependencies or hook configuration changes. One changed signature can break a different module. It needs uv on PATH and takes a few seconds after environment setup. CI's lint job also runs the hook; the separate job gives type checking its own visible status.
+
+*Repository setting to finish after the first successful PR run:* add **Type check** to main's required checks, preserving the existing six (D114). This cannot be enforced by the workflow file itself. Do not require the new name before it reports, or unrelated PRs could be blocked waiting for a check they do not run.
+
+*Not chosen:* basic (only one fewer source finding); strict/recommended/all (large annotation work, especially for tests and SDK data); a baseline (unnecessary for 15 source findings and would retain existing debt); checking tests now (172 standard-mode diagnostics, largely event-union narrowing and test doubles). A later change can increase strictness or include tests after measuring again.
+*Supersedes:* D115's deferral. Static types complement pytest: they catch interface mistakes without executing code, but don't verify behaviour or make untyped SDK data safe.

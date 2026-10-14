@@ -1,6 +1,6 @@
-# Checks every pull request and every push to main: lint and format, a
+# Checks every pull request and every push to main: lint, format, types, a
 # dependency audit, and the tests on Linux and macOS. Each job is one check
-# on the pull request. See "Development" in README.md, and D108 to D115 in
+# on the pull request. See "Development" in README.md, and D108 to D115 / D135 in
 # docs/DECISIONS.md.
 name: CI
 
@@ -27,9 +27,9 @@ concurrency:
 # code, a commit can't. The comment says which release it is, and Dependabot
 # updates both.
 #
-# Every job's name (the matrix values included) is a required check on main
-# (D114). Rename a job or change the matrix, and update the branch protection
-# to match, or pull requests wait for ever on a check that never reports.
+# Job names (the matrix values included) must match main's required checks
+# (D114, D135). Add/rename a job or change the matrix, and update branch
+# protection to match. Add "Type check" after its first successful PR run.
 jobs:
   lint:
     name: Lint and format
@@ -43,6 +43,18 @@ jobs:
       # The same hooks, at the same versions, as `git commit` runs locally.
       - name: Run the pre-commit hooks on every file
         run: uv run --locked --extra dev pre-commit run --all-files --show-diff-on-failure
+
+  typecheck:
+    name: Type check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Check source types
+        run: uv run --locked --extra dev basedpyright
 
   audit:
     name: Dependency audit

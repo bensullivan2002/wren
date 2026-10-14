@@ -121,6 +121,8 @@ Both sections live in the system prompt, which compaction doesn't touch, so both
 
 ## Providers
 
+`Provider.stream` returns `Generator[StreamEvent, None, None]`: the agent closes it on interruption, so the provider must release its resources when closed. `Agent.run_turn` and `Agent.compact` likewise expose generators that both front ends close. A plain `Iterator` promises iteration, not `.close()`.
+
 A provider turns Wren's neutral history into one vendor's request, and that vendor's reply back into neutral types. The `Provider` protocol is: `name`, `model`, `billing` (who pays, in a word or two), `effort`, `stream(...)`, `models()`, `efforts()`, `default_effort()`, `context_window()`. `context_window()` returns the current model's window in tokens, or None if it isn't known, and may make a network call. The provider's `context_window_source` says where the number came from, so `/usage` can show it.
 
 | | `anthropic` | `openai` | `fake` |
@@ -330,6 +332,10 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 31. **An ID token is believed only after its signature, issuer, audience, expiry and nonce are checked,** with the algorithm taken from OpenAI's key, never from the token. Plan usage needs the `chatgpt.tokens.use.direct` scope as granted, not as asked for.
 32. **Refreshing is one at a time, across processes,** and re-reads the record after taking the lock, so a rotated refresh token is never spent twice.
 33. **GitHub reads never grant shell permissions.** `github_read` constructs only fixed GitHub.com REST GETs, with validated identifiers, and executes an argument list. No model input can choose a method, host, endpoint, jq expression or command; GitHub writes remain under the existing shell permissions.
+
+## Static checks
+
+`pyproject.toml` configures basedpyright in standard mode for `src/`, Python 3.10 and all platforms (D135). There is no baseline or project-wide rule suppression. The dev extra and `uv.lock` supply one version for the local pre-commit hook and CI's `Type check` job. The hook takes no filenames: changing one module can break a caller elsewhere. Tests remain runtime-checked by pytest, not type-checked.
 
 ## Where the next steps plug in
 

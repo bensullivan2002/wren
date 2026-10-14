@@ -8,7 +8,7 @@ code, means they can be unit-tested without an API key.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from decimal import Decimal
 from typing import Any
 
@@ -163,7 +163,7 @@ class AnthropicProvider:
         messages: list[Message],
         tools: Sequence[ToolSpec] = (),
         max_tokens: int,
-    ) -> Iterator[StreamEvent]:
+    ) -> Generator[StreamEvent, None, None]:
         request: dict[str, Any] = {
             "model": self.model,
             "max_tokens": max_tokens,

@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from decimal import Decimal
 
 from wren.messages import (
@@ -105,7 +105,7 @@ class FakeProvider:
         messages: list[Message],
         tools: Sequence[ToolSpec] = (),
         max_tokens: int,
-    ) -> Iterator[StreamEvent]:
+    ) -> Generator[StreamEvent, None, None]:
         self.calls.append(
             {
                 "system": system,

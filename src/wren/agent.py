@@ -33,7 +33,7 @@ driving it (a front end) decides how to show them.
 from __future__ import annotations
 
 import itertools
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Callable, Generator
 from contextlib import closing
 from dataclasses import dataclass, field
 
@@ -50,6 +50,7 @@ from wren.messages import (
 )
 from wren.prompts import COMPACT_PROMPT, COMPACTED_NOTE
 from wren.providers import Provider
+from wren.sessions import Journal
 from wren.tools import ToolRegistry, ToolResult
 
 # Notes the agent writes into the history, in the assistant's place, when a
@@ -189,13 +190,13 @@ class Agent:
         # already happened. See _close_unfinished_turn.
         # Whoever is recording the conversation (see sessions.Journal), if
         # anyone. Every change to the history is reported to it as it happens.
-        self.journal = None
+        self.journal: Journal | None = None
 
         self._partial_text = ""  # text streamed so far in the current model call
         self._results: list[ToolResultBlock] = []  # tools finished in the current batch
         self._running: str | None = None  # id of the tool call in progress, if any
 
-    def run_turn(self, user_text: str) -> Iterator[AgentEvent]:
+    def run_turn(self, user_text: str) -> Generator[AgentEvent, None, None]:
         """Handle one user turn, yielding events for the UI to show.
 
         If the turn is cut short (Ctrl-C, a network error), what had already
@@ -318,7 +319,7 @@ class Agent:
                 return TurnFinished(turn_usage, step)
 
             results = yield from self._run_tools(reply.tool_uses)
-            self._add(Message("user", results))
+            self._add(Message("user", [*results]))
 
         # Out of steps. The history ends with tool results, so add a short
         # note in the assistant's place. It keeps the history valid, and it
@@ -427,7 +428,7 @@ class Agent:
             budgets.append(self.context_cap)
         return min(budgets, default=0)
 
-    def compact(self, automatic: bool = False) -> Iterator[AgentEvent]:
+    def compact(self, automatic: bool = False) -> Generator[AgentEvent, None, None]:
         """Replace the conversation with the model's own summary of it.
 
         One extra model call: the whole conversation, plus a request to

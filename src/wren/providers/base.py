@@ -12,7 +12,7 @@ checker").
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from typing import Protocol
 
 from wren.messages import Message, Prices, StreamEvent, ToolSpec
@@ -77,10 +77,12 @@ class Provider(Protocol):
         messages: list[Message],
         tools: Sequence[ToolSpec] = (),
         max_tokens: int,
-    ) -> Iterator[StreamEvent]:
+    ) -> Generator[StreamEvent, None, None]:
         """Send the whole conversation, and the tools on offer, to the model;
         yield events as it replies.
 
+        Returns a generator, not just an iterator: callers close it when a
+        turn is interrupted, so the provider releases its network resources.
         Contract: yields zero or more TextDelta, then exactly one Completed,
         which is always last. If the model wants tools, the Completed message
         contains ToolUseBlocks; running them is the agent's job, not ours.
