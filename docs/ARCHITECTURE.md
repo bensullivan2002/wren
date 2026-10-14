@@ -255,6 +255,8 @@ The theme-coloured bird is a top-docked `Static` outside the transcript, pinned 
 
 **The footer** (`FooterRows`) has six fixed rows: settings (model, effort, provider with who pays in one part, `provider: openai (ChatGPT plan)`, `auto: on` in auto mode, git branch, folder, session), the context bar against the compaction budget (or, with no budget, the size and why: "compaction off", "window unknown: never compacted", "window not looked up yet"), spending, time, tool calls, and what Wren is doing now. `footer.py` builds them from the agent, the app's `RunStats` and a little app state (busy, git, session); `tui.py` only puts them on screen. A row never wraps: each part has a `keep` score, and `fit` drops the least important parts that don't fit. The footer is redrawn on the app's tick (ten times a second while busy, once a second otherwise), not on every event. Cost comes from each provider's `prices()`, a dated table in US dollars copied from its pricing page, and is shown in pounds at the day's rate from `exchange.py` (in dollars until there is one). The footer is the app's alone; the REPL prints a summary line after each turn instead.
 
+Footer labels are cyan rather than dim, with bold headline values, magenta spending, and highlighted shortcut keys. Yellow still marks permission warnings and stopping; red marks tool errors and high context use. Only separators and incidental details are dimmed. `FooterRows` uses the theme's `$surface` and `$text` to separate the footer from the conversation without adding borders or rows; its Rich spans survive fitting and resizing, and outside text is never parsed as markup.
+
 ## Permissions, auto mode and the sandbox
 
 | Tool | Asks? | In auto mode | "Always" scope | Covers |
