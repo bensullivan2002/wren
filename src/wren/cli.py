@@ -36,6 +36,7 @@ from wren.repl import Repl
 from wren.sessions import SessionError, SessionStore
 from wren.settings import UserDefaults
 from wren.tools import Permissions, ToolRegistry, default_tools
+from wren.tools.sandbox import available as sandbox_available
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -74,6 +75,12 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         const="",
         metavar="ID",
         help="choose an earlier conversation in this folder to reopen, or reopen the one with this id",
+    )
+    parser.add_argument(
+        "--auto",
+        action="store_true",
+        default=None,
+        help="start in auto mode: ordinary project file edits won't ask (env: WREN_AUTO)",
     )
     parser.add_argument(
         "--plain",
@@ -129,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
             context_budget=args.context_budget,
             effort=args.effort,
             auth=args.auth,
+            auto=args.auto,
         )
     except ValueError as e:  # a setting in the environment that makes no sense
         print(f"wren: {e}", file=sys.stderr)
@@ -162,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
             config.provider, config.model, config.effort, auth=config.auth
         )
     permissions = Permissions()
+    permissions.auto = config.auto
     tools = ToolRegistry(default_tools(), root=root, permissions=permissions)
     memory = Memory(root)
 
@@ -193,6 +202,20 @@ def main(argv: list[str] | None = None) -> int:
             notice = resume_session(agent, sessions, sessions.find(args.resume))
         except (SessionError, ValueError) as e:
             notice = f"Couldn't resume: {e}. This is a new conversation."
+
+    if permissions.auto:
+        auto_notice = (
+            "Auto mode is on: ordinary project file edits won't ask. "
+            "Protected edits and commands outside the sandbox still ask. "
+            "Use /auto to turn it off."
+        )
+        if not sandbox_available():
+            auto_notice += (
+                " No sandbox is available: every command still asks for approval."
+            )
+        # Both front ends already display startup notices. Keep any resume
+        # result too, without adding either notice to the model's history.
+        notice = "\n".join(part for part in (notice, auto_notice) if part)
 
     # A full-screen app needs a real terminal at both ends. When input or
     # output is a pipe or a file (`echo hi | wren`, the tests), fall back to

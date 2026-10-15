@@ -708,7 +708,7 @@ Auto mode switches on and off mid-conversation, but the system prompt and the to
 *Step 9 · design*
 
 `/auto` switches auto mode on or off, in both front ends. The app's footer shows `auto: on` in yellow, and `/permissions` describes what auto mode allows. Like "always" answers (D23), it's forgotten on exit and isn't restored with a session.
-*Not chosen, for now:* a `--auto` flag or `WREN_AUTO` (you want one, as a separate piece of work: [issue #9](https://github.com/bensullivan2002/wren/issues/9)). A saved default (a setting that removes questions in every project, including repositories you've only just cloned).
+*Originally deferred:* a `--auto` flag or `WREN_AUTO` ([issue #9](https://github.com/bensullivan2002/wren/issues/9), now added in D136). A saved default remains excluded: it would remove questions in every project, including repositories you've only just cloned.
 
 ### D108. CI on GitHub Actions: lint, a dependency audit, and the tests on Linux and macOS
 *[Issue #11](https://github.com/bensullivan2002/wren/issues/11) · you (the checks and the matrix) · design (the details)*
@@ -922,3 +922,12 @@ After measuring every mode, you chose **standard**, **src only**, and fixing all
 
 *Not chosen:* basic (only one fewer source finding); strict/recommended/all (large annotation work, especially for tests and SDK data); a baseline (unnecessary for 15 source findings and would retain existing debt); checking tests now (172 standard-mode diagnostics, largely event-union narrowing and test doubles). A later change can increase strictness or include tests after measuring again.
 *Supersedes:* D115's deferral. Static types complement pytest: they catch interface mistakes without executing code, but don't verify behaviour or make untyped SDK data safe.
+
+### D136. Auto mode can be chosen at startup, but is never a saved default
+*[Issue #9](https://github.com/bensullivan2002/wren/issues/9) · you (startup option, notices, no saved default) · design (boolean parsing and wiring)*
+
+`--auto` starts either front end with `Permissions.auto` on. `Config.load` follows flag, then `WREN_AUTO`, then off. The environment accepts case-insensitive `1/true/yes/on` and `0/false/no/off`, with surrounding whitespace ignored; empty means off, and an unrecognised value is an error rather than silently changing permission policy. An omitted flag is `None`, so it doesn't override the environment.
+
+`cli.py` sets the permission state before starting either front end. The existing startup-notice channel announces the reduced questions, alongside any resume result; without a sandbox it explicitly says every command still asks. These notices don't enter model history. `/auto` still toggles the mode during the run. Sandboxed commands remain approval-free in either mode (D117), and protected edits and unsandboxed commands keep their existing approval rules.
+
+*Not chosen:* a saved default in `settings.json`, or restoring auto mode from a session (D107's trust boundary still holds). `--no-auto` is not added: use `WREN_AUTO=0 wren` to override a shell-profile value for one launch, or `/auto` during a run.

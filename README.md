@@ -72,7 +72,7 @@ Wren asks before every file edit (unless you turn on auto mode, below) and every
 
 **The sandbox (macOS).** Every command runs in a sandbox the operating system enforces: it can read your files (but not `~/.ssh`, `~/.aws` and other places keys live), write only inside the project and temporary folders, and has no network. It can't write `.git`, `.envrc`, `.vscode`, `.idea`, `.claude` or `.codex`, in any folder of the project (a git worktree inside it has its own), because git, direnv, editors and other agents run things from those later, outside the sandbox. So `git status` and `git diff` work there; `git commit` doesn't. A command in the sandbox runs without a question, in either mode: the operating system enforces what you'd be asked to judge, and the conversation shows what ran. A command that needs more (installing packages, committing, pushing) is run outside the sandbox, and the question says so: "Run a shell command outside the sandbox". On other systems there's no sandbox yet.
 
-**Auto mode.** `/auto` stops the questions for edits to the project's files too. Wren still asks before a command outside the sandbox, and before an edit to `.envrc`, `.vscode`, `.idea`, `.claude` or `.codex`. The footer shows `auto: on` while it lasts; `/auto` again turns it off, and quitting forgets it. Without a sandbox, auto mode still asks about every command.
+**Auto mode.** `/auto` stops the questions for edits to the project's files too. Start with `wren --auto` (or `WREN_AUTO=1 wren`) to turn it on before the first message, in either front end. Wren announces that auto mode is on; without a sandbox, it also warns that every command still asks. Wren still asks before a command outside the sandbox, and before an edit to `.envrc`, `.vscode`, `.idea`, `.claude` or `.codex`. The footer shows `auto: on` while it lasts; `/auto` turns it off. Auto mode is never saved in settings or restored from a conversation: the next launch starts with the flag or environment choice, otherwise off.
 
 Two things neither the sandbox nor auto mode protects against: what Wren writes for later (a test or a `Makefile` runs outside the sandbox when *you* run it), and edits to steering and memory files (`WREN.md`, `AGENTS.md`, `MEMORY.md`), which influence future conversations. A command in the sandbox can change any ordinary file in the project without a question, in either mode. Read the changes (`git diff`) before you run or commit them.
 
@@ -220,8 +220,11 @@ Each setting can come from a flag, an environment variable, or the default, in t
 | `--context-budget` | `WREN_CONTEXT_BUDGET` | none: just short of the model's window |
 | `--effort`     | `WREN_EFFORT`        | your saved default, else `xhigh` (for the default model); another model: its own |
 | `--auth`       | `WREN_OPENAI_AUTH`   | `api-key` (or `chatgpt`, after `wren login`); OpenAI only, and never saved |
+| `--auto`       | `WREN_AUTO`          | off; never saved    |
 | `--resume [ID]` |                     |                     |
 | `--plain`      |                      | off                 |
+
+`WREN_AUTO` accepts `1`, `true`, `yes`, or `on` to enable auto mode; `0`, `false`, `no`, `off`, or an empty value disable it (case-insensitive). Other values are errors. To override a shell-profile value for one launch, use `WREN_AUTO=0 wren`.
 
 `--max-tokens` limits one reply, including the model's private thinking. `--max-steps` limits how many times Wren calls the model in one turn before it stops and checks in with you; by default there's no limit (0 means the same), and Escape stops a turn at any point. `--context-budget` caps how large the conversation may grow before Wren compacts it, for example to keep long conversations cheaper. It can only bring compaction earlier than the window would; 0 means never compact by itself (`/compact` still works).
 

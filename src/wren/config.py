@@ -96,6 +96,7 @@ class Config:
     context_budget: int | None = None
     effort: str | None = None  # None: whatever the model does by default
     auth: str = API_KEY  # how OpenAI is paid for: one of AUTH_ROUTES
+    auto: bool = False  # startup choice only; never a saved default
 
     @classmethod
     def load(
@@ -108,12 +109,22 @@ class Config:
         context_budget: int | None = None,
         effort: str | None = None,
         auth: str | None = None,
+        auto: bool | None = None,
         env: Mapping[str, str] = os.environ,
         user: UserDefaults | None = None,
     ) -> Config:
         """Build a Config. Arguments are command-line flags (None = not given);
         `user` is where the saved defaults are read from. Raises ValueError
-        for a WREN_OPENAI_AUTH that isn't one of AUTH_ROUTES."""
+        for invalid environment settings."""
+        # Auto mode must be opted into at startup, never read from settings.json.
+        # None means no flag; False is a real choice, not a missing value.
+        if auto is None:
+            value = env.get("WREN_AUTO", "").strip().lower()
+            if value not in ("", "0", "false", "no", "off", "1", "true", "yes", "on"):
+                raise ValueError(
+                    f"WREN_AUTO is {env['WREN_AUTO']!r}: use 1/true/yes/on or 0/false/no/off"
+                )
+            auto = value in ("1", "true", "yes", "on")
         provider = provider or env.get("WREN_PROVIDER") or DEFAULT_PROVIDER
         # Not a saved default, on purpose: switching who pays should be
         # something you can see you did, on the command line or in your
@@ -149,6 +160,7 @@ class Config:
             ),
             effort=effort,
             auth=auth,
+            auto=auto,
             context_budget=(
                 context_budget
                 if context_budget is not None

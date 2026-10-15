@@ -301,6 +301,120 @@ def test_each_provider_names_its_own_missing_key():
     )
 
 
+@pytest.mark.parametrize("value", ["1", "true", "yes", "on", " TRUE "])
+def test_auto_config_accepts_explicit_true_values(value):
+    assert Config.load(env={"WREN_AUTO": value}).auto is True
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "no", "off", " OFF "])
+def test_auto_config_accepts_false_values(value):
+    assert Config.load(env={"WREN_AUTO": value}).auto is False
+
+
+def test_auto_config_precedence_and_validation(tmp_path):
+    from wren.cli import parse_args
+
+    assert parse_args([]).auto is None
+    assert parse_args(["--auto"]).auto is True
+    assert Config.load(env={}).auto is False
+    assert Config.load(auto=True, env={"WREN_AUTO": "false"}).auto is True
+    assert Config.load(auto=False, env={"WREN_AUTO": "true"}).auto is False
+    assert Config.load(auto=True, env={"WREN_AUTO": "typo"}).auto is True
+    with pytest.raises(ValueError, match="WREN_AUTO"):
+        Config.load(env={"WREN_AUTO": "typo"})
+
+    # A saved file cannot silently remove questions in a newly cloned project.
+    settings = tmp_path / "settings.json"
+    settings.write_text('{"auto": true}')
+    assert Config.load(env={}, user=UserDefaults(settings)).auto is False
+
+
+def test_invalid_auto_environment_reports_a_helpful_error():
+    result = wren("--provider", "fake", env_extra={"WREN_AUTO": "typo"})
+    assert result.returncode == 1
+    assert "WREN_AUTO" in result.stderr and "1/true/yes/on" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("args", "env"),
+    [(["--auto"], {"WREN_AUTO": "false"}), ([], {"WREN_AUTO": "1"})],
+)
+def test_startup_auto_allows_ordinary_edits_but_still_asks_for_protected_files(
+    tmp_path, args, env
+):
+    result = wren(
+        "--provider",
+        "fake",
+        "--plain",
+        *args,
+        stdin="write ordinary.txt hello\nwrite .envrc protected\nn\n/auto\nwrite after.txt no\nn\n",
+        cwd=tmp_path,
+        env_extra=env,
+    )
+    assert result.returncode == 0
+    assert "Auto mode is on: ordinary project file edits won't ask." in result.stdout
+    assert ("No sandbox is available" in result.stdout) == (not sandbox.available())
+    assert result.stdout.count("Allow?") == 2
+    assert (tmp_path / "ordinary.txt").read_text() == "hello\n"
+    assert not (tmp_path / ".envrc").exists()
+    assert not (tmp_path / "after.txt").exists()
+
+    # Neither the startup choice nor /auto becomes a saved default.
+    again = wren("--provider", "fake", stdin="write next.txt no\nn\n", cwd=tmp_path)
+    assert "Auto mode is on:" not in again.stdout
+    assert "Allow?" in again.stdout and not (tmp_path / "next.txt").exists()
+
+
+def test_auto_notice_keeps_resume_notice(tmp_path):
+    result = wren("--provider", "fake", "--auto", "--resume", "missing", cwd=tmp_path)
+    assert result.returncode == 0
+    assert "Couldn't resume:" in result.stdout and "Auto mode is on:" in result.stdout
+
+
+@pytest.mark.parametrize("has_sandbox", [False, True])
+def test_auto_notice_and_permissions_are_ready_before_plain_front_end(
+    tmp_path, monkeypatch, has_sandbox
+):
+    from wren import cli
+    from wren.messages import history_problems
+    from wren.tools.permissions import Decision
+    from wren.tools.shell import Shell
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(cli, "sandbox_available", lambda: has_sandbox)
+    monkeypatch.setattr(sandbox, "available", lambda: has_sandbox)
+    for key in list(os.environ):
+        if key.startswith("WREN_"):
+            monkeypatch.delenv(key)
+
+    def check(repl):
+        assert repl.agent.tools.permissions.auto is True
+        assert "Auto mode is on:" in repl.notice
+        assert ("No sandbox is available" in repl.notice) == (not has_sandbox)
+        assert repl.agent.messages == []
+        assert history_problems(repl.agent.messages) == []
+        if not has_sandbox:
+            asked = []
+
+            def deny(request):
+                asked.append(request)
+                return Decision.DENY
+
+            repl.agent.tools.permissions.ask = deny
+            request = Shell().permission(
+                Shell.Input(command="touch made.txt", description="Create a file."),
+                repl.agent.tools.context,
+            )
+            assert request is not None
+            assert repl.agent.tools.permissions.allows(request) is False
+            assert len(asked) == 1
+
+    monkeypatch.setattr(cli.Repl, "run", check)
+    assert cli.main(["--provider", "fake", "--plain", "--auto"]) == 0
+
+
 def test_config_precedence_flag_then_env_then_default():
     env = {"WREN_MODEL": "from-env", "WREN_MAX_STEPS": "7"}
     assert Config.load(model="from-flag", env=env).model == "from-flag"
