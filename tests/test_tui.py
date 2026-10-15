@@ -113,6 +113,44 @@ def question(app):
     return found.first() if found else None
 
 
+@pytest.mark.parametrize("has_sandbox", [False, True])
+async def test_cli_auto_starts_full_screen_with_notice_and_footer(
+    tmp_path, monkeypatch, has_sandbox
+):
+    from wren import cli
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    for key in list(os.environ):
+        if key.startswith("WREN_"):
+            monkeypatch.delenv(key)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(cli, "sandbox_available", lambda: has_sandbox)
+    apps = []
+
+    def capture(app):
+        app.exchange = None  # the headless test must never look up a rate
+        apps.append(app)
+
+    monkeypatch.setattr(WrenApp, "run", capture)
+    assert cli.main(["--provider", "fake", "--auto"]) == 0
+    (app,) = apps
+    assert app.agent.tools.permissions.auto is True
+    async with app.run_test(size=(160, 36)) as pilot:
+        await until(pilot, lambda: "Auto mode is on:" in screen_text(app))
+        assert ("No sandbox is available" in screen_text(app)) == (not has_sandbox)
+        assert "auto: on" in footer_text(app)
+        await say(app, pilot, "write ordinary.txt hello")
+        await finished(app, pilot)
+        assert question(app) is None
+        assert (tmp_path / "ordinary.txt").read_text() == "hello\n"
+        await say(app, pilot, "/auto")
+        assert app.agent.tools.permissions.auto is False
+        assert "auto: on" not in footer_text(app)
+        assert history_problems(app.agent.messages) == []
+
+
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 async def test_footer_surface_and_styling_survive_resizing(tmp_path, theme):
     app = make_app(tmp_path)
