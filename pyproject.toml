@@ -5,9 +5,9 @@ description = "A small, readable coding-agent harness for the terminal, built to
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "anthropic>=0.40",
+    "anthropic>=1.15.0",
     # The OpenAI provider. Imported only when that provider is chosen.
-    "openai>=2",
+    "openai>=3.35.1",
     # Tool inputs are Pydantic models. The anthropic SDK already depends on
     # Pydantic, but we import it ourselves, so we say so.
     "pydantic>=2",
