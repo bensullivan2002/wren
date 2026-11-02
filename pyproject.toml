@@ -5,9 +5,9 @@ description = "A small, readable coding-agent harness for the terminal, built to
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "anthropic>=0.40",
+    "anthropic>=2.3.0",
     # The OpenAI provider. Imported only when that provider is chosen.
-    "openai>=2",
+    "openai>=3.39.0",
     # Tool inputs are Pydantic models. The anthropic SDK already depends on
     # Pydantic, but we import it ourselves, so we say so.
     "pydantic>=2",
@@ -23,7 +23,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
-    "pytest-asyncio>=0.24",
+    "pytest-asyncio>=1.4.1",
     # Runs the lint and format checks in .pre-commit-config.yaml (which pins
     # their versions), on commit and in CI.
     "pre-commit>=4",
