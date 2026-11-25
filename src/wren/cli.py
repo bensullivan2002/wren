@@ -16,6 +16,10 @@ There are two front ends, and the agent can't tell them apart:
 
 And three commands that don't start a conversation at all, for signing in
 with ChatGPT (auth/cli.py): `wren login`, `wren logout`, `wren auth-status`.
+
+MCP servers listed in `~/.wren/mcp.json` are started here too, before the
+first prompt, and stopped when the front end exits (mcp_servers.py). Their
+tools join Wren's own in the registry, for the whole session.
 """
 
 from __future__ import annotations
@@ -24,19 +28,24 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from wren import __version__
+from wren import __version__, mcp_config
 from wren.agent import Agent
 from wren.commands import resume_session
 from wren.config import API_KEYS, AUTH_ROUTES, CHATGPT, Config
 from wren.memory import Memory
 from wren.prompts import build_system_prompt
 from wren.providers import PROVIDERS, make_provider
+from wren.providers.base import Provider
 from wren.repl import Repl
 from wren.sessions import SessionError, SessionStore
 from wren.settings import UserDefaults
-from wren.tools import Permissions, ToolRegistry, default_tools
+from wren.tools import Permissions, Tool, ToolRegistry, default_tools
 from wren.tools.sandbox import available as sandbox_available
+
+if TYPE_CHECKING:
+    from wren.mcp_servers import McpServers
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -171,7 +180,68 @@ def main(argv: list[str] | None = None) -> int:
         )
     permissions = Permissions()
     permissions.auto = config.auto
-    tools = ToolRegistry(default_tools(), root=root, permissions=permissions)
+    builtin = default_tools()
+    servers, mcp_tools, mcp_notice = start_mcp_servers({tool.name for tool in builtin})
+    tools = ToolRegistry(builtin + mcp_tools, root=root, permissions=permissions)
+    tools.mcp = servers
+    try:
+        return run_front_end(
+            args, config, provider, tools, permissions, root, defaults, mcp_notice
+        )
+    finally:
+        if servers is not None:
+            servers.close()  # stops every server process; Wren never leaves one behind
+
+
+def start_mcp_servers(taken: set[str]) -> tuple[McpServers | None, list[Tool], str]:
+    """Start the servers in ~/.wren/mcp.json. Returns them (None if there's
+    no config at all), their tools, and a startup notice saying what happened."""
+    config = mcp_config.load()
+    if not config.servers and not config.problems:
+        return None, [], ""
+    # Imported only now: the MCP SDK takes a noticeable moment to load, and
+    # most sessions don't use it.
+    from wren.mcp_servers import McpServers
+    from wren.tools.mcp_tool import tools_for
+
+    servers = McpServers(config)
+    lines = list(config.problems)
+    if config.servers:
+        count = len(config.servers)
+        print(
+            f"Starting {count} MCP server{'s' if count != 1 else ''}…",
+            file=sys.stderr,
+            flush=True,
+        )
+        servers.start(config.servers)
+    tools: list[Tool] = []
+    for status in servers.statuses:
+        if not status.running:
+            lines.append(
+                f"MCP server {status.name!r} didn't start: {status.error}. Its log: {status.log}"
+            )
+            continue
+        wrapped, skipped = tools_for(status.name, status.tools, servers, taken)
+        tools.extend(wrapped)
+        lines.extend(skipped)
+        lines.append(
+            f"MCP server {status.name!r}: {len(wrapped)} tool{'s' if len(wrapped) != 1 else ''}."
+        )
+    if tools:
+        lines.append("Every MCP tool call asks first. /mcp shows the servers.")
+    return servers, tools, "\n".join(lines)
+
+
+def run_front_end(
+    args: argparse.Namespace,
+    config: Config,
+    provider: Provider,
+    tools: ToolRegistry,
+    permissions: Permissions,
+    root: Path,
+    defaults: UserDefaults,
+    mcp_notice: str,
+) -> int:
     memory = Memory(root)
 
     def system_prompt() -> str:
@@ -216,6 +286,7 @@ def main(argv: list[str] | None = None) -> int:
         # Both front ends already display startup notices. Keep any resume
         # result too, without adding either notice to the model's history.
         notice = "\n".join(part for part in (notice, auto_notice) if part)
+    notice = "\n".join(part for part in (notice, mcp_notice) if part)
 
     # A full-screen app needs a real terminal at both ends. When input or
     # output is a pipe or a file (`echo hi | wren`, the tests), fall back to

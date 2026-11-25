@@ -9,7 +9,7 @@ A small, readable coding-agent harness for the terminal, built step by step so e
 
 [![CI](https://github.com/bensullivan2002/wren/actions/workflows/ci.yml/badge.svg)](https://github.com/bensullivan2002/wren/actions/workflows/ci.yml)
 
-> **Status: step 10 of the roadmap.** Wren is a full-screen terminal app that chats with Claude or OpenAI's models (with an API key, or, for OpenAI, your ChatGPT plan), explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first, or not, in auto mode. On macOS its shell commands run in a sandbox: no network, and writes only inside the project, so they don't need asking about. A dedicated read-only tool reads GitHub issues and PRs without approval on every platform; GitHub writes still follow shell permissions. It saves every conversation so you can resume it, switches models mid-conversation, reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable.
+> **Status: step 11 of the roadmap, part 1 (MCP servers) done.** Wren is a full-screen terminal app that chats with Claude or OpenAI's models (with an API key, or, for OpenAI, your ChatGPT plan), explores your project, and changes it: it edits files and runs commands such as your tests, asking your permission first, or not, in auto mode. On macOS its shell commands run in a sandbox: no network, and writes only inside the project, so they don't need asking about. A dedicated read-only tool reads GitHub issues and PRs without approval on every platform; GitHub writes still follow shell permissions. It saves every conversation so you can resume it, switches models mid-conversation, reads standing instructions from `WREN.md` or `AGENTS.md`, caches what it re-sends, and compacts long conversations to keep them affordable. It can also use tools from MCP servers you list in `~/.wren/mcp.json`, asking before every call.
 
 ## Quickstart
 
@@ -28,7 +28,7 @@ wren
 
 If you use [uv](https://docs.astral.sh/uv/): `uv sync --extra dev`, then `uv run wren`.
 
-**No API key?** `wren --provider fake` starts Wren with a pretend model. It's free and offline. It echoes what you type, except for a few commands that make it call real tools, so you can watch the agent loop and the permission prompts work: `ls [pattern]`, `read <path>`, `search <regex>`, `write <path> <text>`, `edit <path> <old> => <new>`, `run <command>`.
+**No API key?** `wren --provider fake` starts Wren with a pretend model. It's free and offline. It echoes what you type, except for a few commands that make it call real tools, so you can watch the agent loop and the permission prompts work: `ls [pattern]`, `read <path>`, `search <regex>`, `write <path> <text>`, `edit <path> <old> => <new>`, `run <command>`, and `mcp <tool> <json>` for an MCP tool.
 
 ## Using it
 
@@ -81,6 +81,7 @@ Two things neither the sandbox nor auto mode protects against: what Wren writes 
 | `/help`         | List the commands                                     |
 | `/tools`        | List the tools Wren can use                           |
 | `/tools NAME`   | Show exactly what the model is told about one tool    |
+| `/mcp`          | Show the MCP servers: what started, their tools, their logs |
 | `/history`      | Show the conversation exactly as Wren holds it        |
 | `/system`       | Show the system prompt sent with every request        |
 | `/usage`        | Tokens used this session, and how full the context is |
@@ -105,6 +106,29 @@ Supported operations: `repo`, `issue_list`, `issue_view`, `issue_comments`, `pr_
 Collections return one page per call (`page`, default 1; `per_page`, default 30, maximum 100). Increase the page to read more. Output is capped at 20,000 characters; reduce `per_page` or request a specific item if truncated. GitHub's issue list also includes PRs. Bodies live in the view operation; comments are separate. Responses and private-repository contents enter the conversation and saved session like file reads.
 
 This does **not** allow arbitrary GitHub shell commands, API endpoints, GraphQL or Enterprise hosts. Commenting, closing, creating, merging, deleting and other writes keep the shell's existing sandbox/approval rules. Existing user-granted “always allow gh” rules remain broad: a read through this tool does not create one. General shell commands still cannot reach GitHub or read gh credentials inside the sandbox.
+
+### Tools from MCP servers
+
+[MCP](https://modelcontextprotocol.io) servers are programs that offer tools: GitHub, databases, browsers and many more. List the ones you want in `~/.wren/mcp.json`, in the same shape Claude Code and Cursor use, so you can copy an entry from a server's README:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"}
+    }
+  }
+}
+```
+
+Wren starts each server when it starts, and its tools appear beside Wren's own as `mcp__SERVER__TOOL` (see `/tools`). **Every call asks first**, in auto mode too: the question leads with the model's one-sentence reason, then shows the exact arguments. "Always" covers that one tool for the session. Arguments are checked against the server's schema before you're asked.
+
+- `${NAME}` (or `${NAME:-fallback}`) is replaced from your environment, so secrets can stay out of the file. A server gets only its `env` plus `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM` and `USER`: not your API keys.
+- Servers run with your permissions, **outside the sandbox**. Only list programs you trust.
+- A server that fails to start doesn't stop Wren: the startup notice and `/mcp` say why. Each server's output goes to `~/.wren/logs/mcp-NAME.log`.
+- Only local servers (`command`) for now, not remote ones (`url`); and only this personal file, not a project's `.mcp.json`. Servers and their tools are fixed for the session: restart Wren after changing the file.
 
 ### Saved conversations
 
@@ -204,6 +228,7 @@ Every request re-sends the whole conversation, so a long session costs more with
 | `write_file` | Create a file, or replace one completely (asks first)           |
 | `shell`      | Run a command: tests, git, builds (asks unless sandboxed)       |
 | `github_read` | Read GitHub.com issues, PRs and repository metadata (never asks) |
+| `mcp__SERVER__TOOL` | A tool from an MCP server in `~/.wren/mcp.json` (always asks) |
 
 The file tools are confined to the working directory, skip folders like `.git`, `node_modules` and `.venv` when listing and searching, and never write inside `.git`. **`shell` is confined only by the sandbox** (macOS): a command can read most of what you can, and one run outside the sandbox, or on a system without one, can do anything you can. The permission prompt is the safeguard for those.
 
@@ -261,7 +286,7 @@ Additional entries: [GitHub reads without opening the shell's fence (issue #12)]
 - [x] **8. A second provider**: OpenAI, through the same interface as Claude
 - [x] **9. Auto mode**: a sandbox for commands (macOS), and `/auto` to stop asking about what it contains
 - [x] **10. Paying with a ChatGPT plan**: `wren login` (OAuth with PKCE), and `--auth chatgpt` for OpenAI's models, never falling back to an API key (a spike: [issue #19](https://github.com/bensullivan2002/wren/issues/19))
-- [ ] **11. Extensions**: subagents, MCP servers, hooks
+- [ ] **11. Extensions**: ~~MCP servers~~ (done: local servers, every call asks), subagents, hooks
 
 ## Development
 
@@ -305,6 +330,8 @@ src/wren/
   exchange.py       the day's dollar-to-pound rate, looked up once a day
   repl.py           the plain front end (--plain, pipes)
   commands.py       slash commands, shared by both front ends
+  mcp_config.py     reads ~/.wren/mcp.json: which MCP servers to start
+  mcp_servers.py    starts MCP servers, calls their tools, stops them (the SDK, on its own thread)
   providers/
     base.py         the Provider interface
     anthropic.py    Claude, via the Anthropic Messages API
@@ -326,10 +353,12 @@ src/wren/
     read_file.py    ├ read-only tools
     search.py       ┘
     github_read.py  fixed GitHub.com REST reads via authenticated gh (never asks)
+    mcp_tool.py     a tool from an MCP server, as a Wren tool (always asks)
     edit_file.py    ┐
     write_file.py   ├ tools that change things (and ask first)
     shell.py        ┘
 tests/              unit and end-to-end tests
+  mcp_demo_server.py  a tiny MCP server the tests start over stdio
 docs/               architecture, decisions, build journal
 .github/
   workflows/ci.yml  lint, audit and tests, on every pull request

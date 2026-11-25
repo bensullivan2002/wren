@@ -16,6 +16,7 @@ Two uses:
        write <path> <text>           asks for write_file
        edit <path> <old> => <new>    asks for edit_file
        run <command>                 asks for shell
+       mcp <tool> <json arguments>   asks for an MCP tool: mcp mcp__demo__add {"a": 2, "b": 3}
 
    After the tool runs, it replies with a one-line note about the result.
    Anything else you type is echoed back.
@@ -199,6 +200,15 @@ class FakeProvider:
         elif command == "write" and " " in arg:
             path, _, text = arg.partition(" ")
             call = ("write_file", {"path": path, "content": text + "\n"})
+        elif command == "mcp" and arg:
+            name, _, text = arg.partition(" ")
+            try:
+                arguments = json.loads(text) if text.strip() else {}
+            except json.JSONDecodeError:
+                arguments = None
+            if isinstance(arguments, dict):
+                reason = "Use the MCP tool you named after 'mcp'."
+                call = (name, {**arguments, "wren_reason": reason})
         elif command == "edit" and " => " in arg and " " in arg.split(" => ")[0]:
             path, _, change = arg.partition(" ")
             old, _, new = change.partition(" => ")
