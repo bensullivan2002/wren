@@ -72,7 +72,7 @@ Most servers people actually run were written for the older version. So a client
 version 2026-07-28 name='demo' ...
 ```
 
-That's our demo server (`tests/mcp_demo_server.py`, built with the SDK), negotiated to the new version. The SDK's documentation says an older server is handled by the same code, falling back to `initialize`; we haven't tried one yet, and the first real server you add will probably be the test. `/mcp` shows which version each server agreed to.
+That's our demo server (`tests/mcp_demo_server.py`, built with the SDK), negotiated to the new version. The SDK's documentation says an older server is handled by the same code, falling back to `initialize`; we haven't tried one yet. The first real server we tried, the reference filesystem server 2.4.0, already speaks the new version, so it didn't test the fallback (see "Tried for real"). `/mcp` shows which version each server agreed to.
 
 ## Idea 3: an async library inside a synchronous program
 
@@ -221,6 +221,43 @@ That's also why there's no project `.mcp.json` yet (D139). Reading one would let
 2. **A real server, with a real model.** The reference filesystem server is a good first one: `"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]`. Ask the model to list `/tmp`, and see whether its `wren_reason` sentences are good enough to approve without reading the JSON.
 3. **Break it on purpose.** Misspell `args` as `arg`, use `${SOMETHING_UNSET}`, point `command` at nothing, and see what the startup notice and `/mcp` say.
 4. **Watch the protocol.** A server's log file holds whatever it writes to stderr. Some servers log every request.
+
+## Tried for real
+
+*25 November 2026 · the reference filesystem server 2.4.0 (`npx -y @modelcontextprotocol/server-filesystem /tmp`) · Claude Opus 5.5, high effort · the plain REPL, with answers piped in*
+
+This is "Things to try" 2. Two runs, each a fresh Wren:
+
+- **Start-up and `/mcp`.** The server started and offered 16 tools. It agreed protocol `2026-07-28`, the new version, so the fallback to `initialize` (Idea 2) is still untried.
+- **Declining.** Asked to list `/tmp`, the model chose `list_directory_with_sizes`. The call was declined, never reached the server, and the model said what it had meant to do and asked how to go on.
+- **Approving.** Asked to create a folder, write a file, change one line and read it back, the model made five calls. Four answers of "yes" were piped in, so the first four calls ran. The fifth was declined because the input had run out. The file on disk was right, and the edit's diff came back as the result.
+
+The point of the exercise was the `wren_reason` sentences. These are all six, each with the arguments that were shown under it:
+
+```text
+List the contents of /tmp with file sizes, largest first, to find the biggest items.
+    {"path": "/tmp", "sortBy": "size"}
+Check which directories the filesystem server can access before creating /tmp/wren-mcp-test.
+    (no arguments)
+Create the test folder /tmp/wren-mcp-test as requested.
+    {"path": "/tmp/wren-mcp-test"}
+Write notes.txt with three short lines about birds.
+    {"path": "/tmp/wren-mcp-test/notes.txt", "content": "Robins often sing at dawn.\n..."}
+Replace the second line of notes.txt with a line about wrens.
+    {"path": "...", "edits": [{"oldText": "Sparrows gather in noisy flocks.", "newText": "Wrens are tiny birds..."}]}
+Read notes.txt back to show the user the final contents.
+    {"path": "/tmp/wren-mcp-test/notes.txt"}
+```
+
+**Verdict: good enough to approve by.** Every sentence was accurate, matched its arguments, and was readable without the JSON. Three weak spots:
+
+- **A file without its folder.** "Write notes.txt" doesn't say where. For a write, the full path is the thing most worth checking, so it should be in the sentence.
+- **"As requested" as the why.** That's true, but it adds nothing. It's fine when the call is exactly what you asked for. It would hide a call that drifts from what you asked.
+- **A small over-promise.** "Largest first" isn't in `{"sortBy": "size"}`. The server may well sort that way, but the sentence claims more than the arguments show.
+
+If these matter, the place to fix them is the wording of `_REASON_SCHEMA` (Idea 5), for example by asking for full paths. One more thing worth knowing: the model also took a step nobody asked for, checking which folders it was allowed to use. Each call costs you a question, so extra steps like that have a price.
+
+Not tried: "always" for an MCP tool, and an older server. The config was removed afterwards. The server mostly duplicates Wren's own file tools, and an unpinned `npx -y` can fetch new code from npm at every start.
 
 ## Known limits
 
