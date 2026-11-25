@@ -18,6 +18,13 @@ dependencies = [
     # The full-screen terminal interface (tui.py). Brings in Rich, which
     # renders the markdown and coloured text.
     "textual>=8",
+    # MCP servers (mcp_servers.py): the official SDK, imported only when
+    # ~/.wren/mcp.json lists servers. It's async, built on anyio, which we
+    # use ourselves to run it on its own thread; jsonschema (also one of its
+    # dependencies) checks a call's arguments against the server's schema.
+    "mcp>=2.3",
+    "anyio>=4",
+    "jsonschema>=4",
 ]
 
 [project.optional-dependencies]

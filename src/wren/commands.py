@@ -17,6 +17,7 @@ import textwrap
 from dataclasses import dataclass
 from datetime import datetime
 
+from wren import mcp_config
 from wren.agent import Agent, Compacted
 from wren.config import API_KEYS, CHATGPT, COMPACTION_MARGIN, default_choice
 from wren.memory import Memory
@@ -38,6 +39,7 @@ COMMANDS = """\
 /help          show this list
 /tools         list the tools Wren can use
 /tools NAME    show exactly what the model is told about one tool
+/mcp           show the MCP servers from ~/.wren/mcp.json, and their tools
 /history       show the conversation exactly as Wren holds it
 /system        show the system prompt sent with every request
 /usage         tokens used in this conversation, and how full the context is
@@ -148,6 +150,8 @@ def run_command(
         return CommandResult(_auto(agent))
     if name == "/tools":
         return _tools(agent, args[0] if args else None)
+    if name == "/mcp":
+        return CommandResult(_mcp(agent), panel=True)
     return CommandResult(f"unknown command {name}  (try /help)", is_error=True)
 
 
@@ -174,6 +178,70 @@ def _tools(agent: Agent, name: str | None) -> CommandResult:
         ),
         panel=True,
     )
+
+
+_MCP_EXAMPLE = """\
+{
+  "mcpServers": {
+    "NAME": {"command": "PROGRAM", "args": ["..."], "env": {"TOKEN": "${TOKEN}"}}
+  }
+}"""
+
+
+def _mcp(agent: Agent) -> str:
+    """The MCP servers: what was configured, what started, and what each
+    offers. Every line says where its facts come from (D146): the config
+    file, the server's own report, or what Wren did."""
+    servers = agent.tools.mcp
+    path = mcp_config.default_path()
+    if servers is None:
+        return (
+            f"No MCP servers are configured. To add one, write {path}:\n\n{_MCP_EXAMPLE}\n\n"
+            "Servers start when Wren starts, so restart Wren after changing it."
+        )
+    lines = [
+        f"MCP servers, from {servers.config.path or path} (read when Wren started)",
+        "",
+    ]
+    for status in servers.statuses:
+        lines.append(f"{status.name}")
+        lines.append(f"  command:  {status.command}")
+        if status.running:
+            tools = [
+                tool
+                for tool in agent.tools
+                if getattr(tool, "server", None) == status.name
+            ]
+            lines.append(
+                f"  state:    running, {len(tools)} tool{'s' if len(tools) != 1 else ''} offered to the model"
+            )
+            lines.append(
+                f"  protocol: {status.protocol_version} (agreed with the server when it started)"
+            )
+            if status.server_info is not None:
+                version = (
+                    f" {status.server_info.version}"
+                    if status.server_info.version
+                    else ""
+                )
+                lines.append(
+                    f"  server:   {status.server_info.name}{version} (as the server describes itself)"
+                )
+            for tool in tools:
+                lines.append(f"    {tool.name}")
+        else:
+            lines.append(f"  state:    not running: {status.error}")
+        lines.append(f"  log:      {status.log}")
+        lines.append("")
+    if servers.config.problems:
+        lines.append("Skipped:")
+        lines.extend(f"  {problem}" for problem in servers.config.problems)
+        lines.append("")
+    lines.append(
+        'Every MCP tool call asks first; "always" covers one tool for this session.\n'
+        "/tools NAME shows exactly what the model is told about a tool."
+    )
+    return "\n".join(lines)
 
 
 # --- Models and sessions: used by the commands above, and by the pickers ------
@@ -699,6 +767,12 @@ def plain_call(call: ToolUseBlock) -> tuple[str, str]:
         ), ""
     if call.name == "edit_file" and path:
         return f"Edit {path}", ""
+    if call.name.startswith("mcp__"):
+        # mcp__github__create_issue: the model's reason leads, as for the shell.
+        server, _, tool = call.name.removeprefix("mcp__").partition("__")
+        said = args.get("wren_reason")
+        headline = shorten(" ".join(str(said).split()), 110) if said else f"Use {tool}"
+        return headline, f"MCP: {tool} on {server}"
     if call.name == "write_file" and path:
         return f"Write {path}", ""
     return format_call(call), ""  # a tool we have no words for: show the call itself

@@ -19,11 +19,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from wren.messages import ToolSpec
 from wren.tools.base import Tool, ToolContext, ToolError, ToolResult
 from wren.tools.permissions import Permissions
+
+if TYPE_CHECKING:  # only for the type: importing it would load the MCP SDK every time
+    from wren.mcp_servers import McpServers
 
 # Every result is re-sent to the model on every later request in the
 # conversation, so big results get expensive fast. 50,000 characters is
@@ -58,6 +61,9 @@ class ToolRegistry:
         self.max_output_chars = max_output_chars
         # With no Permissions given, nothing that needs approval can run.
         self.permissions = permissions if permissions is not None else Permissions()
+        # The MCP servers whose tools are in this registry, if any were
+        # configured: kept here so /mcp can show them (cli.py sets it).
+        self.mcp: McpServers | None = None
 
     def __len__(self) -> int:
         return len(self._tools)

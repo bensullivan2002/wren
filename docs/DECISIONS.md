@@ -931,3 +931,80 @@ After measuring every mode, you chose **standard**, **src only**, and fixing all
 `cli.py` sets the permission state before starting either front end. The existing startup-notice channel announces the reduced questions, alongside any resume result; without a sandbox it explicitly says every command still asks. These notices don't enter model history. `/auto` still toggles the mode during the run. Sandboxed commands remain approval-free in either mode (D117), and protected edits and unsandboxed commands keep their existing approval rules.
 
 *Not chosen:* a saved default in `settings.json`, or restoring auto mode from a session (D107's trust boundary still holds). `--no-auto` is not added: use `WREN_AUTO=0 wren` to override a shell-profile value for one launch, or `/auto` during a run.
+
+### D137. MCP: servers Wren starts itself (stdio) only, for now
+*Step 11, MCP · you*
+
+Wren connects to MCP servers it launches as subprocesses and talks to over stdin and stdout. An entry with a `url`, or a `type` other than `stdio`, is skipped with a message saying remote servers aren't supported yet.
+*Why:* most servers people run today are local programs, and stdio needs no sign-in: the spec says a stdio server takes its credentials from its environment. Remote servers bring OAuth 2.1 with discovery, PKCE, resource indicators and token storage, a step of its own.
+*Not chosen:* HTTP with a fixed token (covers some hosted servers, but not the ones that need you to sign in); HTTP with OAuth now (parity with Claude Code and Codex, but much bigger). The deprecated HTTP+SSE transport won't be added at all.
+
+### D138. MCP: the official SDK, on a background event loop
+*Step 11, MCP · you (the SDK) · design (how it meets Wren's synchronous core)*
+
+Wren uses the official `mcp` Python SDK (2.3.0). It's async-only, so `McpServers` runs it on an anyio blocking portal: an event loop on its own thread. Wren's thread starts work there with `portal.start_task_soon` and waits on the `concurrent.futures.Future` it returns. Each server's whole life is one task (`_serve`), because anyio requires a client's `async with` to be entered and left by the same task. A first try that entered it from one portal call and left it from another failed with exactly that error.
+*Why:* the spec changed a great deal in 2026-07-28 (no `initialize` handshake, `server/discover`, no sessions, results with a `resultType`), and most servers in use still speak 2025-11-25. The SDK negotiates both, and will follow later changes. A portal keeps the async to one file, so the agent loop, the tools and both front ends are untouched (D34 stands).
+*Not chosen:* a hand-written JSON-RPC client (a few hundred lines you'd know completely, but two protocol versions and every future change would be ours); making Wren async (a rewrite for one feature).
+*Lesson:* since Python 3.11, `concurrent.futures.TimeoutError` is the built-in `TimeoutError`. Waiting with `future.result(timeout=…)` in a loop caught a real call timeout as "not finished yet" and spun for ever. Waits now use `concurrent.futures.wait()` and read the result only once it's done.
+
+### D139. MCP servers are configured in `~/.wren/mcp.json`, personal only
+*Step 11, MCP · you (the file) · design (strictness and `${VAR}`)*
+
+One personal file, in the `mcpServers` shape Claude Code and Cursor use, so entries can be copied across. Keys allowed: `command`, `args`, `env`, `cwd`, and `type` (as `stdio`). An unknown key skips that server with a message rather than being ignored. `${NAME}` and `${NAME:-fallback}` are expanded from Wren's environment in all four values; an unset variable with no fallback skips the server, because an empty token fails later and less clearly. Server names may use letters, digits, `-` and `_`, up to 32 characters: they become part of tool names. A missing file means no servers; any other problem becomes a line in the startup notice, and Wren still starts.
+*Why:* a server entry is a program Wren runs with your permissions, outside the sandbox. A project's `.mcp.json` would let any repository you clone choose programs to run, so it needs a trust question first.
+*Not chosen:* a project file too, with a one-time trust prompt (more useful for teams, more to build now); servers inside `settings.json` (it mixes what you write with what Wren writes).
+
+### D140. Every MCP tool call asks; "always" covers one tool for the session
+*Step 11, MCP · you*
+
+`McpTool.permission()` always returns a request, in normal and auto mode alike. Its scope is `mcp:SERVER:TOOL`, so "always" covers that one tool from that one server until Wren exits (D23: nothing saved). `contained` is never set (invariant 25): the server runs outside the sandbox, and Wren can't see what it does.
+*Why:* the spec says hosts must get the user's consent before invoking a tool, and that a server's annotations (`readOnlyHint` and the rest) are untrusted unless the server is. A label can't be checked, and a wrong one would skip the question for a tool that deletes things.
+*Not chosen:* skipping read-only-labelled tools (fewer prompts, but on the server's word); "always" per server (coarser).
+
+### D141. Every MCP tool gets a `wren_reason` argument
+*Step 11, MCP · design*
+
+Wren adds a required string property, `wren_reason`, to each MCP tool's schema: "one plain-English sentence for the user: what this call will do and why". It leads the permission question as the model's own account (D83), with the real arguments as JSON underneath, and heads the call's line in the transcript (`plain_call`). `parse()` removes it before anything else, so the server never sees it. A copy of the schema is changed, never the server's. If a server's tool already has a `wren_reason` property, nothing is added.
+*Why:* D83: what you approve must be understandable without reading code. MCP arguments are JSON for a program you didn't write. The shell already does this with `description`.
+*Not chosen:* showing the server's description of the tool instead (it says what the tool does in general, not what this call is for); no explanation (fails D83). The name has a `wren_` prefix so it can't plausibly clash with a server's own `reason` argument.
+
+### D142. MCP tools are named `mcp__SERVER__TOOL`
+*Step 11, MCP · design*
+
+The model and `/tools` see `mcp__github__create_issue`; the server is still asked for `create_issue`. Characters the providers won't accept in a tool name (MCP allows `.`, for one) become `_`. A name over 64 characters, or one that clashes with a tool already registered, is skipped with a line in the startup notice.
+*Why:* the name tells you and the model where a tool came from, and two servers can both have a `search`. It's the convention Claude Code uses. 64 characters is the tighter of the providers' limits (OpenAI's).
+*Not chosen:* the bare tool name (clashes with Wren's own and with other servers'); refusing whole servers over one bad name (one odd tool shouldn't cost the rest).
+
+### D143. The tool list is fixed at startup
+*Step 11, MCP · design*
+
+Servers are started, and their tools listed, before the first prompt, all at once, waiting up to 60 seconds in total. `notifications/tools/list_changed` isn't subscribed to. A server that stops mid-session leaves its tools listed, and calls to them fail with a message saying it isn't running. A server isn't restarted.
+*Why:* the tool list is part of every request; changing it mid-conversation breaks prompt caching (invariant 16) and changes what the model was told it could do. Restarting a crashed server is easy to add once we've seen one crash in practice.
+*Not chosen:* starting servers lazily on first use (the model must see the tools before it can use them); refreshing the list between turns (breaks the cache).
+
+### D144. A server's output goes to log files; its environment is the SDK's default
+*Step 11, MCP · design*
+
+Each server's stderr goes to `~/.wren/logs/mcp-NAME.log`, replaced at each start; the SDK's own `logging` output goes to `~/.wren/logs/mcp-sdk.log`, and doesn't propagate to the root logger. A server gets only its configured `env` plus the SDK's short default list (`HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`).
+*Why:* anything written to the terminal would draw over the full-screen app; a log file keeps it for when a server fails to start, and the startup notice and `/mcp` say where it is. The SDK's environment default means Wren's API keys reach a server only if you say so.
+*Not chosen:* showing server output in the transcript (noisy, and it isn't the conversation); passing Wren's whole environment (it holds API keys).
+
+### D145. MCP results are passed on as text
+*Step 11, MCP · design*
+
+Text blocks are joined with newlines. Images, audio and binary resources are described in brackets ("[image, image/png, about 12 KB, not shown: Wren passes on text only]"), so the model knows something was there. Resource links show their name and URI; text resources show their text. When a result has no text but has structured content, that is the text, as JSON. An `isError` result is an error result. A call with no result (the server is gone, the call took longer than 300 seconds, you pressed Escape) is a `ToolError` saying which.
+*Why:* Wren's messages carry text only (journal 08).
+*Not chosen:* dropping non-text blocks silently (the model would think the tool returned less than it did); validating structured content against `outputSchema` (the SDK already does for the calls it makes).
+
+### D146. `/mcp` shows the servers, with where each fact came from
+*Step 11, MCP · design*
+
+`/mcp` opens in the command panel: for each server, the command, whether it's running, its tools, the protocol version ("agreed with the server when it started"), the server's own name and version ("as the server describes itself"), and its log file. Skipped entries are listed with their reasons. With no servers, it shows an example `mcp.json`.
+*Why:* you asked for evidence over assertion (D64, D68): a server's name and version are its own claim, the protocol version is a negotiated fact.
+
+### D147. An MCP call's arguments are checked against the server's schema before you're asked
+*Step 11, MCP · design*
+
+`McpTool.parse` validates the arguments with jsonschema, using the schema's own `$schema` dialect or, by default, 2020-12 (as the 2026-07-28 spec says). Up to five problems are reported to the model at once. If the server's schema is itself invalid, Wren skips the check and leaves it to the server.
+*Why:* invariant 6: nobody is asked about a call that can't run. jsonschema is already one of the SDK's dependencies; Wren lists it in `pyproject.toml` because it imports it directly.
+*Not chosen:* sending everything to the server and letting it refuse (you'd be asked to approve calls that were bound to fail).

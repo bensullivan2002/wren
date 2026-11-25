@@ -1,6 +1,6 @@
 # Architecture
 
-*Describes Wren as of **step 10**, plus the GitHub read-only tool (issue #12). This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
+*Describes Wren as of **step 11, part 1: MCP servers**, plus the GitHub read-only tool (issue #12). This page is rewritten as Wren grows, so it always matches the code. For how it got this way, see the [build journal](journal/).*
 
 ## The big picture
 
@@ -30,6 +30,9 @@ flowchart LR
     registry --> sh["shell<br/><i>asks first, except sandboxed commands, which never ask</i>"]
     sh -->|"by default (macOS)"| sb["<b>Sandbox</b><br/>tools/sandbox.py<br/><i>writes: project and temp only<br/>no network</i>"] --> fs
     sh -->|"outside_sandbox, or no sandbox on this system"| os[("Your machine<br/>(not fenced)")]
+    registry --> mcptool["mcp__SERVER__TOOL<br/>tools/mcp_tool.py<br/><i>every call asks</i>"]
+    mcptool -->|"call(server, tool, args)"| servers["<b>McpServers</b><br/>mcp_servers.py<br/><i>the SDK, on its own thread</i>"]
+    servers -->|"stdio: JSON-RPC over stdin/stdout"| mcpproc[("MCP server processes<br/>from ~/.wren/mcp.json<br/>(not fenced)")]
 ```
 
 Solid arrows are calls; dotted arrows are what comes back, or a callback. One front end runs at a time: the full-screen app in a terminal, the plain REPL with `--plain` or when input or output is a pipe. `wren login`, `wren logout` and `wren auth-status` don't start a conversation at all: `cli.py` hands them to `auth/cli.py` and exits.
@@ -62,6 +65,9 @@ Solid arrows are calls; dotted arrows are what comes back, or a callback. One fr
 | **REPL** | `repl.py` | The plain front end: read a line, print events, ask permission questions with `input()` | The `Agent`, the event types |
 | **Sessions** | `sessions.py` | Write the conversation to a JSON Lines file as it happens; list and load saved sessions | The message types |
 | **Commands** | `commands.py` | Slash commands, returning text for either front end to show; resuming a session, switching model | The `Agent`, `Memory`, `SessionStore` |
+| **MCP config** | `mcp_config.py` | Read `~/.wren/mcp.json`: check each server entry strictly, expand `${VARIABLES}`, and turn every problem into a message, never an exception | Nothing of Wren's |
+| **MCP servers** | `mcp_servers.py` | Start the configured servers on a background event loop, list their tools, call them from Wren's thread (stoppably), and stop them on exit | The MCP SDK, anyio |
+| **MCP tools** | `tools/mcp_tool.py` | Present a server's tool as a Wren `Tool`: its schema plus `wren_reason`, argument checks, a permission request, and the result as text | The tool base, jsonschema, the SDK's types |
 
 The rule behind this table: **each part knows as little as possible about the others.** The agent never prints and never touches files. Tools don't know there's a model, and never call `input()`. Nothing outside `providers/anthropic.py` knows what Anthropic's JSON looks like, and nothing outside `providers/openai.py` and `openai_plan.py` knows OpenAI's. Nothing outside `auth/` knows how signing in works, or sees a token except the provider sending it. Nothing outside `tui.py` knows about Textual. That's what lets us swap the model, have two interfaces, add tools, or test any part alone.
 
@@ -78,6 +84,8 @@ class EditFile(Tool):
 ```
 
 One Pydantic `Input` model per tool is the single source for the JSON Schema sent to the model, the validation of what comes back, and the typed `args` object `run()` receives. `ToolInput` makes every input strict (no type conversions) and closed (unknown arguments are errors).
+
+An MCP tool is the one kind that doesn't fit this mould: its schema comes from a server at runtime, not from a Pydantic model. `McpTool` overrides `spec()` (the server's schema, plus `wren_reason`) and `parse()` (jsonschema checks the arguments against the server's schema, then wraps them in an `McpCall` input), and gets its `name` and `description` per instance. Everything after that, permission and running and capping, goes through the registry exactly as for any other tool.
 
 ## The life of a turn
 
@@ -268,6 +276,7 @@ Footer labels are cyan rather than dim, with bold headline values, magenta spend
 | `shell`, in the sandbox | never | never | | |
 | `shell`, `outside_sandbox`, simple command | yes | yes | `shell-outside:<first word>` | commands outside the sandbox starting with that word |
 | `shell`, `outside_sandbox`, with any shell syntax (`;`, `&&`, pipes, `$`, redirects, brackets, line breaks) | every time | every time | none | |
+| `mcp__SERVER__TOOL` (any MCP tool) | yes | yes | `mcp:SERVER:TOOL` | that one tool from that one server |
 
 Where there's no sandbox (anything but macOS), every command is unsandboxed and asked about in both modes, with the scope `shell:<first word>` (none for shell syntax).
 
@@ -295,6 +304,20 @@ No network rule is allowed, so there is no network. Paths are parameters (`-D`),
 The executable is found on PATH and resolved; an executable in the project or temporary folders is refused because sandboxed commands can write there. The installed CLI, inherited authentication and local gh configuration are trusted. A copied subprocess environment disables `GH_DEBUG`, forced terminal output and interactive prompts; credentials are handled by gh, not printed by Wren. `shell._run` takes the argument list (`shell=False`) and this environment, retaining its no-stdin, polling and process-group kill behaviour. One monotonic deadline covers all requests; cancellation is checked between requests too. Success and failure results are capped at 20,000 characters. Like shell, the runner buffers subprocess output before truncation; it is not a streaming memory limit.
 
 `/permissions`, `/auto` and `plain_call` describe the read-only path in both front ends. GitHub writes and unsupported reads remain ordinary shell calls with existing prompts and “always” scopes. This tool creates no permission grant. Remote content, including private repository data, goes into history and sessions; it is untrusted text, not authority to change permissions.
+
+## MCP servers
+
+**Start-up.** `cli.start_mcp_servers` reads `~/.wren/mcp.json` with `mcp_config.load`. With no file, nothing else happens and the MCP SDK is never imported (it takes about 0.4 s to load). Otherwise `McpServers.start` opens an anyio *blocking portal*, an event loop on a background thread, and starts one `_serve` task per server, all at once. Each task enters `async with Client(stdio_client(params, errlog=log))`, which launches the program, negotiates a protocol version (`server/discover` for 2026-07-28 servers, falling back to the older `initialize` handshake), lists the tools (paged, up to `MAX_PAGES`), reports ready through a `concurrent.futures.Future`, then sleeps until cancelled. Wren's thread waits up to `START_TIMEOUT` for all of them. A server that fails or is too slow becomes a `ServerStatus` with an `error`; the others carry on.
+
+**Wrapping.** `tools_for` turns each listed tool into an `McpTool` named `mcp__SERVER__TOOL`, with characters the providers won't take changed to `_`. A name over 64 characters, or one already taken, is skipped with a line in the startup notice. The tools are added to the `ToolRegistry` with Wren's own, and the registry keeps `McpServers` as `registry.mcp` for `/mcp`. The startup notice says what started, what didn't and why, and where each server's log is.
+
+**A call.** The registry runs an MCP tool like any other: `McpTool.parse` removes `wren_reason` and checks the rest against the server's schema (JSON Schema 2020-12 unless the schema says otherwise; a schema that is itself invalid isn't used, and the server checks instead). `permission()` always returns a request: title `Use the tool T from the MCP server S`, the model's reason as `explanation`, the arguments as JSON as `detail`, scope `mcp:S:T`, never `contained`. `run()` calls `McpServers.call`, which starts the call on the portal and waits in 0.2-second slices, checking `ctx.should_stop` (Escape) between them; stopping cancels the task, and the SDK tells the server. Each call has a `CALL_TIMEOUT`. A missing server, a timeout, a stop or a protocol error becomes `McpCallError`, then a `ToolError` the model reads. `render` turns the result's content blocks into text: text as it is, images, audio and binary resources described in brackets, structured content as JSON when there is no text.
+
+**Shutdown.** `cli.main` closes `McpServers` in a `finally` once the front end returns. That cancels each `_serve` task; leaving its `async with` closes the server's stdin, waits, and then terminates the process. Then the portal stops, then the log files close.
+
+**Logs.** Each server's stderr goes to `~/.wren/logs/mcp-NAME.log`, replaced at each start, and the SDK's own `logging` output to `~/.wren/logs/mcp-sdk.log`. Neither ever reaches the terminal, where it would draw over the full-screen app.
+
+**Environment.** A server gets the variables in its `env` entry (after `${NAME}` expansion) plus the SDK's short default list (`HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER` on macOS and Linux). Wren's API keys reach a server only if you put them in its `env`.
 
 ## Rules that always hold
 
@@ -334,6 +357,10 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 31. **An ID token is believed only after its signature, issuer, audience, expiry and nonce are checked,** with the algorithm taken from OpenAI's key, never from the token. Plan usage needs the `chatgpt.tokens.use.direct` scope as granted, not as asked for.
 32. **Refreshing is one at a time, across processes,** and re-reads the record after taking the lock, so a rotated refresh token is never spent twice.
 33. **GitHub reads never grant shell permissions.** `github_read` constructs only fixed GitHub.com REST GETs, with validated identifiers, and executes an argument list. No model input can choose a method, host, endpoint, jq expression or command; GitHub writes remain under the existing shell permissions.
+34. **Every MCP tool call asks, in every mode, unless you said "always" for that tool this session.** `McpTool.permission()` always returns a request, and never sets `contained`: Wren can't see what a server does. A server's read-only hint is not trusted.
+35. **The set of tools is fixed for the session.** MCP servers are started and listed before the first prompt; a server that adds tools later isn't listened to, and one that stops leaves its tools in the list, failing with a message.
+36. **Wren stops every MCP server it started.** When the front end returns, normally or with an error, `McpServers.close` stops each process. (If Wren itself is killed, a server's stdin closes, and the spec says a server should exit then; Wren can't enforce that.)
+37. **Nothing an MCP server prints reaches the terminal.** Its stderr, and the SDK's logging, go to log files under `~/.wren/logs/`.
 
 ## Static checks
 
@@ -343,7 +370,10 @@ These are *invariants*: things the code guarantees, so the rest of the code can 
 
 | Coming in | Plugs in at |
 | --- | --- |
-| Step 11: MCP | More tools in the `ToolRegistry`, provided by other programs; each needs a `permission()` story (and leaves `contained` false) |
+| Later: remote MCP servers (HTTP, OAuth) | `mcp_config._server` (accept a `url`) and `McpServers._serve` (the SDK's `streamable_http_client`); the OAuth sign-in alongside `auth/` |
+| Later: a project's own `.mcp.json` | `mcp_config.load`, behind a "trust this project's servers?" question remembered per folder |
+| Later: tools that change while running | `McpServers` listening for `notifications/tools/list_changed`; the tool list may change only between conversations (invariant 16) |
+| Later: a server's `instructions` | `prompts.build_system_prompt`, as untrusted text like memory files |
 | Step 11: subagents | A second `Agent` with its own history, run as a tool of the first |
 | Step 11: hooks | Around `ToolRegistry.run` and at turn boundaries in `Agent` |
 | Later: more than one ChatGPT account (#22) | `CredentialStore`, keyed by issued client ID; an account picker; `finish_login`'s same-account check becomes a choice |
