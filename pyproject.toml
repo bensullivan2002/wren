@@ -5,12 +5,12 @@ description = "A small, readable coding-agent harness for the terminal, built to
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "anthropic>=0.40",
+    "anthropic>=2.10.0",
     # The OpenAI provider. Imported only when that provider is chosen.
-    "openai>=2",
+    "openai>=3.55.1",
     # Tool inputs are Pydantic models. The anthropic SDK already depends on
     # Pydantic, but we import it ourselves, so we say so.
-    "pydantic>=2",
+    "pydantic>=2.14.3",
     # Signing in with ChatGPT (auth/chatgpt.py): checks the ID token's
     # signature against OpenAI's published keys. `[crypto]` brings in the
     # `cryptography` package, which does the RSA maths.
@@ -23,14 +23,14 @@ dependencies = [
     # use ourselves to run it on its own thread; jsonschema (also one of its
     # dependencies) checks a call's arguments against the server's schema.
     "mcp>=2.3",
-    "anyio>=4",
+    "anyio>=4.16.0",
     "jsonschema>=4",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8",
-    "pytest-asyncio>=0.24",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.5.0",
     # Runs the lint and format checks in .pre-commit-config.yaml (which pins
     # their versions), on commit and in CI.
     "pre-commit>=4",
